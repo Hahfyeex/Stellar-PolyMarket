@@ -76,4 +76,23 @@ router.post("/payout/:marketId", async (req, res) => {
   }
 });
 
+// GET /api/bets/recent — recent activity feed (indexer)
+router.get("/recent", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  try {
+    const result = await db.query(
+      `SELECT b.id, b.wallet_address, b.outcome_index, b.amount, b.created_at,
+              m.question, m.outcomes
+       FROM bets b
+       JOIN markets m ON m.id = b.market_id
+       ORDER BY b.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    res.json({ activity: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

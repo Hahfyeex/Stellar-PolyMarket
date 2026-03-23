@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useWallet } from "../hooks/useWallet";
 import MarketCard from "../components/MarketCard";
 import NotificationManager from "../components/NotificationManager";
+import LiveActivityFeed from "../components/LiveActivityFeed";
 
 interface Market {
   id: number;
@@ -95,25 +96,34 @@ export default function Home() {
         ))}
       </section>
 
-      {/* Markets */}
-      <section className="max-w-4xl mx-auto px-4 pb-16">
-        <h2 className="text-2xl font-semibold mb-6">Open Markets</h2>
-        {loading ? (
-          <p className="text-gray-400">Loading markets...</p>
-        ) : markets.length === 0 ? (
-          <p className="text-gray-400">No markets yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {markets.map((market) => (
-              <MarketCard
-                key={market.id}
-                market={market}
-                walletAddress={publicKey}
-                onBetPlaced={fetchMarkets}
-              />
-            ))}
-          </div>
-        )}
+      {/* Markets + Activity layout */}
+      <section className="max-w-6xl mx-auto px-4 pb-16 flex flex-col lg:flex-row gap-6">
+        {/* Markets */}
+        <div className="flex-1">
+          <h2 className="text-2xl font-semibold mb-6">Open Markets</h2>
+          {loading ? (
+            <p className="text-gray-400">Loading markets...</p>
+          ) : markets.length === 0 ? (
+            <p className="text-gray-400">No markets yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {markets.map((market) => (
+                <MarketCard
+                  key={market.id}
+                  market={market}
+                  walletAddress={publicKey}
+                  onBetPlaced={fetchMarkets}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Live Activity Feed */}
+        <div className="w-full lg:w-80 shrink-0">
+          <h2 className="text-2xl font-semibold mb-6">Recent Activity</h2>
+          <LiveActivityFeed apiUrl={process.env.NEXT_PUBLIC_API_URL} />
+        </div>
       </section>
     </main>
   );
