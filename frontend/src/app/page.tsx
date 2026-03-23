@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useWallet } from "../hooks/useWallet";
 import MarketCard from "../components/MarketCard";
+import NotificationManager from "../components/NotificationManager";
 
 interface Market {
   id: number;
@@ -11,6 +12,7 @@ interface Market {
   resolved: boolean;
   winning_outcome: number | null;
   total_pool: string;
+  status: string;
 }
 
 export default function Home() {
@@ -73,6 +75,10 @@ export default function Home() {
         <p className="text-xl text-gray-400 max-w-xl">
           Decentralized prediction markets on Stellar. Fast, cheap, and transparent.
         </p>
+
+        <div className="max-w-md mx-auto w-full">
+          <NotificationManager walletAddress={publicKey} />
+        </div>
       </section>
 
       {/* Stats */}
