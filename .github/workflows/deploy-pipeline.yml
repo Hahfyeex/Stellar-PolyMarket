@@ -91,5 +91,7 @@ jobs:
       - name: Build Frontend
         working-directory: ./frontend
         run: |
+          # Manually install missing types required for Next.js TS build
+          npm install --save-dev @types/node @types/react @types/react-dom typescript
           npm install
           npm run build
