@@ -67,18 +67,11 @@ jobs:
 
       - name: Deploy Contract & Capture ID
         id: deploy
-        env:
-          # These would be stored in GitHub Secrets per-environment
-          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
         run: |
           echo "Targeting Network: ${{ needs.determine-environment.outputs.stellar_network }}"
           
-          # In a real execution, this runs the actual deploy command. 
-          # For this CI setup, we execute it and capture stdout.
-          # Example: CONTRACT_ID=$(soroban contract deploy --network ${{ needs.determine-environment.outputs.stellar_network }} --source-account admin ...)
-          
-          # Simulating the captured ID for the pipeline structure
-          MOCK_CONTRACT_ID="C$(cat /dev/urandom | tr -dc 'A-Z0-9' | fold -w 55 | head -n 1)"
+          # Stable mock ID generation using the current date
+          MOCK_CONTRACT_ID="C$(echo ${{ github.sha }} | tr -dc 'A-Z0-9' | head -c 55)"
           
           echo "Deployed Contract ID: $MOCK_CONTRACT_ID"
           echo "CONTRACT_ID=$MOCK_CONTRACT_ID" >> $GITHUB_ENV
