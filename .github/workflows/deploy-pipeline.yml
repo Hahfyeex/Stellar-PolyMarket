@@ -91,7 +91,7 @@ jobs:
       - name: Build Frontend
         working-directory: ./frontend
         run: |
-          # Manually install missing types required for Next.js TS build
-          npm install --save-dev @types/node @types/react @types/react-dom typescript
-          npm install
+          # Use --legacy-peer-deps to bypass the React 18 vs 19 type conflict
+          npm install --save-dev @types/node @types/react @types/react-dom typescript --legacy-peer-deps
+          npm install --legacy-peer-deps
           npm run build
