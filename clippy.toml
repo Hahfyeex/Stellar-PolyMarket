@@ -1,0 +1,3 @@
+# Clippy configuration
+# Docs: https://doc.rust-lang.org/clippy/configuration.html
+msrv = "1.70.0"
