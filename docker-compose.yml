@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  stellar-quickstart:
+    image: stellar/quickstart:testing
+    container_name: stellar-quickstart
+    # --local runs a standalone network. --enable-soroban-rpc turns on the Soroban RPC server.
+    command: --local --enable-soroban-rpc
+    ports:
+      - "8000:8000" # Horizon API
+      - "8001:8001" # Soroban RPC
+    volumes:
+      - stellar-data:/opt/stellar/postgresql/data
+
+volumes:
+  stellar-data:
+    name: stellar_polymarket_data

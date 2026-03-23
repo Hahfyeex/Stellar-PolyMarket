@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS markets (
   resolved BOOLEAN DEFAULT FALSE,
   winning_outcome INT,
   total_pool NUMERIC DEFAULT 0,
+  status TEXT DEFAULT 'ACTIVE',
   contract_address TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -18,4 +19,11 @@ CREATE TABLE IF NOT EXISTS bets (
   amount NUMERIC NOT NULL,
   paid_out BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_notifications (
+  wallet_address TEXT PRIMARY KEY,
+  fcm_token TEXT NOT NULL,
+  preferences JSONB DEFAULT '{"market_proposed": true, "market_resolved": true}'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );

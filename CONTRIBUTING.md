@@ -55,7 +55,14 @@ Look for issues tagged `good first issue` — these are beginner-friendly tasks.
 ### Prerequisites
 - Node.js >= 18
 - PostgreSQL
+- Docker & Docker Compose (for the local Stellar network)
 - Rust + Soroban CLI (for smart contracts)
+
+### Local Stellar Network
+Before deploying contracts locally, spin up the standalone development network:
+```bash
+docker compose up -d
+```
 
 ### Install & Run
 
