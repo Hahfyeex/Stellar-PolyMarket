@@ -1,0 +1,33 @@
+{
+  "name": "stella-polymarket",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "prepare": "husky",
+    "lint": "eslint \"{frontend,backend,oracle}/src/**/*.{js,ts,tsx}\"",
+    "lint:fix": "eslint \"{frontend,backend,oracle}/src/**/*.{js,ts,tsx}\" --fix",
+    "format": "prettier --write \"{frontend,backend,oracle}/src/**/*.{js,ts,tsx,css}\"",
+    "format:check": "prettier --check \"{frontend,backend,oracle}/src/**/*.{js,ts,tsx,css}\"",
+    "clippy": "cargo clippy --manifest-path contracts/prediction_market/Cargo.toml -- -D warnings"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.0.0",
+    "eslint-plugin-react": "^7.34.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.2.0"
+  },
+  "lint-staged": {
+    "{frontend,backend,oracle}/src/**/*.{js,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "{frontend,backend,oracle}/src/**/*.css": [
+      "prettier --write"
+    ]
+  }
+}
