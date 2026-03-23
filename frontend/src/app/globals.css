@@ -6,3 +6,19 @@ body {
   background-color: #030712;
   color: white;
 }
+
+/* Live Activity Feed — fade-in animation for new items */
+@keyframes activityFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.activity-fade-in {
+  animation: activityFadeIn 0.5s ease-out forwards;
+}
