@@ -52,6 +52,9 @@ jobs:
         with:
           workspaces: "contracts/prediction_market"
 
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Install Soroban CLI
         # Using cargo-binstall is 10x faster than compiling from source
         run: |
