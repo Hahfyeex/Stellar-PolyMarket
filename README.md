@@ -191,6 +191,13 @@ stella-polymarket/
 
 ## 🛠️ Getting Started
 
+### Local Blockchain Environment (Docker)
+To test smart contracts locally without spending real Testnet XLM, you can spin up a standalone Stellar network with the Soroban RPC enabled:
+
+```bash
+docker compose up -d
+```
+### Application Setup
 ```bash
 # Clone the repo
 git clone https://github.com/your-username/stella-polymarket.git
