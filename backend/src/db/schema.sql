@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS markets (
   resolved BOOLEAN DEFAULT FALSE,
   winning_outcome INT,
   total_pool NUMERIC DEFAULT 0,
+  contract_address TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

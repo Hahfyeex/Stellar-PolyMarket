@@ -16,14 +16,14 @@ router.get("/", async (req, res) => {
 
 // POST /api/markets — create a market
 router.post("/", async (req, res) => {
-  const { question, endDate, outcomes } = req.body;
+  const { question, endDate, outcomes, contractAddress } = req.body;
   if (!question || !endDate || !outcomes?.length) {
     return res.status(400).json({ error: "question, endDate, and outcomes are required" });
   }
   try {
     const result = await db.query(
-      "INSERT INTO markets (question, end_date, outcomes) VALUES ($1, $2, $3) RETURNING *",
-      [question, endDate, outcomes]
+      "INSERT INTO markets (question, end_date, outcomes, contract_address) VALUES ($1, $2, $3, $4) RETURNING *",
+      [question, endDate, outcomes, contractAddress || null]
     );
     res.status(201).json({ market: result.rows[0] });
   } catch (err) {
