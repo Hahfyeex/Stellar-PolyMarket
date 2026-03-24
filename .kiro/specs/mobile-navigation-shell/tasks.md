@@ -95,7 +95,7 @@
   - Wire `activeMarket` from market card selection to FAB
   - _Requirements: 1.3, 2.2, 4.1_
 
-- [ ] 8. Add mini-README for Thumb-Zone mapping
+- [x] 8. Add mini-README for Thumb-Zone mapping
   - Create `frontend/src/components/mobile/README.md`
   - Document the Thumb-Zone layout rationale and safe-area strategy
   - Include Figma link placeholder

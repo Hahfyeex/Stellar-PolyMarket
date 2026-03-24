@@ -19,7 +19,6 @@ module.exports = {
       preset: "ts-jest",
       testEnvironment: "jest-environment-jsdom",
       testMatch: ["**/components/__tests__/**/*.test.tsx"],
-      setupFilesAfterFramework: [],
       globals: {
         "ts-jest": {
           tsconfig: {
