@@ -7,18 +7,31 @@ body {
   color: white;
 }
 
+/* Safe-area utility classes */
+.safe-top    { padding-top:    env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-left   { padding-left:   env(safe-area-inset-left); }
+.safe-right  { padding-right:  env(safe-area-inset-right); }
+
 /* Live Activity Feed — fade-in animation for new items */
 @keyframes activityFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-
 .activity-fade-in {
   animation: activityFadeIn 0.5s ease-out forwards;
+}
+
+/* Trade Drawer — slide-up entrance */
+@keyframes drawerSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+.drawer-enter {
+  animation: drawerSlideUp 0.3s ease-out forwards;
+}
+
+/* Pull-to-refresh spinner */
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
