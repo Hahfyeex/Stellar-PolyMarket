@@ -5,10 +5,11 @@ use soroban_sdk::{
 
 #[contracttype]
 pub enum DataKey {
-    Market(u64),
-    Bets(u64),       // Map<Address, (u32, i128)> — outcome_index + amount
-    TotalPool(u64),
+    Initialized,
     Admin,
+    Market(u64),
+    Bets(u64),
+    TotalPool(u64),
 }
 
 #[contracttype]
@@ -16,8 +17,8 @@ pub enum DataKey {
 pub struct Market {
     pub id: u64,
     pub question: String,
-    pub end_date: u64,
-    pub outcomes: Vec<String>,
+    pub options: Vec<String>,  // renamed from outcomes for clarity per issue spec
+    pub deadline: u64,         // renamed from end_date per issue spec
     pub resolved: bool,
     pub winning_outcome: u32,
     pub token: Address,
@@ -26,138 +27,155 @@ pub struct Market {
 #[contract]
 pub struct PredictionMarket;
 
+/// Guard: panics if the contract has already been initialized.
+fn check_initialized(env: &Env) {
+    let is_init: bool = env
+        .storage()
+        .instance()
+        .get(&DataKey::Initialized)
+        .unwrap_or(false);
+    assert!(!is_init, "Contract already initialized");
+}
+
 #[contractimpl]
 impl PredictionMarket {
-    /// Initialize contract with admin address
+    /// Initialize contract with admin address.
+    /// Uses check_initialized guard to prevent double-initialization.
     pub fn initialize(env: Env, admin: Address) {
+        check_initialized(&env);
         admin.require_auth();
+        env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Admin, &admin);
     }
 
-    /// Create a new prediction market
+    /// Create a new prediction market.
+    /// Market metadata (question, options, deadline) stored in persistent storage.
     pub fn create_market(
         env: Env,
         id: u64,
         question: String,
-        end_date: u64,
-        outcomes: Vec<String>,
+        options: Vec<String>,
+        deadline: u64,
         token: Address,
     ) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
 
-        assert!(!env.storage().instance().has(&DataKey::Market(id)), "Market already exists");
-        assert!(outcomes.len() >= 2, "Need at least 2 outcomes");
-        assert!(end_date > env.ledger().timestamp(), "End date must be in the future");
+        assert!(
+            !env.storage().persistent().has(&DataKey::Market(id)),
+            "Market already exists"
+        );
+        assert!(options.len() >= 2, "Need at least 2 options");
+        assert!(
+            deadline > env.ledger().timestamp(),
+            "Deadline must be in the future"
+        );
 
         let market = Market {
             id,
             question,
-            end_date,
-            outcomes,
+            options,
+            deadline,
             resolved: false,
             winning_outcome: 0,
             token,
         };
 
-        env.storage().instance().set(&DataKey::Market(id), &market);
-        env.storage().instance().set(&DataKey::TotalPool(id), &0i128);
+        // Persist market metadata in persistent storage (survives ledger archival)
+        env.storage().persistent().set(&DataKey::Market(id), &market);
+        env.storage().persistent().set(&DataKey::TotalPool(id), &0i128);
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::Bets(id), &Map::<Address, (u32, i128)>::new(&env));
     }
 
-    /// Place a bet on an outcome — transfers tokens into the contract
-    pub fn place_bet(env: Env, market_id: u64, outcome_index: u32, bettor: Address, amount: i128) {
+    /// Place a bet on an option — transfers tokens into the contract.
+    pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         bettor.require_auth();
         assert!(amount > 0, "Amount must be positive");
 
         let market: Market = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
 
         assert!(!market.resolved, "Market already resolved");
         assert!(
-            env.ledger().timestamp() < market.end_date,
-            "Market has ended"
+            env.ledger().timestamp() < market.deadline,
+            "Market deadline has passed"
         );
         assert!(
-            (outcome_index as u32) < market.outcomes.len(),
-            "Invalid outcome"
+            option_index < market.options.len(),
+            "Invalid option index"
         );
 
-        // Transfer tokens from bettor to contract
         let token_client = token::Client::new(&env, &market.token);
         token_client.transfer(&bettor, &env.current_contract_address(), &amount);
 
-        // Record bet
         let mut bets: Map<Address, (u32, i128)> = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Bets(market_id))
             .unwrap();
-        bets.set(bettor, (outcome_index, amount));
-        env.storage().instance().set(&DataKey::Bets(market_id), &bets);
+        bets.set(bettor, (option_index, amount));
+        env.storage().persistent().set(&DataKey::Bets(market_id), &bets);
 
-        // Update pool
         let pool: i128 = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::TotalPool(market_id))
             .unwrap();
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::TotalPool(market_id), &(pool + amount));
     }
 
-    /// Resolve market — only admin (oracle-triggered)
+    /// Resolve market — only admin (oracle-triggered).
     pub fn resolve_market(env: Env, market_id: u64, winning_outcome: u32) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
 
         let mut market: Market = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
 
         assert!(!market.resolved, "Already resolved");
         assert!(
-            (winning_outcome as u32) < market.outcomes.len(),
-            "Invalid outcome"
+            winning_outcome < market.options.len(),
+            "Invalid outcome index"
         );
 
         market.resolved = true;
         market.winning_outcome = winning_outcome;
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::Market(market_id), &market);
     }
 
-    /// Distribute rewards proportionally to winners (3% platform fee)
+    /// Distribute rewards proportionally to winners (3% platform fee).
     pub fn distribute_rewards(env: Env, market_id: u64) {
         let market: Market = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
         assert!(market.resolved, "Market not resolved yet");
 
         let bets: Map<Address, (u32, i128)> = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Bets(market_id))
             .unwrap();
 
         let total_pool: i128 = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::TotalPool(market_id))
             .unwrap();
 
-        // Calculate total winning stake
         let mut winning_stake: i128 = 0;
         for (_, (outcome, amount)) in bets.iter() {
             if outcome == market.winning_outcome {
@@ -166,10 +184,10 @@ impl PredictionMarket {
         }
 
         if winning_stake == 0 {
-            return; // No winners — pool stays in contract
+            return;
         }
 
-        let payout_pool = total_pool * 97 / 100; // 3% fee
+        let payout_pool = total_pool * 97 / 100;
         let token_client = token::Client::new(&env, &market.token);
 
         for (bettor, (outcome, amount)) in bets.iter() {
@@ -180,19 +198,76 @@ impl PredictionMarket {
         }
     }
 
-    /// Read a market
+    /// Read a market's stored metadata.
     pub fn get_market(env: Env, market_id: u64) -> Market {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap()
     }
 
-    /// Get total pool for a market
+    /// Get total pool for a market.
     pub fn get_pool(env: Env, market_id: u64) -> i128 {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::TotalPool(market_id))
             .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+
+    #[test]
+    fn test_initialize_and_create_market() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        // Initialize
+        client.initialize(&admin);
+
+        // Create market with question, options, deadline
+        let question = String::from_str(&env, "Will BTC exceed $100k by end of 2025?");
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        let deadline = env.ledger().timestamp() + 86400; // 1 day from now
+
+        client.create_market(&1u64, &question, &options, &deadline, &token);
+
+        // Read back and verify stored metadata
+        let market = client.get_market(&1u64);
+        assert_eq!(market.id, 1u64);
+        assert_eq!(market.question, String::from_str(&env, "Will BTC exceed $100k by end of 2025?"));
+        assert_eq!(market.options.len(), 2);
+        assert_eq!(market.deadline, deadline);
+        assert!(!market.resolved);
+
+        // Visual validation — log stored market data
+        soroban_sdk::log!(&env, "✅ Market stored: id={}, deadline={}, resolved={}", market.id, market.deadline, market.resolved);
+    }
+
+    #[test]
+    #[should_panic(expected = "Contract already initialized")]
+    fn test_double_initialize_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        client.initialize(&admin); // should panic
     }
 }

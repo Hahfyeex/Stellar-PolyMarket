@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const { triggerNotification } = require("../utils/notifications");
 
 // GET /api/markets — list all markets
 router.get("/", async (req, res) => {
@@ -16,14 +17,14 @@ router.get("/", async (req, res) => {
 
 // POST /api/markets — create a market
 router.post("/", async (req, res) => {
-  const { question, endDate, outcomes } = req.body;
+  const { question, endDate, outcomes, contractAddress } = req.body;
   if (!question || !endDate || !outcomes?.length) {
     return res.status(400).json({ error: "question, endDate, and outcomes are required" });
   }
   try {
     const result = await db.query(
-      "INSERT INTO markets (question, end_date, outcomes) VALUES ($1, $2, $3) RETURNING *",
-      [question, endDate, outcomes]
+      "INSERT INTO markets (question, end_date, outcomes, contract_address) VALUES ($1, $2, $3, $4) RETURNING *",
+      [question, endDate, outcomes, contractAddress || null]
     );
     res.status(201).json({ market: result.rows[0] });
   } catch (err) {
@@ -44,7 +45,29 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// POST /api/markets/:id/resolve — oracle triggers resolution
+// POST /api/markets/:id/propose — oracle proposes a resolution
+router.post("/:id/propose", async (req, res) => {
+  const { proposedOutcome } = req.body;
+  if (proposedOutcome === undefined) {
+    return res.status(400).json({ error: "proposedOutcome is required" });
+  }
+  try {
+    const result = await db.query(
+      "UPDATE markets SET status = 'PROPOSED', winning_outcome = $1 WHERE id = $2 RETURNING *",
+      [proposedOutcome, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: "Market not found" });
+    
+    // Trigger notification
+    triggerNotification(req.params.id, "PROPOSED");
+
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/markets/:id/resolve — oracle triggers final resolution
 router.post("/:id/resolve", async (req, res) => {
   const { winningOutcome } = req.body;
   if (winningOutcome === undefined) {
@@ -52,10 +75,14 @@ router.post("/:id/resolve", async (req, res) => {
   }
   try {
     const result = await db.query(
-      "UPDATE markets SET resolved = TRUE, winning_outcome = $1 WHERE id = $2 RETURNING *",
+      "UPDATE markets SET resolved = TRUE, status = 'RESOLVED', winning_outcome = $1 WHERE id = $2 RETURNING *",
       [winningOutcome, req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: "Market not found" });
+    
+    // Trigger notification
+    triggerNotification(req.params.id, "RESOLVED");
+
     res.json({ market: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,9 +1,5 @@
 node_modules/
-.env
 .next/
 dist/
 target/
 *.wasm
-
-# Husky
-.husky/_/
