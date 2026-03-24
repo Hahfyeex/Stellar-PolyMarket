@@ -320,7 +320,7 @@ const DEMO_MARKETS: Market[] = [
   {
     id: 1,
     question: "Will Bitcoin reach $100k before 2027?",
-    end_date: "2026-12-31T00:00:00Z",
+    end_date: "2026-03-24T08:30:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
     winning_outcome: null,
