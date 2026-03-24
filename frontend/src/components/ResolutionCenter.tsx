@@ -248,7 +248,7 @@ function getResolutionState(market: Market): ResolutionState {
   if (market.resolved) return "settled";
   if (market.status === "DISPUTED") return "disputed";
   if (market.status === "PROPOSED") return "proposed";
-  return new Date(market.end_date).getTime() <= Date.now() ? "closed" : "closed";
+  return "closed";
 }
 
 function getStepStatus(stepKey: StepItem["key"], state: ResolutionState) {
@@ -273,6 +273,12 @@ function getStepStatus(stepKey: StepItem["key"], state: ResolutionState) {
 export default function ResolutionCenter({ market, compact = false }: Props) {
   const state = getResolutionState(market);
   const [now, setNow] = useState(Date.now());
+  const resolutionStarted =
+    market.resolved ||
+    market.status === "PROPOSED" ||
+    market.status === "DISPUTED" ||
+    Boolean(market.resolution_state) ||
+    new Date(market.end_date).getTime() <= now;
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -304,7 +310,7 @@ export default function ResolutionCenter({ market, compact = false }: Props) {
           <h4 className="mt-1 text-lg font-semibold text-white">How this market resolves</h4>
           <p className="mt-1 max-w-2xl text-sm text-slate-300">
             Track the proposal, challenge window, and final settlement so you can see whether funds
-            are simply pending, formally challenged, or ready to settle.
+            are pending review, formally challenged, or ready to settle.
           </p>
         </div>
 
@@ -312,6 +318,16 @@ export default function ResolutionCenter({ market, compact = false }: Props) {
           Proposed outcome: <span className="font-semibold">{proposedOutcomeLabel}</span>
         </div>
       </div>
+
+      {!resolutionStarted && (
+        <div className="mt-4 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-4">
+          <p className="text-sm font-semibold text-emerald-100">Market is still trading</p>
+          <p className="mt-1 text-sm text-emerald-50/85">
+            Resolution starts after the market closes. Once trading ends, the proposed outcome and
+            review timers will appear here.
+          </p>
+        </div>
+      )}
 
       {state === "disputed" && (
         <div className="mt-4 rounded-2xl border border-amber-400/50 bg-amber-400/12 p-4">
@@ -351,7 +367,7 @@ export default function ResolutionCenter({ market, compact = false }: Props) {
 
       <div className={`mt-5 flex gap-4 ${compact ? "flex-col" : "flex-col md:flex-row"}`}>
         {STEP_ORDER.map((step, index) => {
-          const stepStatus = getStepStatus(step.key, state);
+          const stepStatus = resolutionStarted ? getStepStatus(step.key, state) : "upcoming";
           const markerClass =
             stepStatus === "complete"
               ? "border-emerald-400 bg-emerald-400 text-slate-950"

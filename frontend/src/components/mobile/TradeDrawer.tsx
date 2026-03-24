@@ -40,7 +40,6 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [xlmBalance] = useState<number | null>(null);
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
 
   const { checkSlippage, slippageState, dismiss, checking } = useSlippageCheck();
@@ -266,14 +265,12 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                     key={i}
                     onClick={() => setSelectedOutcome(i)}
                     disabled={market.resolved || isExpired}
-                    disabled={market.resolved || isExpired}
                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
-                      ${
-                        market.resolved && market.winning_outcome === i
-                          ? "bg-green-600 text-white"
-                          : selectedOutcome === i
-                            ? "bg-blue-600 text-white"
-                            : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                      ${market.resolved && market.winning_outcome === i
+                        ? "bg-green-600 text-white"
+                        : selectedOutcome === i
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-800 text-gray-300 hover:bg-gray-700"
                       }`}
                   >
                     {outcome}
@@ -346,9 +343,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 </div>
               ) : (
                 <p className="text-gray-400 text-sm text-center py-2">
-                  {walletAddress
-                    ? "Betting is closed for this market"
-                    : "{walletAddress ? "Betting is closed for this market" : "Connect your wallet to place a bet"}"}
+                  {walletAddress ? "Betting is closed for this market" : "Connect your wallet to place a bet"}
                 </p>
               )}
 
