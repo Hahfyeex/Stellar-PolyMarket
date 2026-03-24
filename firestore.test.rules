@@ -1,0 +1,325 @@
+const { assertFails, assertSucceeds } = require("@firebase/rules-unit-testing");
+const { initializeTestEnvironment, RulesTestEnvironment } = require("@firebase/rules-unit-testing");
+const fs = require("fs");
+
+let testEnv;
+
+beforeAll(async () => {
+  testEnv = await initializeTestEnvironment({
+    projectId: "stella-polymarket-test",
+    firestore: {
+      rules: fs.readFileSync("firestore.rules", "utf8"),
+      host: "127.0.0.1",
+      port: 8080,
+    },
+  });
+});
+
+afterAll(async () => {
+  await testEnv.cleanup();
+});
+
+beforeEach(async () => {
+  await testEnv.clearFirestore();
+});
+
+describe("Firestore Security Rules - Market Comments", () => {
+  const validWalletAddress = "GAXYZ1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABC";
+  const anotherWalletAddress = "GBDEF1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABC";
+  const invalidWalletAddress = "invalid-wallet";
+  
+  const validComment = {
+    marketId: 123,
+    walletAddress: validWalletAddress,
+    text: "This is a valid comment",
+    createdAt: new Date(),
+  };
+
+  describe("Read Operations", () => {
+    test("should allow anyone to read comments (unauthenticated)", async () => {
+      const unauthedDb = testEnv.unauthenticatedContext().firestore();
+      await assertSucceeds(unauthedDb.collection("marketComments").get());
+    });
+
+    test("should allow authenticated users to read comments", async () => {
+      const authedDb = testEnv.authenticatedContext(validWalletAddress).firestore();
+      await assertSucceeds(authedDb.collection("marketComments").get());
+    });
+
+    test("should allow reading a specific comment", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      // First create a comment with admin context
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertSucceeds(commentRef.get());
+    });
+  });
+
+  describe("Create Operations - Valid Cases", () => {
+    test("should allow authenticated user to create comment with valid data", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      await assertSucceeds(commentRef.set(validComment));
+    });
+
+    test("should allow comment with maximum text length (500 chars)", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const longComment = {
+        ...validComment,
+        text: "a".repeat(500),
+      };
+      
+      await assertSucceeds(commentRef.set(longComment));
+    });
+
+    test("should allow comment with minimum text length (1 char)", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const shortComment = {
+        ...validComment,
+        text: "a",
+      };
+      
+      await assertSucceeds(commentRef.set(shortComment));
+    });
+  });
+
+  describe("Create Operations - Invalid Cases", () => {
+    test("should deny unauthenticated user from creating comment", async () => {
+      const db = testEnv.unauthenticatedContext().firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      await assertFails(commentRef.set(validComment));
+    });
+
+    test("should deny user from posting as different wallet address", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const spoofedComment = {
+        ...validComment,
+        walletAddress: anotherWalletAddress,
+      };
+      
+      await assertFails(commentRef.set(spoofedComment));
+    });
+
+    test("should deny comment with invalid wallet address format", async () => {
+      const db = testEnv.authenticatedContext(invalidWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const invalidComment = {
+        ...validComment,
+        walletAddress: invalidWalletAddress,
+      };
+      
+      await assertFails(commentRef.set(invalidComment));
+    });
+
+    test("should deny comment with empty text", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const emptyComment = {
+        ...validComment,
+        text: "",
+      };
+      
+      await assertFails(commentRef.set(emptyComment));
+    });
+
+    test("should deny comment with text exceeding 500 characters", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const tooLongComment = {
+        ...validComment,
+        text: "a".repeat(501),
+      };
+      
+      await assertFails(commentRef.set(tooLongComment));
+    });
+
+    test("should deny comment with missing required fields", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const incompleteComment = {
+        marketId: 123,
+        walletAddress: validWalletAddress,
+        // missing text and createdAt
+      };
+      
+      await assertFails(commentRef.set(incompleteComment));
+    });
+
+    test("should deny comment with extra fields", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const commentWithExtra = {
+        ...validComment,
+        extraField: "not allowed",
+      };
+      
+      await assertFails(commentRef.set(commentWithExtra));
+    });
+
+    test("should deny comment with invalid marketId (zero)", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const invalidMarketComment = {
+        ...validComment,
+        marketId: 0,
+      };
+      
+      await assertFails(commentRef.set(invalidMarketComment));
+    });
+
+    test("should deny comment with invalid marketId (negative)", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const invalidMarketComment = {
+        ...validComment,
+        marketId: -1,
+      };
+      
+      await assertFails(commentRef.set(invalidMarketComment));
+    });
+
+    test("should deny comment with invalid marketId (string)", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc();
+      
+      const invalidMarketComment = {
+        ...validComment,
+        marketId: "123",
+      };
+      
+      await assertFails(commentRef.set(invalidMarketComment));
+    });
+  });
+
+  describe("Update Operations", () => {
+    test("should allow user to update their own comment text", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      // Create comment first
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertSucceeds(commentRef.update({ text: "Updated comment text" }));
+    });
+
+    test("should deny user from updating another user's comment", async () => {
+      const db = testEnv.authenticatedContext(anotherWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      // Create comment as different user
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertFails(commentRef.update({ text: "Trying to update someone else's comment" }));
+    });
+
+    test("should deny user from changing walletAddress in update", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertFails(commentRef.update({ walletAddress: anotherWalletAddress }));
+    });
+
+    test("should deny user from changing marketId in update", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertFails(commentRef.update({ marketId: 999 }));
+    });
+
+    test("should deny user from changing createdAt in update", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertFails(commentRef.update({ createdAt: new Date() }));
+    });
+  });
+
+  describe("Delete Operations", () => {
+    test("should allow user to delete their own comment", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertSucceeds(commentRef.delete());
+    });
+
+    test("should deny user from deleting another user's comment", async () => {
+      const db = testEnv.authenticatedContext(anotherWalletAddress).firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertFails(commentRef.delete());
+    });
+
+    test("should deny unauthenticated user from deleting comment", async () => {
+      const db = testEnv.unauthenticatedContext().firestore();
+      const commentRef = db.collection("marketComments").doc("test-comment");
+      
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().collection("marketComments").doc("test-comment").set(validComment);
+      });
+      
+      await assertFails(commentRef.delete());
+    });
+  });
+
+  describe("Access to Other Collections", () => {
+    test("should deny access to undefined collections", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      await assertFails(db.collection("otherCollection").get());
+    });
+
+    test("should deny write to undefined collections", async () => {
+      const db = testEnv.authenticatedContext(validWalletAddress).firestore();
+      await assertFails(db.collection("otherCollection").doc("test").set({ data: "test" }));
+    });
+  });
+});
+
+// Calculate and display test coverage
+afterAll(() => {
+  const coverage = testEnv.getCoverage();
+  console.log("\n=== Firestore Security Rules Coverage ===");
+  console.log(coverage);
+});
