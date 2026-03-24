@@ -6,6 +6,7 @@ import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
+import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 
 interface Market {
   id: number;
@@ -23,6 +24,7 @@ export default function Home() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
+  const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
   async function fetchMarkets() {
     try {
@@ -98,6 +100,11 @@ export default function Home() {
           <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{error}</p>
         </div>
       )}
+
+      <InsufficientGasModal
+        isOpen={isGasModalOpen}
+        onClose={() => setIsGasModalOpen(false)}
+      />
 
       {/* Hero */}
       <section className="flex flex-col items-center justify-center py-10 md:py-16 px-4 text-center">
