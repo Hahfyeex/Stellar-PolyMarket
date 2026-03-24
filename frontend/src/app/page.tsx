@@ -181,7 +181,7 @@ const DEMO_MARKETS: Market[] = [
   {
     id: 1,
     question: "Will Bitcoin reach $100k before 2027?",
-    end_date: "2026-12-31T00:00:00Z",
+    end_date: "2026-03-24T08:30:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
     winning_outcome: null,
@@ -201,7 +201,7 @@ const DEMO_MARKETS: Market[] = [
   {
     id: 2,
     question: "Will Nigeria inflation drop below 15% this year?",
-    end_date: "2026-12-31T00:00:00Z",
+    end_date: "2026-03-23T10:00:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
     winning_outcome: null,
@@ -222,7 +222,7 @@ const DEMO_MARKETS: Market[] = [
   {
     id: 3,
     question: "Will Arsenal win the Premier League?",
-    end_date: "2026-05-30T00:00:00Z",
+    end_date: "2026-03-22T12:00:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
     winning_outcome: 1,
