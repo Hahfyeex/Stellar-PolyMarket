@@ -110,6 +110,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
         ref={drawerRef}
         data-testid="trade-drawer"
         className="fixed bottom-0 left-0 right-0 z-50 bg-gray-900 rounded-t-2xl max-h-[80vh] flex flex-col"
+        data-safe-area="bottom"
         style={{
           transform: `translateY(${dragY}px)`,
           transition: isDragging ? "none" : "transform 0.3s ease",

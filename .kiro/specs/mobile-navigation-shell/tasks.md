@@ -6,8 +6,8 @@
   - Create empty component files: `BottomNavBar.tsx`, `FloatingBetButton.tsx`, `TradeDrawer.tsx`, `PullToRefresh.tsx`, `MobileShell.tsx`
   - _Requirements: 1.1, 2.1, 3.1, 4.1_
 
-- [ ] 2. Implement BottomNavBar component
-- [ ] 2.1 Build BottomNavBar with 4 tabs and safe-area support
+- [x] 2. Implement BottomNavBar component
+- [x] 2.1 Build BottomNavBar with 4 tabs and safe-area support
   - Render Home, Search, Portfolio, Profile tabs with SVG icons and labels
   - Apply `fixed bottom-0` positioning and `pb-[env(safe-area-inset-bottom)]`
   - Highlight active tab with `text-blue-400` and bottom border indicator
@@ -23,7 +23,7 @@
   - **Validates: Requirements 1.2, 1.5**
 
 - [ ] 3. Implement FloatingBetButton component
-- [ ] 3.1 Build FloatingBetButton with disabled and hidden states
+- [x] 3.1 Build FloatingBetButton with disabled and hidden states
   - Render 56×56px circular button centered above nav bar
   - Apply `opacity-40 pointer-events-none` when `activeMarket` is null
   - Apply `opacity-0 pointer-events-none` when `drawerOpen` is true
@@ -39,13 +39,13 @@
   - **Validates: Requirements 2.5**
 
 - [ ] 4. Implement TradeDrawer with swipe-to-close
-- [ ] 4.1 Build TradeDrawer bottom sheet with drag handle
+- [x] 4.1 Build TradeDrawer bottom sheet with drag handle
   - Render fixed bottom sheet with `max-h-[80vh]`, backdrop overlay
   - Add 32×4px drag handle pill at top center
   - Apply `pb-[env(safe-area-inset-bottom)]` to inner content
   - _Requirements: 3.4, 5.3_
 
-- [ ] 4.2 Implement swipe-to-close gesture logic
+- [x] 4.2 Implement swipe-to-close gesture logic
   - Track `touchstart`/`touchmove`/`touchend` on the drag handle
   - Apply `transform: translateY(${dragY}px)` during drag
   - On release: if dragY > 30% of drawer height → call `onClose`; else snap back
@@ -67,7 +67,7 @@
 - [ ] 5. Checkpoint — Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 6. Implement PullToRefresh component
-- [ ] 6.1 Build PullToRefresh gesture wrapper
+- [x] 6.1 Build PullToRefresh gesture wrapper
   - Track `touchstart`/`touchmove`/`touchend` on the scroll container
   - Show spinner when pull distance > 0
   - Trigger `onRefresh` when pull distance >= 60px

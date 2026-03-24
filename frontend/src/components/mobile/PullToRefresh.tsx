@@ -13,6 +13,7 @@ export { TRIGGER_THRESHOLD };
 export default function PullToRefresh({ onRefresh, children }: Props) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const isRefreshingRef = useRef(false); // synchronous guard
   const touchStartY = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -27,7 +28,7 @@ export default function PullToRefresh({ onRefresh, children }: Props) {
   }
 
   function handleTouchMove(e: React.TouchEvent) {
-    if (touchStartY.current < 0 || isRefreshing) return;
+    if (touchStartY.current < 0 || isRefreshingRef.current) return;
     const delta = e.touches[0].clientY - touchStartY.current;
     if (delta > 0) {
       // Dampen the pull so it feels natural
@@ -36,13 +37,15 @@ export default function PullToRefresh({ onRefresh, children }: Props) {
   }
 
   async function handleTouchEnd() {
-    if (isRefreshing || touchStartY.current < 0) return;
+    if (isRefreshingRef.current || touchStartY.current < 0) return;
     if (pullDistance >= TRIGGER_THRESHOLD) {
+      isRefreshingRef.current = true;
       setIsRefreshing(true);
       setPullDistance(TRIGGER_THRESHOLD); // hold spinner position
       try {
         await onRefresh();
       } finally {
+        isRefreshingRef.current = false;
         setIsRefreshing(false);
         setPullDistance(0);
       }
