@@ -1,9 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useBatchTransaction } from "../../hooks/useBatchTransaction";
-// Named imports for tree-shaking — only pull what is used from stellar-sdk
-import { Operation, Asset } from "@stellar/stellar-sdk";
 
 interface LPPool {
   id: string;
@@ -23,14 +20,8 @@ interface Props {
 export function LPDepositModal({ pool, onClose, walletAddress }: Props) {
   const [xlmAmount, setXlmAmount] = useState("");
   const [usdcAmount, setUsdcAmount] = useState("");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  /**
-   * useBatchTransaction bundles the XLM deposit + USDC trustline setup into
-   * a single Freighter approval — one pop-up instead of two.
-   * Batch flow: [placeBet (XLM deposit), addTrustline (USDC)]
-   */
-  const { submitting: loading, error: batchError, submitOperations } = useBatchTransaction(onClose);
 
   // Mock balances - replace with actual wallet balances
   const xlmBalance = 10000;
@@ -51,41 +42,31 @@ export function LPDepositModal({ pool, onClose, walletAddress }: Props) {
       setError("Please enter amounts for both tokens");
       return;
     }
+
     if (parseFloat(xlmAmount) > xlmBalance) {
       setError("Insufficient XLM balance");
       return;
     }
+
     if (parseFloat(usdcAmount) > usdcBalance) {
       setError("Insufficient USDC balance");
       return;
     }
 
+    setLoading(true);
     setError("");
 
-    /**
-     * Batch: [XLM deposit payment, USDC trustline setup]
-     * Both operations are submitted atomically — one Freighter pop-up.
-     * If either fails, the entire transaction rolls back with no partial state.
-     */
-    await submitOperations(
-      [
-        {
-          type: "placeBet", // XLM deposit into the LP pool
-          operation: Operation.payment({
-            destination: walletAddress,
-            asset: Asset.native(),
-            amount: parseFloat(xlmAmount).toFixed(7),
-          }),
-        },
-        {
-          type: "addTrustline", // Establish USDC trustline in the same transaction
-          operation: Operation.changeTrust({
-            asset: new Asset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"),
-          }),
-        },
-      ],
-      walletAddress
-    );
+    try {
+      // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      
+      // Success - close modal
+      onClose();
+    } catch (err: any) {
+      setError(err.message || "Failed to deposit liquidity");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const estimatedShare = xlmAmount ? ((parseFloat(xlmAmount) * 2) / pool.tvl * 100).toFixed(4) : "0";
@@ -219,9 +200,9 @@ export function LPDepositModal({ pool, onClose, walletAddress }: Props) {
           </div>
 
           {/* Error Message */}
-          {(error || batchError) && (
+          {error && (
             <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-3 text-red-400 text-sm">
-              {error || batchError}
+              {error}
             </div>
           )}
 
