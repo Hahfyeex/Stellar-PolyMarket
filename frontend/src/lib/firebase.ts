@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -13,10 +14,13 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
+// Initialize Firestore
+const db = getFirestore(app);
+
 // Initialize Messaging
 let messaging = null;
 if (typeof window !== "undefined") {
   messaging = getMessaging(app);
 }
 
-export { messaging, getToken, onMessage };
+export { app, db, messaging, getToken, onMessage };

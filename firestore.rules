@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to validate wallet address format
+    function isValidWalletAddress(address) {
+      return address is string 
+        && address.size() >= 56 
+        && address.size() <= 56
+        && address.matches('^G[A-Z2-7]{55}$');
+    }
+    
+    // Helper function to validate comment text
+    function isValidCommentText(text) {
+      return text is string 
+        && text.size() > 0 
+        && text.size() <= 500;
+    }
+    
+    // Market Comments Collection
+    match /marketComments/{commentId} {
+      // Anyone can read comments
+      allow read: if true;
+      
+      // Only authenticated users can create comments
+      // Users can only post as their own wallet address
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasAll(['marketId', 'walletAddress', 'text', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['marketId', 'walletAddress', 'text', 'createdAt'])
+        && request.resource.data.marketId is int
+        && request.resource.data.marketId > 0
+        && isValidWalletAddress(request.resource.data.walletAddress)
+        && request.resource.data.walletAddress == request.auth.uid
+        && isValidCommentText(request.resource.data.text)
+        && request.resource.data.createdAt == request.time;
+      
+      // Users can only update their own comments
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.walletAddress
+        && request.resource.data.walletAddress == resource.data.walletAddress
+        && request.resource.data.marketId == resource.data.marketId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && isValidCommentText(request.resource.data.text);
+      
+      // Users can only delete their own comments
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.walletAddress;
+    }
+    
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

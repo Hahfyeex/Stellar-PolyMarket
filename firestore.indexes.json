@@ -1,0 +1,19 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "marketComments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "marketId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
