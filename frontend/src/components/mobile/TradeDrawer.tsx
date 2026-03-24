@@ -23,6 +23,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const isExpired = market ? new Date(market.end_date) <= new Date() : false;
 
   // Reset form when market changes
   useEffect(() => {
@@ -141,8 +142,11 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                   <button
                     key={i}
                     onClick={() => setSelectedOutcome(i)}
+                    disabled={market.resolved || isExpired}
                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
-                      ${selectedOutcome === i
+                      ${market.resolved && market.winning_outcome === i
+                        ? "bg-green-600 text-white"
+                        : selectedOutcome === i
                         ? "bg-blue-600 text-white"
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700"
                       }`}
@@ -153,7 +157,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               </div>
 
               {/* Amount input */}
-              {walletAddress ? (
+              {walletAddress && !market.resolved && !isExpired ? (
                 <div className="flex gap-3">
                   <input
                     type="number"
@@ -172,7 +176,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 </div>
               ) : (
                 <p className="text-gray-400 text-sm text-center py-2">
-                  Connect your wallet to place a bet
+                  {walletAddress ? "Betting is closed for this market" : "Connect your wallet to place a bet"}
                 </p>
               )}
 

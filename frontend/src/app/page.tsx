@@ -181,18 +181,14 @@ const DEMO_MARKETS: Market[] = [
   {
     id: 1,
     question: "Will Bitcoin reach $100k before 2027?",
-    end_date: "2026-03-24T08:30:00Z",
+    end_date: "2026-12-31T00:00:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
     winning_outcome: null,
     total_pool: "4200",
     status: "open",
-    resolution_state: "proposed",
-    proposed_outcome: 0,
-    proposed_at: "2026-03-24T09:00:00Z",
-    challenge_window_ends_at: "2026-03-25T09:00:00Z",
     resolution_notes:
-      "Primary reporting shows BTC remains below the threshold at market close. The proposed outcome is Yes pending the final challenge review.",
+      "Trading is active. Once the market closes, this panel will show the proposed resolution path and any challenge or dispute windows.",
     resolution_sources: [
       { label: "Associated Press", url: "https://apnews.com/" },
       { label: "Bloomberg", url: "https://www.bloomberg.com/" },
