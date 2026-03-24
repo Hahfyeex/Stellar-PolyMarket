@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const logger = require("../utils/logger");
 
 // POST /api/bets — place a bet
 router.post("/", async (req, res) => {
@@ -15,6 +16,7 @@ router.post("/", async (req, res) => {
       [marketId]
     );
     if (!market.rows.length) {
+      logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: market not found, resolved, or expired");
       return res.status(400).json({ error: "Market not found, already resolved, or expired" });
     }
 
@@ -30,8 +32,17 @@ router.post("/", async (req, res) => {
       [amount, marketId]
     );
 
+    logger.info({
+      bet_id: bet.rows[0].id,
+      market_id: marketId,
+      wallet_address: walletAddress,
+      outcome_index: outcomeIndex,
+      amount,
+    }, "Bet placed");
+
     res.status(201).json({ bet: bet.rows[0] });
   } catch (err) {
+    logger.error({ err, market_id: marketId, wallet_address: walletAddress }, "Failed to place bet");
     res.status(500).json({ error: err.message });
   }
 });
@@ -44,6 +55,7 @@ router.post("/payout/:marketId", async (req, res) => {
       [req.params.marketId]
     );
     if (!market.rows.length) {
+      logger.warn({ market_id: req.params.marketId }, "Payout rejected: market not resolved");
       return res.status(400).json({ error: "Market not resolved yet" });
     }
 
@@ -70,8 +82,17 @@ router.post("/payout/:marketId", async (req, res) => {
       [req.params.marketId, winning_outcome]
     );
 
+    logger.info({
+      market_id: req.params.marketId,
+      winning_outcome,
+      winners_count: winners.rows.length,
+      total_pool,
+      winning_stake: winningStake,
+    }, "Payouts distributed");
+
     res.json({ payouts });
   } catch (err) {
+    logger.error({ err, market_id: req.params.marketId }, "Failed to distribute payouts");
     res.status(500).json({ error: err.message });
   }
 });
@@ -89,8 +110,10 @@ router.get("/recent", async (req, res) => {
        LIMIT $1`,
       [limit]
     );
+    logger.debug({ activity_count: result.rows.length, limit }, "Recent activity fetched");
     res.json({ activity: result.rows });
   } catch (err) {
+    logger.error({ err }, "Failed to fetch recent activity");
     res.status(500).json({ error: err.message });
   }
 });
