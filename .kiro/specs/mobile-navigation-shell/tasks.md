@@ -82,14 +82,14 @@
   - **Property 8: Refresh idempotence**
   - **Validates: Requirements 4.4**
 
-- [ ] 7. Assemble MobileShell and wire into page.tsx
-- [ ] 7.1 Build MobileShell wrapper component
+- [-] 7. Assemble MobileShell and wire into page.tsx
+- [x] 7.1 Build MobileShell wrapper component
   - Own `activeTab`, `activeMarket`, `drawerOpen` state
   - Render BottomNavBar, FloatingBetButton, TradeDrawer as children
   - Apply `pt-[env(safe-area-inset-top)]` to top-level container
   - _Requirements: 1.5, 2.2, 5.1_
 
-- [ ] 7.2 Integrate MobileShell and PullToRefresh into page.tsx
+- [x] 7.2 Integrate MobileShell and PullToRefresh into page.tsx
   - Replace existing top nav with MobileShell on mobile viewports
   - Wrap market list with PullToRefresh
   - Wire `activeMarket` from market card selection to FAB
