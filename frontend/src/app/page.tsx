@@ -326,8 +326,12 @@ const DEMO_MARKETS: Market[] = [
     winning_outcome: null,
     total_pool: "4200",
     status: "open",
+    resolution_state: "proposed",
+    proposed_outcome: 0,
+    proposed_at: "2026-03-24T09:00:00Z",
+    challenge_window_ends_at: "2026-03-25T09:00:00Z",
     resolution_notes:
-      "Trading is active. Once the market closes, this panel will show the proposed resolution path and any challenge or dispute windows.",
+      "Primary reporting shows BTC remains below the threshold at market close. The proposed outcome is Yes pending the final challenge review.",
     resolution_sources: [
       { label: "Associated Press", url: "https://apnews.com/" },
       { label: "Bloomberg", url: "https://www.bloomberg.com/" },

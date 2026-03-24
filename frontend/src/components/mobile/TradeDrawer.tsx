@@ -1,11 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { useFormPersistence } from "../../hooks/useFormPersistence";
 import type { Market } from "../../types/market";
 import ResolutionCenter from "../ResolutionCenter";
 import { trackEvent } from "../../lib/firebase";
-import type { Market } from "../../types/market";
-import ResolutionCenter from "../ResolutionCenter";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
 import StakePresets from "../StakePresets";
@@ -364,7 +361,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               )}
 
               <div className="mt-5">
-                <MarketResolutionTracker market={market} />
+                <ResolutionCenter market={market} />
               </div>
 
               {/* What-If Simulator — shown when an outcome is selected */}
