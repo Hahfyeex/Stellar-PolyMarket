@@ -78,8 +78,8 @@ impl PredictionMarket {
     }
 
     /// Toggle the circuit breaker. Admin only.
-    /// Emits a `ContractPauseToggled` event with the new paused state.
-    pub fn set_pause(env: Env, admin: Address, paused: bool) {
+    /// Emits a `PauseToggled` event with the new paused state.
+    pub fn toggle_pause(env: Env, admin: Address, setup_pause: bool) {
         admin.require_auth();
         let stored_admin: Address = env
             .storage()
@@ -88,9 +88,9 @@ impl PredictionMarket {
             .expect("Admin role not set");
         assert!(admin == stored_admin, "ContractError::AccessDenied");
 
-        env.storage().persistent().set(&DataKey::IsPaused, &paused);
+        env.storage().persistent().set(&DataKey::IsPaused, &setup_pause);
         env.events()
-            .publish((symbol_short!("paused"),), paused);
+            .publish((symbol_short!("paused"),), setup_pause);
     }
 
     /// Returns true if the contract is currently paused.
@@ -389,10 +389,10 @@ mod tests {
 
         assert!(!client.is_paused());
 
-        client.set_pause(&admin, &true);
+        client.toggle_pause(&admin, &true);
         assert!(client.is_paused());
 
-        client.set_pause(&admin, &false);
+        client.toggle_pause(&admin, &false);
         assert!(!client.is_paused());
     }
 
@@ -402,7 +402,7 @@ mod tests {
     fn test_set_pause_emits_event() {
         let (env, client, admin, _, _, _) = setup();
 
-        client.set_pause(&admin, &true);
+        client.toggle_pause(&admin, &true);
 
         let events = env.events().all();
         assert!(!events.is_empty(), "Expected at least one event");
@@ -422,14 +422,14 @@ mod tests {
             address: &oracle,
             invoke: &MockAuthInvoke {
                 contract: &client.address,
-                fn_name: "set_pause",
+                fn_name: "toggle_pause",
                 args: (&oracle, true).into_val(&env),
                 sub_invokes: &[],
             },
         }]);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            client.set_pause(&oracle, &true);
+            client.toggle_pause(&oracle, &true);
         }));
         assert!(result.is_err(), "Non-admin should not be able to call set_pause()");
     }
@@ -463,7 +463,7 @@ mod tests {
     fn test_place_bet_panics_when_paused() {
         let (env, client, admin, _, _, token) = setup();
         create_test_market(&env, &client, &token);
-        client.set_pause(&admin, &true);
+        client.toggle_pause(&admin, &true);
 
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &100i128);
@@ -476,7 +476,7 @@ mod tests {
     fn test_withdraw_panics_when_paused() {
         let (env, client, admin, _, _, token) = setup();
         create_test_market(&env, &client, &token);
-        client.set_pause(&admin, &true);
+        client.toggle_pause(&admin, &true);
 
         let bettor = Address::generate(&env);
         client.withdraw(&1u64, &bettor);
