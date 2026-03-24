@@ -217,6 +217,44 @@ npm run dev
 
 ---
 
+## 🛡️ Security Operations
+
+The smart contract includes a **circuit breaker** (emergency stop) that allows the Admin to freeze critical functions during an incident.
+
+### Toggling the Pause
+
+Only the `Admin` role can pause or unpause the contract:
+
+```rust
+set_pause(admin: Address, paused: bool)
+```
+
+Emits a `ContractPauseToggled(bool)` event on every toggle. The current state can be queried at any time:
+
+```rust
+is_paused() -> bool
+```
+
+### Affected Functions
+
+When `IsPaused` is `true`, the following functions revert immediately with `"ContractPaused"`:
+
+| Function | Why it's gated |
+|----------|---------------|
+| `place_bet` | Prevents new funds entering a potentially compromised contract |
+| `withdraw` | Prevents fund movement until the incident is assessed |
+| `create_market` | Stops new market creation during an emergency |
+| `lock_market` | Halts market lifecycle progression |
+| `propose_result` | Freezes oracle data submission |
+| `resolve_market` | Prevents premature finalization |
+| `set_market_params` | Blocks parameter changes during a freeze |
+
+### Unaffected Functions
+
+Read-only functions (`get_market`, `get_pool`, `get_role`, `is_paused`) and `distribute_rewards` remain available while paused so users retain full visibility and resolved markets can still pay out.
+
+---
+
 ## 📄 License
 
 MIT © Stella Polymarket
