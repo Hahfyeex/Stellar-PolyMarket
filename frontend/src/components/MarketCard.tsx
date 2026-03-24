@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Link from "next/link";
 
 interface Market {
   id: number;
@@ -14,6 +15,7 @@ interface Props {
   market: Market;
   walletAddress: string | null;
   onBetPlaced?: () => void;
+  showFullCard?: boolean;
 }
 
 export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
@@ -67,6 +69,14 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         Pool: <span className="text-white font-medium">{parseFloat(market.total_pool).toFixed(2)} XLM</span>
         &nbsp;·&nbsp;Ends: {new Date(market.end_date).toLocaleDateString()}
       </p>
+      
+      {/* View Details Link */}
+      <Link
+        href={`/market/${market.id}`}
+        className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors mt-1"
+      >
+        View Details →
+      </Link>
 
       {/* Outcomes */}
       <div className="flex gap-2 flex-wrap">
