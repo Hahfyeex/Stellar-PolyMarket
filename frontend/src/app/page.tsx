@@ -6,17 +6,7 @@ import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-  status: string;
-}
+import type { Market } from "../types/market";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWallet();
@@ -197,6 +187,16 @@ const DEMO_MARKETS: Market[] = [
     winning_outcome: null,
     total_pool: "4200",
     status: "open",
+    resolution_state: "proposed",
+    proposed_outcome: 0,
+    proposed_at: "2026-03-24T09:00:00Z",
+    challenge_window_ends_at: "2026-03-25T09:00:00Z",
+    resolution_notes:
+      "Primary reporting shows BTC remains below the threshold at market close. The proposed outcome is Yes pending the final challenge review.",
+    resolution_sources: [
+      { label: "Associated Press", url: "https://apnews.com/" },
+      { label: "Bloomberg", url: "https://www.bloomberg.com/" },
+    ],
   },
   {
     id: 2,
@@ -207,6 +207,17 @@ const DEMO_MARKETS: Market[] = [
     winning_outcome: null,
     total_pool: "1800",
     status: "open",
+    resolution_state: "disputed",
+    proposed_outcome: 1,
+    proposed_at: "2026-03-23T12:00:00Z",
+    challenge_window_ends_at: "2026-03-24T12:00:00Z",
+    council_vote_ends_at: "2026-03-25T18:00:00Z",
+    resolution_notes:
+      "A dispute was filed after conflicting economic releases. Council review is active and the pool remains locked until the vote finalizes.",
+    resolution_sources: [
+      { label: "Bloomberg", url: "https://www.bloomberg.com/" },
+      { label: "National Bureau of Statistics", url: "https://nigerianstat.gov.ng/" },
+    ],
   },
   {
     id: 3,
@@ -214,8 +225,16 @@ const DEMO_MARKETS: Market[] = [
     end_date: "2026-05-30T00:00:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
-    winning_outcome: null,
+    winning_outcome: 1,
     total_pool: "3100",
-    status: "open",
+    status: "RESOLVED",
+    resolution_state: "settled",
+    finalized_at: "2026-03-22T14:00:00Z",
+    resolution_notes:
+      "League standings were confirmed after the closing whistle and the market has fully settled.",
+    resolution_sources: [
+      { label: "Premier League", url: "https://www.premierleague.com/" },
+      { label: "Associated Press", url: "https://apnews.com/" },
+    ],
   },
 ];

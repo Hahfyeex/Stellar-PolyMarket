@@ -1,14 +1,6 @@
 import { useState } from "react";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-}
+import type { Market } from "../types/market";
+import ResolutionCenter from "./ResolutionCenter";
 
 interface Props {
   market: Market;
@@ -51,7 +43,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800">
+    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-4 border border-gray-800">
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug">{market.question}</h3>
         {market.resolved ? (
@@ -113,6 +105,8 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           {message}
         </p>
       )}
+
+      <ResolutionCenter market={market} compact />
     </div>
   );
 }
