@@ -74,3 +74,183 @@ src/
     useWallet.ts      # Freighter wallet connection
     useRecentActivity.ts  # Polling hook + data-mapping utilities
 ```
+
+---
+
+## What-If Simulator (P&L Projections)
+
+The `WhatIfSimulator` component lets users model potential returns before placing a bet.
+
+### P&L Calculation Formula
+
+```
+projectedPayout = (stakeAmount / (poolForOutcome + stakeAmount)) * totalPool * 0.97
+```
+
+| Variable | Description |
+|---|---|
+| `stakeAmount` | Amount the user intends to bet (XLM) |
+| `poolForOutcome` | Current pool size for the chosen outcome before the bet |
+| `totalPool` | Sum of all outcome pools |
+| `0.97` | 3% platform fee deduction |
+
+**Implied probability** (market consensus before your bet):
+```
+impliedProbability = (poolForOutcome / totalPool) * 100
+```
+
+**Net P&L**:
+```
+projectedProfit = projectedPayout - stakeAmount
+```
+
+### Usage
+
+The simulator is embedded in both `MarketCard` (desktop) and `TradeDrawer` (mobile). It appears as a collapsible panel below the bet form once an outcome is selected.
+
+Props:
+- `poolForOutcome` — pool size for the selected outcome
+- `totalPool` — total pool across all outcomes
+- `maxStake` — optional slider maximum (defaults to `max(totalPool * 2, 1000)`)
+
+### Testing
+
+Calculation logic lives in `src/utils/simulatorCalc.ts` and is tested at 100% coverage in `src/utils/__tests__/simulatorCalc.test.ts`.
+
+```bash
+npm test -- --testPathPattern="simulatorCalc|WhatIfSimulator"
+```
+
+---
+
+## BettingSlip — Batch Betting (Slide-up Drawer)
+
+The `BettingSlip` component lets users queue up to 5 bets across different markets and submit them all in a single Freighter wallet approval.
+
+### Responsive layout
+
+- Mobile (`< 1024px`): slide-up drawer from bottom using `CSS transform: translateY`
+- Desktop (`≥ 1024px`): fixed right-side panel
+
+### Architecture
+
+| File | Role |
+|---|---|
+| `src/context/BettingSlipContext.tsx` | Global queue state — `isOpen`, `bets[]`, `addBet`, `removeBet`, `clearBets` |
+| `src/context/WalletContext.tsx` | Lifts wallet state globally so BettingSlip can submit |
+| `src/hooks/useBatchTransaction.ts` | Builds XDR via `/api/bets/batch`, signs with Freighter, submits via `/api/bets/submit` |
+| `src/components/BettingSlip.tsx` | Drawer/panel UI — bet list, remove buttons, submit |
+| `src/components/BettingSlipWrapper.tsx` | Client boundary that mounts BettingSlip in layout |
+| `src/components/Toast.tsx` | Queue-full warning toast |
+
+### Queue rules
+
+- Max 5 bets — adding a 6th shows a toast warning
+- Same market + outcome combination replaces the existing entry (no duplicates)
+- Auto-opens the slip when a bet is added
+
+### Adding a bet from a market card
+
+```tsx
+const { addBet } = useBettingSlip();
+
+addBet(
+  { marketId, marketTitle, outcomeIndex, outcomeName, amount },
+  () => showToast("Slip is full!")   // optional onQueueFull callback
+);
+```
+
+### Batch transaction flow
+
+1. POST `/api/bets/batch` → backend returns a Stellar XDR envelope
+2. `window.freighter.signTransaction(xdr)` → single user approval
+3. POST `/api/bets/submit` → backend submits signed XDR to Stellar testnet
+
+---
+
+## PoolOwnershipChart — Fractional Ownership Pie Chart
+
+Renders a live Recharts `PieChart` showing each bettor's fractional share of the pool. Updates in real-time via WebSocket when new bets arrive.
+
+### API data structure expected
+
+`GET /api/markets/:id` must return:
+
+```json
+{
+  "market": { "total_pool": "4200", ... },
+  "bets": [
+    { "wallet_address": "GABC...XY12", "amount": "150" },
+    { "wallet_address": "GDEF...AB34", "amount": "50" }
+  ]
+}
+```
+
+### Data transformation pipeline
+
+```
+bets[] → group by wallet_address → sum amounts
+       → calculate % share (amount / totalPool * 100)
+       → sort descending
+       → wallets < 1% merged into "Others" slice
+```
+
+Logic lives in `src/utils/poolOwnership.ts` (`buildOwnershipSlices`).
+
+### Live updates
+
+Uses `socket.io-client` to join `market_{id}` room. On `oddsUpdate` event, re-fetches bets and rebuilds slices without a page reload.
+
+### Usage
+
+```tsx
+<PoolOwnershipChart marketId={market.id} />
+```
+
+### Slice colors
+
+Slices use the Stella Polymarket design token palette (blue, green, purple, amber, red, cyan, pink, lime, indigo, orange). Wallets below 1% are grouped into a gray "Others" slice.
+
+---
+
+## useFormPersistence — Bet Form State Persistence
+
+Persists bet form inputs to `localStorage` so users don't lose their selections on refresh or accidental navigation.
+
+### Storage key format
+
+```
+stella_bet_form_{marketId}
+```
+
+Examples: `stella_bet_form_1`, `stella_bet_form_42`
+
+Each market has an independent key — switching markets restores that market's last state.
+
+### Persisted fields
+
+| Field | Type | Default |
+|---|---|---|
+| `outcomeIndex` | `number \| null` | `null` |
+| `amount` | `string` | `""` |
+| `slippageTolerance` | `number` | `0.5` |
+
+### Usage
+
+```tsx
+const { outcomeIndex, amount, slippageTolerance, setOutcomeIndex, setAmount, clearForm } =
+  useFormPersistence(market.id);
+
+// After successful bet submission:
+clearForm(); // removes localStorage entry and resets fields to defaults
+```
+
+### Clearing state for testing
+
+Open browser DevTools → Application → Local Storage and delete any key matching `stella_bet_form_*`, or run:
+
+```js
+Object.keys(localStorage)
+  .filter(k => k.startsWith("stella_bet_form_"))
+  .forEach(k => localStorage.removeItem(k));
+```

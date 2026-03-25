@@ -1,5 +1,8 @@
 const { SorobanRpc, xdr, StrKey } = require("@stellar/stellar-sdk");
 const logger = require("./utils/logger");
+const redis = require("./utils/redis");
+const { verifyProposal } = require("./workers/truth-watcher");
+const { checkWhaleTransaction } = require("./workers/whale-watcher");
 require("dotenv").config();
 
 // Configuration
@@ -43,6 +46,13 @@ async function streamEvents() {
                         topics: [
                             xdr.ScVal.scvSymbol("Bet").toXDR("base64")
                         ]
+                    },
+                    {
+                        type: "contract",
+                        contractIds: [CONTRACT_ID],
+                        topics: [
+                            xdr.ScVal.scvSymbol("MarketProposed").toXDR("base64")
+                        ]
                     }
                 ],
                 pagination: { limit: 100 }
@@ -50,10 +60,21 @@ async function streamEvents() {
 
             if (eventsResponse.events && eventsResponse.events.length > 0) {
                 eventsResponse.events.forEach(event => {
-                    const topic = event.topic[0]; // "Bet"
-                    // Topic 1 is market_id
-                    // Data is (bettor, amount, option_index)
-                    parseAndLogBetEvent(event);
+                    if (event.topic.length > 0) {
+                        try {
+                            const topicScVal = xdr.ScVal.fromXDR(event.topic[0], "base64");
+                            if (topicScVal.switch() === xdr.ScValType.scvSymbol()) {
+                                const symbol = topicScVal.sym().toString();
+                                if (symbol === "Bet") {
+                                    parseAndLogBetEvent(event);
+                                } else if (symbol === "MarketProposed") {
+                                    parseAndLogMarketProposedEvent(event);
+                                }
+                            }
+                        } catch (e) {
+                            logger.warn(`Failed to parse event topic: ${e.message}`);
+                        }
+                    }
                 });
             }
 
@@ -64,7 +85,7 @@ async function streamEvents() {
     }, POLL_INTERVAL);
 }
 
-function parseAndLogBetEvent(event) {
+async function parseAndLogBetEvent(event) {
     try {
         // Parse the event data which is a Tuple(Address, i128, u32)
         const parsedData = xdr.ScVal.fromXDR(event.value, "base64");
@@ -105,9 +126,66 @@ function parseAndLogBetEvent(event) {
         // Outcome (option_index) is u32
         const outcomeVal = vec[2].u32();
 
-        console.log(`[Bet Placed] User: ${userStr}, Amount: ${amount}, Outcome: ${outcomeVal}`);
+        // Topic 1 has the market_id
+        let marketId = "unknown";
+        if (event.topic.length > 1) {
+            let marketIdVal = xdr.ScVal.fromXDR(event.topic[1], "base64");
+            if (marketIdVal.switch() === xdr.ScValType.scvU32()) {
+                marketId = marketIdVal.u32().toString();
+            } else if (marketIdVal.switch() === xdr.ScValType.scvString()) {
+                marketId = marketIdVal.str().toString();
+            } else if (marketIdVal.switch() === xdr.ScValType.scvI32()) {
+                marketId = marketIdVal.i32().toString();
+            }
+        }
+
+        console.log(`[Bet Placed] User: ${userStr}, Amount: ${amount}, Outcome: ${outcomeVal}, Market: ${marketId}`);
+        
+        // Invalidate Market Odds Cache
+        if (marketId !== "unknown") {
+            redis.del(`market:${marketId}:odds`).catch(err => {
+                logger.error({ err, marketId }, "Failed to invalidate odds cache");
+            });
+        }
+        
+        // Issue #32 "Whale-Watch" Middleware filtering indexer stream for bets > threshold
+        await checkWhaleTransaction(marketId, amount, userStr);
     } catch (e) {
         logger.error(`Failed to parse bet event: ${e.message}`);
+    }
+}
+
+async function parseAndLogMarketProposedEvent(event) {
+    try {
+        if (event.topic.length < 2) return;
+        
+        let marketIdVal = xdr.ScVal.fromXDR(event.topic[1], "base64");
+        // Convert marketIdVal to string depending on its type (usually scvU32 or scvString)
+        let marketId = "";
+        if (marketIdVal.switch() === xdr.ScValType.scvU32()) {
+            marketId = marketIdVal.u32().toString();
+        } else if (marketIdVal.switch() === xdr.ScValType.scvString()) {
+            marketId = marketIdVal.str().toString();
+        } else if (marketIdVal.switch() === xdr.ScValType.scvI32()) {
+            marketId = marketIdVal.i32().toString();
+        } else {
+            marketId = "unknown";
+        }
+        
+        const parsedData = xdr.ScVal.fromXDR(event.value, "base64");
+        let proposedOutcome = "";
+        
+        if (parsedData.switch() === xdr.ScValType.scvString()) {
+            proposedOutcome = parsedData.str().toString();
+        } else if (parsedData.switch() === xdr.ScValType.scvSymbol()) {
+            proposedOutcome = parsedData.sym().toString();
+        }
+
+        console.log(`[Market Proposed] Market ID: ${marketId}, Proposed Outcome: ${proposedOutcome}`);
+        await verifyProposal(marketId, proposedOutcome);
+
+    } catch (e) {
+        logger.error(`Failed to parse market proposed event: ${e.message}`);
     }
 }
 
