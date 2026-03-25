@@ -254,3 +254,41 @@ Object.keys(localStorage)
   .filter(k => k.startsWith("stella_bet_form_"))
   .forEach(k => localStorage.removeItem(k));
 ```
+
+---
+
+## PayoutTooltip — Soroban Simulation Preview
+
+Shows users their exact estimated payout and network fee before signing, using the Soroban `simulateTransaction` RPC. The tooltip appears below the bet amount input and updates dynamically as the user types.
+
+### How it works
+
+1. User types a stake amount → `useSimulateBet` debounces 400ms
+2. Hook calls `SorobanRpc.Server.simulateTransaction` with a `place_bet` invocation
+3. `parseSimulationResponse` extracts `minResourceFee` (network fee in stroops) and computes payout from current pool state
+4. `PayoutTooltip` renders "Estimated Payout", "Net Profit", and "Network Fee"
+
+### Handling outdated simulations (ledger staleness)
+
+Each simulation captures `latestLedger` from the RPC response. A background interval polls the current ledger every 5 seconds. If the ledger has advanced by more than **3 ledgers** (`STALE_LEDGER_THRESHOLD`) since the last simulation, `isStale` becomes `true` and a "Refreshing..." badge appears.
+
+The last known values remain visible during the refresh window — the UI never blanks out. The next debounced simulation (triggered by any input change, or automatically on the next keystroke) clears the stale flag.
+
+On Stellar, a new ledger closes every ~5 seconds. Pool odds can shift with each new bet, so 3 ledgers (~15 seconds) is a reasonable staleness window for a betting UI.
+
+### Environment variable
+
+```
+NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+NEXT_PUBLIC_CONTRACT_ID=<your deployed contract address>
+```
+
+### Payout formula
+
+```
+share = stakeAmount / (poolForOutcome + stakeAmount)
+estimatedPayout = share * totalPool * 0.97   // 3% platform fee
+networkFeeXlm = minResourceFee / 10_000_000  // stroops → XLM
+```
+
+Logic lives in `src/utils/simulateBet.ts` and is tested at 95%+ coverage.

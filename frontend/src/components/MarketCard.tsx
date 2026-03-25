@@ -5,6 +5,7 @@ import { useBettingSlip } from "../context/BettingSlipContext";
 import Toast from "./Toast";
 import PoolOwnershipChart from "./PoolOwnershipChart";
 import { useFormPersistence } from "../hooks/useFormPersistence";
+import PayoutTooltip from "./PayoutTooltip";
 
 interface Market {
   id: number;
@@ -220,6 +221,17 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
               Clear form
             </button>
           </div>
+
+          {/* Payout tooltip — live Soroban simulation */}
+          <PayoutTooltip
+            contractId={process.env.NEXT_PUBLIC_CONTRACT_ID ?? null}
+            walletAddress={walletAddress}
+            marketId={market.id}
+            outcomeIndex={selectedOutcome}
+            stakeAmount={parseFloat(amount) || 0}
+            poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}
+            totalPool={parseFloat(market.total_pool)}
+          />
         </div>
       )}
 
