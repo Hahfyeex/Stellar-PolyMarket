@@ -3473,4 +3473,87 @@ mod tests {
         let paid = client.batch_distribute(&1u64, &5u32);
         assert_eq!(paid, 0u32);
     }
+
+    // ── Graceful shutdown ─────────────────────────────────────────────────────
+
+    /// Platform starts active by default.
+    #[test]
+    fn test_global_status_defaults_active() {
+        let (_, client, _, _, _) = setup();
+        assert!(client.get_global_status());
+    }
+
+    /// set_global_status(false) blocks create_market.
+    #[test]
+    #[should_panic(expected = "Platform is shut down")]
+    fn test_create_market_blocked_when_shutdown() {
+        let (env, client, _, token, _) = setup();
+        client.set_global_status(&false);
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        client.create_market(
+            &2u64,
+            &String::from_str(&env, "New market"),
+            &options,
+            &(env.ledger().timestamp() + 100),
+            &token,
+        );
+    }
+
+    /// place_bet on an existing market still works during shutdown.
+    #[test]
+    fn test_place_bet_allowed_during_shutdown() {
+        let (env, client, _, _, _) = setup();
+        client.set_global_status(&false);
+        // market 1 was created before shutdown — betting must still work
+        let bettor = Address::generate(&env);
+        // mock_all_auths covers token transfer; no panic expected
+        client.place_bet(&1u64, &0u32, &bettor, &50i128);
+        assert_eq!(client.get_total_shares(&1u64), 50i128);
+    }
+
+    /// batch_distribute still works during shutdown.
+    #[test]
+    fn test_batch_distribute_allowed_during_shutdown() {
+        let (_, client, _) = setup_market_with_winners(3);
+        client.set_global_status(&false);
+        let paid = client.batch_distribute(&1u64, &3u32);
+        assert_eq!(paid, 3u32);
+    }
+
+    /// resolve_market still works during shutdown.
+    #[test]
+    fn test_resolve_market_allowed_during_shutdown() {
+        let (_, client, _, _, _) = setup();
+        client.set_global_status(&false);
+        client.resolve_market(&1u64, &0u32);
+        assert!(client.get_market(&1u64).resolved);
+    }
+
+    /// Re-activating the platform allows create_market again.
+    #[test]
+    fn test_reactivation_allows_create_market() {
+        let (env, client, _, token, _) = setup();
+        client.set_global_status(&false);
+        assert!(!client.get_global_status());
+        client.set_global_status(&true);
+        assert!(client.get_global_status());
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        // Should not panic
+        client.create_market(
+            &2u64,
+            &String::from_str(&env, "Post-reactivation market"),
+            &options,
+            &(env.ledger().timestamp() + 100),
+            &token,
+        );
+        assert_eq!(client.get_market(&2u64).id, 2u64);
+    }
 }
