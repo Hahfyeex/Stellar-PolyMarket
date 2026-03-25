@@ -176,6 +176,7 @@ impl PredictionMarket {
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         panic_if_paused(&env);
         bettor.require_auth();
+        assert_not_paused(&env);
         assert!(amount > 0, "Amount must be positive");
 
         // Hot read: is_paused from Instance
