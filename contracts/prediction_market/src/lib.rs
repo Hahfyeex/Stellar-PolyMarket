@@ -11,7 +11,8 @@ pub const MAX_BATCH_SIZE: u32 = 25;
 #[contracttype]
 pub enum DataKey {
     Initialized,
-    IsPaused,
+    Admin,
+    OracleAddress,
     Market(u64),
     /// Cold: per-user positions — Persistent storage
     UserPosition(u64),
@@ -774,11 +775,7 @@ impl PredictionMarket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use access::Role;
-    use soroban_sdk::{
-        testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
-        vec, Env, IntoVal, String,
-    };
+    use soroban_sdk::{testutils::{Address as _, Ledger}, vec, Env, String};
 
     // ── shared helpers ────────────────────────────────────────────────────────
 
