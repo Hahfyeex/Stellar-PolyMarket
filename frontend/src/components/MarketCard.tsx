@@ -311,6 +311,23 @@ export default function MarketCard({
       )}
 
       <ResolutionCenter market={market} compact />
+
+      {/* Queue-full toast */}
+      {showQueueFullToast && (
+        <Toast
+          message={`Betting slip is full (max ${5} bets). Remove one to add more.`}
+          type="warning"
+          onDismiss={() => setShowQueueFullToast(false)}
+        />
+      )}
+
+      {/* What-If Simulator — shown when an outcome is selected */}
+      {!market.resolved && !isExpired && selectedOutcome !== null && (
+        <WhatIfSimulator
+          poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}
+          totalPool={parseFloat(market.total_pool)}
+        />
+      )}
     </div>
   );
 }
