@@ -78,6 +78,7 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
   }
 });
 
+const { calculateConfidenceScore } = require("../utils/analytics");
 // GET /api/markets/:id
 router.get("/:id", async (req, res) => {
   try {
@@ -87,9 +88,23 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ error: "Market not found" });
     }
 
-    const bets = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
-    logger.debug({ market_id: req.params.id, bets_count: bets.rows.length }, "Market details fetched");
-    res.json({ market: market.rows[0], bets: bets.rows });
+    const betsResult = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
+    const bets = betsResult.rows;
+    const confidenceScore = calculateConfidenceScore(bets);
+
+    logger.debug({
+      market_id: req.params.id,
+      bets_count: bets.length,
+      confidence_score: confidenceScore,
+    }, "Market details fetched with confidence score");
+
+    res.json({
+      market: {
+        ...market.rows[0],
+        confidence_score: confidenceScore,
+      },
+      bets,
+    });
   } catch (err) {
     logger.error({ err, market_id: req.params.id }, "Failed to fetch market details");
     res.status(500).json({ error: err.message });
