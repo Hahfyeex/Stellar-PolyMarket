@@ -2597,6 +2597,44 @@ impl PredictionMarket {
         
         Some((total_pool, total_pool - payout_pool, payout_pool, winning_stake, num_winners))
     }
+
+    /// Store an audit log hash on-chain. Only callable by admin.
+    /// `cid_hash` is the SHA-256 hash of the IPFS CID for the audit entry.
+    pub fn store_audit_hash(env: Env, admin: Address, cid_hash: BytesN<32>) {
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can store audit hashes");
+        admin.require_auth();
+
+        // Increment the audit log counter
+        let count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLog(count), &cid_hash);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLogCount, &(count + 1));
+    }
+
+    /// Retrieve an audit log hash by its sequential ID.
+    pub fn get_audit_hash(env: Env, log_id: u64) -> BytesN<32> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLog(log_id))
+            .unwrap()
+    }
+
+    /// Get the total number of audit log entries stored on-chain.
+    pub fn get_audit_log_count(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
