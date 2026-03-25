@@ -67,6 +67,10 @@ app.use("/api/tvl", require("./routes/tvl"));
 
 // Start TVL background poller (updates Prometheus gauges every 30 s)
 require("./services/tvlService").startPoller();
+app.use("/api/governance", require("./routes/governance"));
+
+// Initialise bot registry — subscribes all strategies to the event bus
+require("./bots/registry");
 
 // Global error handler
 app.use((err, req, res, next) => {

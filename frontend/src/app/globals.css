@@ -8,15 +8,29 @@ body {
 }
 
 /* Safe-area utility classes */
-.safe-top    { padding-top:    env(safe-area-inset-top); }
-.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
-.safe-left   { padding-left:   env(safe-area-inset-left); }
-.safe-right  { padding-right:  env(safe-area-inset-right); }
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-left {
+  padding-left: env(safe-area-inset-left);
+}
+.safe-right {
+  padding-right: env(safe-area-inset-right);
+}
 
 /* Live Activity Feed — fade-in animation for new items */
 @keyframes activityFadeIn {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .activity-fade-in {
   animation: activityFadeIn 0.5s ease-out forwards;
@@ -24,8 +38,12 @@ body {
 
 /* Trade Drawer — slide-up entrance */
 @keyframes drawerSlideUp {
-  from { transform: translateY(100%); }
-  to   { transform: translateY(0); }
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
 .drawer-enter {
   animation: drawerSlideUp 0.3s ease-out forwards;
@@ -38,12 +56,72 @@ body {
 }
 
 @keyframes float {
-  0% { transform: translateY(0px); }
-  50% { transform: translateY(-20px); }
-  100% { transform: translateY(0px); }
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
 }
 
 /* Pull-to-refresh spinner */
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/**
+ * Skeleton Shimmer Animation
+ * 
+ * Creates a smooth, flowing shimmer effect across skeleton loading placeholders.
+ * The animation:
+ * 1. Shifts the background gradient from left to right (0% → 100%)
+ * 2. Uses a linear gradient with transparent edges and light gray center
+ * 3. Repeats continuously at 1.5 second intervals
+ * 4. GPU-accelerated using background-position (more performant than key properties)
+ * 
+ * The background-size: 200% means the gradient is twice the element width,
+ * allowing the animation to smoothly scroll the gradient across the full element.
+ * 
+ * This creates the perception of content "loading" without causing layout shifts (CLS).
+ */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: calc(200% + 100px) 0;
+  }
+}
+
+/**
+ * .skeleton - Base class for all skeleton loading placeholders
+ * 
+ * Properties:
+ * - background-color: Dark gray (rgb(31, 41, 55) = bg-gray-800)
+ * - background-image: Linear gradient from transparent → light gray → transparent
+ *   This creates the "loading bar" effect
+ * - background-size: 200% ensures the gradient is larger than the element
+ * - animation: Runs shimmer effect continuously
+ * - border-radius: Matches typical component corners
+ * 
+ * Apply this class to any placeholder element that matches the dimensions
+ * of the content it will be replaced with.
+ */
+.skeleton {
+  background-color: rgb(31, 41, 55);
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1) 20%,
+    rgba(255, 255, 255, 0.1) 60%,
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 0.5rem;
 }
