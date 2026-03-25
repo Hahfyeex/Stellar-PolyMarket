@@ -3,6 +3,19 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "appcheck": {
+    "enforcementMode": "ENFORCED",
+    "services": [
+      {
+        "name": "firestore.googleapis.com",
+        "enforcementMode": "ENFORCED"
+      },
+      {
+        "name": "cloudfunctions.googleapis.com",
+        "enforcementMode": "ENFORCED"
+      }
+    ]
+  },
   "emulators": {
     "firestore": {
       "port": 8080

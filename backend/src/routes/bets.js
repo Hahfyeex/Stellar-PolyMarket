@@ -150,4 +150,47 @@ router.get("/recent", async (req, res) => {
   }
 });
 
+// GET /api/bets/my-positions — paginated user positions
+router.get("/my-positions", async (req, res) => {
+  const { walletAddress, cursor } = req.query;
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+
+  if (!walletAddress) {
+    return res.status(400).json({ error: "walletAddress is required" });
+  }
+
+  try {
+    const cursorId = cursor ? parseInt(cursor) : null;
+    const query = `
+      SELECT b.id, b.market_id, b.outcome_index, b.amount, b.created_at, b.paid_out,
+             m.question, m.status as market_status, m.resolved
+      FROM bets b
+      JOIN markets m ON m.id = b.market_id
+      WHERE b.wallet_address = $1
+        AND ($2::integer IS NULL OR b.id < $2)
+      ORDER BY b.id DESC
+      LIMIT $3
+    `;
+
+    const result = await db.query(query, [walletAddress, cursorId, limit]);
+    const bets = result.rows;
+    const nextCursor = bets.length > 0 ? bets[bets.length - 1].id : null;
+
+    logger.info({
+      wallet_address: walletAddress,
+      bets_count: bets.length,
+      next_cursor: nextCursor,
+    }, "User positions fetched");
+
+    res.json({
+      positions: bets,
+      next_cursor: nextCursor,
+      limit,
+    });
+  } catch (err) {
+    logger.error({ err, wallet_address: walletAddress }, "Failed to fetch user positions");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
