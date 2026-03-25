@@ -8,6 +8,8 @@ import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
+import ContractErrorBoundary from "../components/ContractErrorBoundary";
+import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 
 interface Market {
@@ -183,12 +185,13 @@ export default function Home() {
                     activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
                   }`}
                 >
-                  <MarketCard
-                    market={market}
-                    walletAddress={publicKey}
-                    onBetPlaced={fetchMarkets}
-                  />
-                </div>
+                  <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
+                    <MarketCard
+                      market={market}
+                      walletAddress={publicKey}
+                      onBetPlaced={fetchMarkets}
+                    />
+                  </ContractErrorBoundary>
               ))}
             </div>
           )}
