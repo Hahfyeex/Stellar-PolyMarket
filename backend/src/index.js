@@ -14,6 +14,11 @@ app.use("/api/markets", require("./routes/markets"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/reserves", require("./routes/reserves"));
+app.use("/api/audit-logs", require("./routes/audit"));
+
+const shortUrlRoutes = require("./routes/shorturl");
+app.use("/api/short-url", shortUrlRoutes);
+app.get("/s/:code", shortUrlRoutes.redirectHandler);
 
 // Global error handler
 app.use((err, req, res, next) => {
