@@ -2,6 +2,19 @@
 
 > A decentralized prediction market built on the Stellar blockchain
 
+---
+
+## 🏗️ Monorepo Layout
+
+Root workspace now uses npm workspaces and shares constants through `constants/`.
+
+- `contracts/` - Soroban smart contract Rust code
+- `frontend/` - Next.js frontend
+- `backend/` - Node.js API server
+- `oracle/` - Oracle connectors
+- `constants/` - shared TypeScript constants / config
+
+
 ![Stellar](https://img.shields.io/badge/Stellar-XLM-blue?logo=stellar)
 ![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-purple)
 ![License](https://img.shields.io/badge/license-MIT-green)
