@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trackEvent } from "../lib/firebase";
+import WhatIfSimulator from "./WhatIfSimulator";
 
 interface Market {
   id: number;
@@ -158,6 +159,14 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         <p className={`text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
           {message}
         </p>
+      )}
+
+      {/* What-If Simulator — shown when an outcome is selected */}
+      {!market.resolved && !isExpired && selectedOutcome !== null && (
+        <WhatIfSimulator
+          poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}
+          totalPool={parseFloat(market.total_pool)}
+        />
       )}
     </div>
   );

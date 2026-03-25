@@ -15,7 +15,8 @@
     "firebase": "^12.11.0",
     "next": "^16.2.1",
     "react": "^18.0.0",
-    "react-dom": "^18.0.0"
+    "react-dom": "^18.0.0",
+    "recharts": "^3.8.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

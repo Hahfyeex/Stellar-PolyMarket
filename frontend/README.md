@@ -74,3 +74,49 @@ src/
     useWallet.ts      # Freighter wallet connection
     useRecentActivity.ts  # Polling hook + data-mapping utilities
 ```
+
+---
+
+## What-If Simulator (P&L Projections)
+
+The `WhatIfSimulator` component lets users model potential returns before placing a bet.
+
+### P&L Calculation Formula
+
+```
+projectedPayout = (stakeAmount / (poolForOutcome + stakeAmount)) * totalPool * 0.97
+```
+
+| Variable | Description |
+|---|---|
+| `stakeAmount` | Amount the user intends to bet (XLM) |
+| `poolForOutcome` | Current pool size for the chosen outcome before the bet |
+| `totalPool` | Sum of all outcome pools |
+| `0.97` | 3% platform fee deduction |
+
+**Implied probability** (market consensus before your bet):
+```
+impliedProbability = (poolForOutcome / totalPool) * 100
+```
+
+**Net P&L**:
+```
+projectedProfit = projectedPayout - stakeAmount
+```
+
+### Usage
+
+The simulator is embedded in both `MarketCard` (desktop) and `TradeDrawer` (mobile). It appears as a collapsible panel below the bet form once an outcome is selected.
+
+Props:
+- `poolForOutcome` — pool size for the selected outcome
+- `totalPool` — total pool across all outcomes
+- `maxStake` — optional slider maximum (defaults to `max(totalPool * 2, 1000)`)
+
+### Testing
+
+Calculation logic lives in `src/utils/simulatorCalc.ts` and is tested at 100% coverage in `src/utils/__tests__/simulatorCalc.test.ts`.
+
+```bash
+npm test -- --testPathPattern="simulatorCalc|WhatIfSimulator"
+```

@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState, useEffect } from "react";
 import { trackEvent } from "../../lib/firebase";
+import WhatIfSimulator from "../WhatIfSimulator";
 
 interface Market {
   id: number;
@@ -216,6 +217,14 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 <p className={`text-sm mt-3 ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
                   {message}
                 </p>
+              )}
+
+              {/* What-If Simulator — shown when an outcome is selected */}
+              {selectedOutcome !== null && (
+                <WhatIfSimulator
+                  poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}
+                  totalPool={parseFloat(market.total_pool)}
+                />
               )}
             </>
           ) : (
