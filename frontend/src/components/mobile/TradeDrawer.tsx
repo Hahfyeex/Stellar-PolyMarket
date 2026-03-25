@@ -10,7 +10,10 @@ interface Market {
   resolved: boolean;
   winning_outcome: number | null;
   total_pool: string;
+  pool_depth?: Record<string, number>;
 }
+
+import LiquidityHeatmap from "./LiquidityHeatmap";
 
 interface Props {
   market: Market | null;
@@ -174,17 +177,24 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               {/* Outcome buttons */}
               <div className="flex gap-3 mb-5">
                 {market.outcomes.map((outcome, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setSelectedOutcome(i)}
-                    className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
-                      ${selectedOutcome === i
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700"
-                      }`}
-                  >
-                    {outcome}
-                  </button>
+                  <div key={i} className="relative flex-1">
+                    <button
+                      onClick={() => setSelectedOutcome(i)}
+                      className={`w-full py-3 rounded-xl text-sm font-semibold transition-colors
+                        ${selectedOutcome === i
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                        } relative z-10`}
+                    >
+                      {outcome}
+                    </button>
+                    {/* Layered CSS div overlay with opacity tied to pool size */}
+                    <LiquidityHeatmap 
+                      poolDepth={market.pool_depth || {}} 
+                      totalPool={parseFloat(market.total_pool || "0")} 
+                      outcomeIndex={i} 
+                    />
+                  </div>
                 ))}
               </div>
 
