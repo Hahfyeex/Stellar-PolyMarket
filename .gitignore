@@ -15,3 +15,17 @@ target/
 
 # Node
 node_modules/
+# Stress Test Results
+stress-test-results/
+*.jtl
+bzt.log
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+ENV/
