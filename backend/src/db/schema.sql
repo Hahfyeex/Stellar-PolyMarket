@@ -27,3 +27,19 @@ CREATE TABLE IF NOT EXISTS user_notifications (
   preferences JSONB DEFAULT '{"market_proposed": true, "market_resolved": true}'::jsonb,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS users (
+  wallet_address TEXT PRIMARY KEY,
+  email TEXT,
+  social_handles JSONB DEFAULT '{}'::jsonb,
+  profile_bio TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id SERIAL PRIMARY KEY,
+  action TEXT NOT NULL,
+  wallet_address TEXT NOT NULL,
+  details JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
