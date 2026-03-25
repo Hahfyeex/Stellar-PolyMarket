@@ -2,6 +2,7 @@
 import { useRef, useState, useEffect } from "react";
 import { trackEvent } from "../../lib/firebase";
 import WhatIfSimulator from "../WhatIfSimulator";
+import { useFormPersistence } from "../../hooks/useFormPersistence";
 
 interface Market {
   id: number;
@@ -29,17 +30,19 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   const [isDragging, setIsDragging] = useState(false);
   const touchStartY = useRef(0);
 
-  const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
-  const [amount, setAmount] = useState("");
+  // Use persistence hook — falls back to marketId=0 when no market selected
+  const {
+    outcomeIndex: selectedOutcome,
+    amount,
+    slippageTolerance,
+    setOutcomeIndex: setSelectedOutcome,
+    setAmount,
+    setSlippageTolerance,
+    clearForm,
+  } = useFormPersistence(market?.id ?? 0);
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-
-  // Reset form when market changes
-  useEffect(() => {
-    setSelectedOutcome(null);
-    setAmount("");
-    setMessage("");
-  }, [market?.id]);
 
   // Reset drag when drawer opens/closes
   useEffect(() => {
@@ -107,7 +110,9 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
         amount: parseFloat(amount),
         outcome_name: market.outcomes[selectedOutcome],
       });
-      
+
+      // Clear persisted form state after successful submission
+      clearForm();
       onBetPlaced?.();
     } catch (err: any) {
       setMessage(`Error: ${err.message}`);
@@ -191,21 +196,48 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
               {/* Amount input */}
               {walletAddress ? (
-                <div className="flex gap-3">
-                  <input
-                    type="number"
-                    placeholder="Amount (XLM)"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
-                  />
-                  <button
-                    onClick={placeBet}
-                    disabled={loading || selectedOutcome === null || !amount}
-                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
-                  >
-                    {loading ? "..." : "Bet"}
-                  </button>
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-3">
+                    <input
+                      type="number"
+                      placeholder="Amount (XLM)"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
+                    />
+                    <button
+                      onClick={placeBet}
+                      disabled={loading || selectedOutcome === null || !amount}
+                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
+                    >
+                      {loading ? "..." : "Bet"}
+                    </button>
+                  </div>
+
+                  {/* Slippage + clear row */}
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs text-gray-400">
+                      Slippage
+                      <select
+                        data-testid="slippage-select"
+                        value={slippageTolerance}
+                        onChange={(e) => setSlippageTolerance(parseFloat(e.target.value))}
+                        className="bg-gray-800 text-white rounded px-2 py-1 text-xs border border-gray-700 outline-none"
+                      >
+                        <option value={0.1}>0.1%</option>
+                        <option value={0.5}>0.5%</option>
+                        <option value={1}>1%</option>
+                        <option value={2}>2%</option>
+                      </select>
+                    </label>
+                    <button
+                      data-testid="clear-form"
+                      onClick={() => { clearForm(); setMessage(""); }}
+                      className="text-xs text-gray-500 hover:text-red-400 transition-colors"
+                    >
+                      Clear form
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <p className="text-gray-400 text-sm text-center py-2">

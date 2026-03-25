@@ -79,8 +79,10 @@ Markets are created instantly without admin approval through automated validatio
 - **End Date**: Must be future date within 1 year
 - **No Duplicates**: Unique questions only
 - **Rate Limit**: 3 markets per wallet per 24 hours
+- **Creation Fee**: Configurable fee (default 0) charged in the market's token — burned or sent to DAO treasury
 
 See [Permissionless Launch Guide](PERMISSIONLESS_LAUNCH_README.md) for details.
+See [Creation Fee & DAO Governance](contracts/prediction_market/CREATION_FEE_README.md) for fee configuration.
 
 ---
 

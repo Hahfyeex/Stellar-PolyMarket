@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useWallet } from "../hooks/useWallet";
+import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
@@ -21,7 +21,7 @@ interface Market {
 }
 
 export default function Home() {
-  const { publicKey, connecting, error, connect, disconnect } = useWallet();
+  const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
