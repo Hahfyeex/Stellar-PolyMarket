@@ -114,6 +114,11 @@ pub const LIVENESS_WINDOW: u64 = 0; // Immediate for testing
 /// Source: Fast-moving crypto markets require fresh data to prevent "Old News" exploits.
 pub const MAX_ORACLE_DRIFT: u64 = 1800;
 
+/// Maximum winners processed per batch_distribute call.
+/// Keeps CPU instruction count well below Soroban's per-tx ceiling (~100M instructions).
+/// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
+pub const MAX_BATCH_SIZE: u32 = 25;
+
 #[contracttype]
 pub enum DataKey {
     Initialized,
@@ -2492,7 +2497,6 @@ impl PredictionMarket {
             .get(&DataKey::UserPosition(market_id))
             .unwrap();
 
-        // Hot read: total_shares from Instance
         let total_pool: i128 = env
             .storage()
             .instance()
@@ -2663,6 +2667,19 @@ impl PredictionMarket {
 mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
+
+    // ── shared helpers ────────────────────────────────────────────────────────
+
+    /// Register a real SAC token and mint `amount` to each address in `recipients`.
+    fn setup_token(env: &Env, recipients: &[(&Address, i128)]) -> Address {
+        let admin = Address::generate(env);
+        let token = env.register_stellar_asset_contract_v2(admin.clone());
+        let token_client = token::StellarAssetClient::new(env, &token.address());
+        for (addr, amount) in recipients {
+            token_client.mint(addr, amount);
+        }
+        token.address()
+    }
 
     fn setup() -> (Env, PredictionMarketClient<'static>, Address, Address, u64) {
         let env = Env::default();
@@ -2848,6 +2865,62 @@ mod tests {
         );
 
         (env, client, sac.address(), fee_dest)
+    }
+
+    /// Build a market with `n` winners (option 0) and 1 loser (option 1),
+    /// using a real SAC token so transfers actually execute.
+    fn setup_market_with_winners(
+        n: u32,
+    ) -> (Env, PredictionMarketClient<'static>, Vec<Address>) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Create n winners + 1 loser, each staking 100 stroops
+        let mut bettors: Vec<Address> = Vec::new(&env);
+        for _ in 0..n {
+            bettors.push_back(Address::generate(&env));
+        }
+        let loser = Address::generate(&env);
+
+        // Mint enough to each bettor + loser
+        let all_recipients: soroban_sdk::Vec<Address> = {
+            let mut v = bettors.clone();
+            v.push_back(loser.clone());
+            v
+        };
+        let token_admin_addr = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        for addr in all_recipients.iter() {
+            sac_client.mint(&addr, &1000i128);
+        }
+
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        client.create_market(
+            &1u64,
+            &String::from_str(&env, "Batch test market"),
+            &options,
+            &deadline,
+            &sac.address(),
+        );
+
+        for bettor in bettors.iter() {
+            client.place_bet(&1u64, &0u32, &bettor, &100i128);
+        }
+        client.place_bet(&1u64, &1u32, &loser, &100i128);
+        client.resolve_market(&1u64, &0u32);
+
+        (env, client, bettors)
     }
 
     // ── Initialization ────────────────────────────────────────────────────────
@@ -3272,5 +3345,132 @@ mod tests {
         let treasury_after = token_client.balance(&treasury);
         // Treasury must have received exactly 5_000_000 stroops
         assert_eq!(treasury_after - treasury_before, 5_000_000i128);
+    }
+
+    // ── Batch distribute ──────────────────────────────────────────────────────
+
+    /// Cursor starts at 0 before any settlement.
+    #[test]
+    fn test_settlement_cursor_starts_at_zero() {
+        let (_, client, _) = setup_market_with_winners(3);
+        assert_eq!(client.get_settlement_cursor(&1u64), 0u32);
+    }
+
+    /// Single batch_distribute(batch_size=3) pays all 3 winners in one call.
+    /// Gas comparison baseline: 1 call vs 3 individual calls.
+    ///
+    /// Individual (old distribute_rewards per winner):
+    ///   - 3 tx × (1 Persistent read + 1 token transfer write) = 3 reads, 3 writes
+    /// Batch (new batch_distribute, batch_size=3):
+    ///   - 1 tx × (1 Persistent read + 3 token transfer writes + 1 Instance cursor write)
+    ///   = 1 read, 4 writes — but in ONE transaction, saving 2 tx overhead costs
+    #[test]
+    fn test_batch_distribute_pays_all_winners_in_one_call() {
+        let (_, client, winners) = setup_market_with_winners(3);
+        let paid = client.batch_distribute(&1u64, &3u32);
+        assert_eq!(paid, 3u32);
+        assert_eq!(client.get_settlement_cursor(&1u64), 3u32);
+        // Calling again returns 0 — already fully settled
+        let paid2 = client.batch_distribute(&1u64, &3u32);
+        assert_eq!(paid2, 0u32);
+        let _ = winners;
+    }
+
+    /// Cursor advances correctly across two batches (simulates 10 winners, batch_size=5).
+    /// This is the core gas-cost comparison: 10 individual calls vs 2 batch calls.
+    ///
+    /// | Approach          | Tx count | Persistent reads | Instance writes |
+    /// |-------------------|----------|------------------|-----------------|
+    /// | 10 individual     | 10       | 10               | 0               |
+    /// | 2 batches of 5    | 2        | 2                | 2 (cursor only) |
+    /// Savings: 8 tx, 8 Persistent reads, net ~80% fee reduction for settlement.
+    #[test]
+    fn test_batch_distribute_cursor_advances_across_batches() {
+        let (_, client, _) = setup_market_with_winners(10);
+
+        let paid1 = client.batch_distribute(&1u64, &5u32);
+        assert_eq!(paid1, 5u32);
+        assert_eq!(client.get_settlement_cursor(&1u64), 5u32);
+
+        let paid2 = client.batch_distribute(&1u64, &5u32);
+        assert_eq!(paid2, 5u32);
+        assert_eq!(client.get_settlement_cursor(&1u64), 10u32);
+
+        // Fully settled — next call is a no-op
+        let paid3 = client.batch_distribute(&1u64, &5u32);
+        assert_eq!(paid3, 0u32);
+    }
+
+    /// Partial last batch: 7 winners, batch_size=5 → first call pays 5, second pays 2.
+    #[test]
+    fn test_batch_distribute_partial_last_batch() {
+        let (_, client, _) = setup_market_with_winners(7);
+
+        let paid1 = client.batch_distribute(&1u64, &5u32);
+        assert_eq!(paid1, 5u32);
+
+        let paid2 = client.batch_distribute(&1u64, &5u32);
+        assert_eq!(paid2, 2u32); // only 2 remain
+        assert_eq!(client.get_settlement_cursor(&1u64), 7u32);
+    }
+
+    /// distribute_rewards (convenience wrapper) uses MAX_BATCH_SIZE.
+    #[test]
+    fn test_distribute_rewards_uses_max_batch_size() {
+        let (_, client, _) = setup_market_with_winners(3);
+        client.distribute_rewards(&1u64);
+        // cursor should have advanced by 3 (all winners, less than MAX_BATCH_SIZE)
+        assert_eq!(client.get_settlement_cursor(&1u64), 3u32);
+    }
+
+    /// batch_size=0 must panic.
+    #[test]
+    #[should_panic(expected = "batch_size must be 1..=MAX_BATCH_SIZE")]
+    fn test_batch_size_zero_panics() {
+        let (_, client, _) = setup_market_with_winners(3);
+        client.batch_distribute(&1u64, &0u32);
+    }
+
+    /// batch_size > MAX_BATCH_SIZE must panic.
+    #[test]
+    #[should_panic(expected = "batch_size must be 1..=MAX_BATCH_SIZE")]
+    fn test_batch_size_exceeds_max_panics() {
+        let (_, client, _) = setup_market_with_winners(3);
+        client.batch_distribute(&1u64, &(MAX_BATCH_SIZE + 1));
+    }
+
+    /// batch_distribute on unresolved market must panic.
+    #[test]
+    #[should_panic(expected = "Market not resolved yet")]
+    fn test_batch_distribute_unresolved_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let token = Address::generate(&env);
+        client.initialize(&admin);
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        client.create_market(
+            &1u64,
+            &String::from_str(&env, "Q"),
+            &options,
+            &(env.ledger().timestamp() + 100),
+            &token,
+        );
+        client.batch_distribute(&1u64, &1u32);
+    }
+
+    /// No winners → batch_distribute returns 0 without panic.
+    #[test]
+    fn test_batch_distribute_no_winners_is_noop() {
+        let (_, client, _, _, _) = setup();
+        client.resolve_market(&1u64, &0u32);
+        let paid = client.batch_distribute(&1u64, &5u32);
+        assert_eq!(paid, 0u32);
     }
 }
