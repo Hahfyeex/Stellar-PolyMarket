@@ -217,6 +217,42 @@ npm run dev
 
 ---
 
+## 🧪 Performance & Load Testing
+
+Stella Polymarket includes comprehensive stress testing to ensure platform stability under peak load.
+
+### Quick Start
+```bash
+# Install test dependencies
+pip install -r requirements.txt
+
+# Start backend server
+cd backend && npm start
+
+# Run stress tests
+python3 run-stress-test.py
+```
+
+### Test Coverage
+- **500 concurrent users** placing bets simultaneously
+- **50 simultaneous market resolutions** under load
+- **1000 concurrent WebSocket connections** for real-time updates
+
+### Performance Targets
+- p95 latency < 2000ms
+- Error rate < 1%
+- Throughput > 8 requests/second
+
+### Documentation
+- 📖 [Full Testing Guide](STRESS_TEST_README.md)
+- 🔍 [Bottleneck Analysis](STRESS_TEST_BOTTLENECKS.md)
+- ⚡ [Quick Reference](STRESS_TEST_QUICK_REFERENCE.md)
+
+### CI/CD Integration
+Stress tests run automatically on every PR to `main` branch via GitHub Actions. Tests must pass before merge.
+
+---
+
 ## 📄 License
 
 MIT © Stella Polymarket
