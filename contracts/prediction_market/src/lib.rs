@@ -82,6 +82,18 @@ fn check_initialized(env: &Env) {
     assert!(!is_init, "Contract already initialized");
 }
 
+/// Reads IsPaused from persistent storage (defaults false). Panics with "ContractPaused" if set.
+fn panic_if_paused(env: &Env) {
+    let paused: bool = env
+        .storage()
+        .persistent()
+        .get(&DataKey::IsPaused)
+        .unwrap_or(false);
+    if paused {
+        panic!("ContractPaused");
+    }
+}
+
 #[contractimpl]
 impl PredictionMarket {
     /// Initialize contract with admin address.
@@ -106,8 +118,8 @@ impl PredictionMarket {
         deadline: u64,
         token: Address,
     ) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, Role::Admin);
+        panic_if_paused(&env);
 
         // Graceful shutdown guard — checked before any other work
         let active: bool = env
@@ -122,10 +134,7 @@ impl PredictionMarket {
             "Market already exists"
         );
         assert!(options.len() >= 2, "Need at least 2 options");
-        assert!(
-            deadline > env.ledger().timestamp(),
-            "Deadline must be in the future"
-        );
+        assert!(deadline > env.ledger().timestamp(), "Deadline must be in the future");
 
         let market = Market {
             id,
@@ -153,6 +162,7 @@ impl PredictionMarket {
     /// Place a bet on an option.
     /// Reads total_shares from Instance (1 cheap read) instead of Persistent.
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
+        panic_if_paused(&env);
         bettor.require_auth();
         assert!(amount > 0, "Amount must be positive");
 
@@ -396,7 +406,6 @@ impl PredictionMarket {
                 winning_stake += amount;
             }
         }
-
         if winning_stake == 0 {
             // No winners, mark as swept and return 0
             env.storage()
