@@ -3,6 +3,7 @@ import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
 import { useBettingSlip } from "../context/BettingSlipContext";
 import Toast from "./Toast";
+import PoolOwnershipChart from "./PoolOwnershipChart";
 
 interface Market {
   id: number;
@@ -118,6 +119,9 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         Pool: <span className="text-white font-medium">{parseFloat(market.total_pool).toFixed(2)} XLM</span>
         &nbsp;·&nbsp;Ends: {new Date(market.end_date).toLocaleDateString()}
       </p>
+
+      {/* Pool ownership pie chart — live updates via WebSocket */}
+      <PoolOwnershipChart marketId={market.id} />
 
       {/* Outcomes */}
       <div className="flex gap-2 flex-wrap">
