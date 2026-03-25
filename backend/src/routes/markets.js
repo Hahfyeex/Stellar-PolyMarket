@@ -3,6 +3,10 @@ const router = express.Router();
 const db = require("../db");
 const { triggerNotification } = require("../utils/notifications");
 const logger = require("../utils/logger");
+const { 
+  validateMarketCreation, 
+  rateLimitMarketCreation 
+} = require("../middleware/marketValidation");
 
 // GET /api/markets — list all markets
 router.get("/", async (req, res) => {
@@ -18,27 +22,59 @@ router.get("/", async (req, res) => {
   }
 });
 
-// POST /api/markets — create a market
-router.post("/", async (req, res) => {
-  const { question, endDate, outcomes, contractAddress } = req.body;
-  if (!question || !endDate || !outcomes?.length) {
-    return res.status(400).json({ error: "question, endDate, and outcomes are required" });
+// POST /api/markets — create a market (permissionless with automated validation)
+// Validation middleware chain:
+// 1. validateMarketCreation - checks metadata (duplicates, end date, description, outcomes)
+// 2. rateLimitMarketCreation - enforces 3 markets per wallet per 24 hours
+router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, res) => {
+  const { question, endDate, outcomes, contractAddress, walletAddress } = req.body;
+  
+  // Basic required field validation (middleware handles detailed validation)
+  if (!question || !endDate || !outcomes?.length || !walletAddress) {
+    return res.status(400).json({ 
+      error: {
+        code: 'MISSING_REQUIRED_FIELDS',
+        message: 'question, endDate, outcomes, and walletAddress are required',
+        details: {
+          question: !!question,
+          endDate: !!endDate,
+          outcomes: !!outcomes?.length,
+          walletAddress: !!walletAddress
+        }
+      }
+    });
   }
+  
   try {
+    // Market has passed all validation checks - create immediately without admin approval
     const result = await db.query(
-      "INSERT INTO markets (question, end_date, outcomes, contract_address) VALUES ($1, $2, $3, $4) RETURNING *",
+      "INSERT INTO markets (question, end_date, outcomes, contract_address, created_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING *",
       [question, endDate, outcomes, contractAddress || null]
     );
+    
     logger.info({
       market_id: result.rows[0].id,
       question,
+      wallet_address: walletAddress,
       contract_address: contractAddress,
       outcomes_count: outcomes.length,
-    }, "Market created");
-    res.status(201).json({ market: result.rows[0] });
+      permissionless: true
+    }, "Market created via permissionless launch");
+    
+    // Return 201 Created with the new market
+    res.status(201).json({ 
+      market: result.rows[0],
+      message: "Market created successfully and published immediately"
+    });
   } catch (err) {
-    logger.error({ err, question }, "Failed to create market");
-    res.status(500).json({ error: err.message });
+    logger.error({ err, question, wallet_address: walletAddress }, "Failed to create market");
+    res.status(500).json({ 
+      error: {
+        code: 'DATABASE_ERROR',
+        message: 'Failed to create market',
+        details: err.message
+      }
+    });
   }
 });
 
