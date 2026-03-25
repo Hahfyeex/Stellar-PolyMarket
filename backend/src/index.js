@@ -61,6 +61,9 @@ app.use("/api/status", require("./routes/status"));
 app.use("/api/images", require("./routes/images"));
 app.use("/api/v1/oracles", require("./routes/oracles"));
 
+// Initialise bot registry — subscribes all strategies to the event bus
+require("./bots/registry");
+
 // Global error handler
 app.use((err, req, res, next) => {
   logger.error(
