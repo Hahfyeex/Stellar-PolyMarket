@@ -65,11 +65,24 @@ Users stake tokens on outcomes of real-world events.
 
 ## ⚙️ How It Works
 
-1. **Market Creation** — Admin or DAO creates a market with a question, end date, and possible outcomes
+1. **Market Creation** — Anyone can create a market with automated validation (permissionless)
 2. **User Participation** — Users connect their Stellar wallet and stake XLM or tokens on an outcome
 3. **Fund Locking** — Funds are locked in Soroban smart contracts (transparent + tamper-proof)
 4. **Oracle Resolution** — External data source confirms the result (sports API, financial feed, etc.)
 5. **Payout Distribution** — Winners share the pool proportionally; platform takes a small fee
+
+### Permissionless Market Creation
+
+Markets are created instantly without admin approval through automated validation:
+- **Description**: Minimum 50 characters for context
+- **Outcomes**: 2-5 options (binary or multi-choice)
+- **End Date**: Must be future date within 1 year
+- **No Duplicates**: Unique questions only
+- **Rate Limit**: 3 markets per wallet per 24 hours
+- **Creation Fee**: Configurable fee (default 0) charged in the market's token — burned or sent to DAO treasury
+
+See [Permissionless Launch Guide](PERMISSIONLESS_LAUNCH_README.md) for details.
+See [Creation Fee & DAO Governance](contracts/prediction_market/CREATION_FEE_README.md) for fee configuration.
 
 ---
 
@@ -240,6 +253,42 @@ npm run dev
 ```
 
 > Smart contract deployment requires the [Soroban CLI](https://soroban.stellar.org/docs/getting-started/setup).
+
+---
+
+## 🧪 Performance & Load Testing
+
+Stella Polymarket includes comprehensive stress testing to ensure platform stability under peak load.
+
+### Quick Start
+```bash
+# Install test dependencies
+pip install -r requirements.txt
+
+# Start backend server
+cd backend && npm start
+
+# Run stress tests
+python3 run-stress-test.py
+```
+
+### Test Coverage
+- **500 concurrent users** placing bets simultaneously
+- **50 simultaneous market resolutions** under load
+- **1000 concurrent WebSocket connections** for real-time updates
+
+### Performance Targets
+- p95 latency < 2000ms
+- Error rate < 1%
+- Throughput > 8 requests/second
+
+### Documentation
+- 📖 [Full Testing Guide](STRESS_TEST_README.md)
+- 🔍 [Bottleneck Analysis](STRESS_TEST_BOTTLENECKS.md)
+- ⚡ [Quick Reference](STRESS_TEST_QUICK_REFERENCE.md)
+
+### CI/CD Integration
+Stress tests run automatically on every PR to `main` branch via GitHub Actions. Tests must pass before merge.
 
 ---
 
