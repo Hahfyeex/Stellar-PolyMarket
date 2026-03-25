@@ -7,6 +7,8 @@ const {
   validateMarketCreation, 
   rateLimitMarketCreation 
 } = require("../middleware/marketValidation");
+const redis = require("../utils/redis");
+const { calculateOdds } = require("../utils/math");
 
 // GET /api/markets — list all markets
 router.get("/", async (req, res) => {
@@ -107,6 +109,55 @@ router.get("/:id", async (req, res) => {
     });
   } catch (err) {
     logger.error({ err, market_id: req.params.id }, "Failed to fetch market details");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/markets/:id/odds — Cached "Market Odds" Snapshot
+router.get("/:id/odds", async (req, res) => {
+  const marketId = req.params.id;
+  const cacheKey = `market:${marketId}:odds`;
+
+  try {
+    const cachedOdds = await redis.get(cacheKey);
+    if (cachedOdds) {
+      logger.debug({ market_id: marketId }, "Returned odds from cache");
+      return res.json(JSON.parse(cachedOdds));
+    }
+
+    // Cache miss, calculate odds
+    const marketResult = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    if (!marketResult.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+    
+    // We assume there are multiple outcomes and we need to aggregate pools from 'bets'
+    // Alternatively, if markets table maintains 'yes_pool' and 'no_pool', we would use those.
+    // The previous implementation used total_pool. Let's calculate the pool per outcome index dynamically.
+    const betsResult = await db.query(
+      "SELECT outcome_index, SUM(amount) as pool FROM bets WHERE market_id = $1 GROUP BY outcome_index",
+      [marketId]
+    );
+
+    const outcomesCount = marketResult.rows[0].outcomes ? marketResult.rows[0].outcomes.length : 2;
+    const poolData = [];
+    for (let i = 0; i < outcomesCount; i++) {
+      const b = betsResult.rows.find(row => parseInt(row.outcome_index) === i);
+      poolData.push({ index: i, pool: b ? parseFloat(b.pool) : 0 });
+    }
+
+    const { total_pool } = marketResult.rows[0];
+    const odds = calculateOdds(poolData, total_pool);
+
+    const responseData = { market_id: marketId, odds };
+    
+    // Cache for 1 hour or until invalidated by a new bet
+    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 3600);
+    logger.info({ market_id: marketId }, "Odds calculated and cached");
+
+    res.json(responseData);
+  } catch (err) {
+    logger.error({ err, market_id: marketId }, "Failed to fetch market odds");
     res.status(500).json({ error: err.message });
   }
 });
