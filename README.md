@@ -65,11 +65,22 @@ Users stake tokens on outcomes of real-world events.
 
 ## ⚙️ How It Works
 
-1. **Market Creation** — Admin or DAO creates a market with a question, end date, and possible outcomes
+1. **Market Creation** — Anyone can create a market with automated validation (permissionless)
 2. **User Participation** — Users connect their Stellar wallet and stake XLM or tokens on an outcome
 3. **Fund Locking** — Funds are locked in Soroban smart contracts (transparent + tamper-proof)
 4. **Oracle Resolution** — External data source confirms the result (sports API, financial feed, etc.)
 5. **Payout Distribution** — Winners share the pool proportionally; platform takes a small fee
+
+### Permissionless Market Creation
+
+Markets are created instantly without admin approval through automated validation:
+- **Description**: Minimum 50 characters for context
+- **Outcomes**: 2-5 options (binary or multi-choice)
+- **End Date**: Must be future date within 1 year
+- **No Duplicates**: Unique questions only
+- **Rate Limit**: 3 markets per wallet per 24 hours
+
+See [Permissionless Launch Guide](PERMISSIONLESS_LAUNCH_README.md) for details.
 
 ---
 
