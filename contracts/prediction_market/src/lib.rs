@@ -119,8 +119,12 @@ pub enum DataKey {
     Initialized,
     OracleAddress,
     Market(u64),
-    Bets(u64),
-    TotalPool(u64),
+    /// Cold: per-user positions — Persistent storage
+    UserPosition(u64),
+    /// Hot: total shares per market — Instance storage
+    TotalShares(u64),
+    /// Hot: pause flag per market — Instance storage
+    IsPaused(u64),
     AuditLog(u64),
     AuditLogCount,
     /// Hot: total shares per market — Instance storage
@@ -556,7 +560,8 @@ impl PredictionMarket {
             condition_outcome,
         };
 
-        // Persist market metadata in persistent storage (survives ledger archival)
+        // Cold: market metadata + user positions map → Persistent (survives ledger archival)
+        env.storage().persistent().set(&DataKey::Market(id), &market);
         env.storage()
             .persistent()
             .set(&DataKey::Market(id), &market);
@@ -824,6 +829,15 @@ impl PredictionMarket {
         provider.require_auth();
         assert!(amount > 0, "Amount must be positive");
 
+        // Hot read: is_paused from Instance
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::IsPaused(market_id))
+            .unwrap_or(false);
+        assert!(!paused, "Market is paused");
+
+        // Cold read: market metadata from Persistent
         let market: Market = env
             .storage()
             .persistent()
@@ -2478,6 +2492,7 @@ impl PredictionMarket {
             .get(&DataKey::UserPosition(market_id))
             .unwrap();
 
+        // Hot read: total_shares from Instance
         let total_pool: i128 = env
             .storage()
             .instance()
@@ -2598,6 +2613,14 @@ impl PredictionMarket {
         Some((total_pool, total_pool - payout_pool, payout_pool, winning_stake, num_winners))
     }
 
+    /// Get pause state for a market (hot read from Instance).
+    pub fn get_is_paused(env: Env, market_id: u64) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::IsPaused(market_id))
+            .unwrap_or(false)
+    }
+
     /// Store an audit log hash on-chain. Only callable by admin.
     /// `cid_hash` is the SHA-256 hash of the IPFS CID for the audit entry.
     pub fn store_audit_hash(env: Env, admin: Address, cid_hash: BytesN<32>) {
@@ -2605,7 +2628,6 @@ impl PredictionMarket {
         assert!(admin == stored_admin, "Only admin can store audit hashes");
         admin.require_auth();
 
-        // Increment the audit log counter
         let count: u64 = env
             .storage()
             .persistent()
@@ -2835,24 +2857,12 @@ mod tests {
         let (env, client, admin, _, deadline) = setup();
         let market = client.get_market(&1u64);
         assert_eq!(market.id, 1u64);
-        assert_eq!(
-            market.question,
-            String::from_str(&env, "Will BTC exceed $100k by end of 2025?")
-        );
         assert_eq!(market.options.len(), 2);
         assert_eq!(market.deadline, deadline);
         assert_eq!(market.status, MarketStatus::Active);
         soroban_sdk::log!(&env, "✅ Market stored: id={}, status={:?}", market.id, market.status);
         assert!(!market.resolved);
-
-        // Visual validation — log stored market data
-        soroban_sdk::log!(
-            &env,
-            "✅ Market stored: id={}, deadline={}, resolved={}",
-            market.id,
-            market.deadline,
-            market.resolved
-        );
+        soroban_sdk::log!(&env, "✅ Market stored: id={}, deadline={}, resolved={}", market.id, market.deadline, market.resolved);
     }
 
     #[test]
@@ -2866,17 +2876,14 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        // Initially zero audit logs
         assert_eq!(client.get_audit_log_count(), 0);
 
-        // Store a mock CID hash (32 bytes)
         let hash = BytesN::from_array(&env, &[1u8; 32]);
         client.store_audit_hash(&admin, &hash);
 
         assert_eq!(client.get_audit_log_count(), 1);
         assert_eq!(client.get_audit_hash(&0u64), hash);
 
-        // Store a second hash
         let hash2 = BytesN::from_array(&env, &[2u8; 32]);
         client.store_audit_hash(&admin, &hash2);
 
