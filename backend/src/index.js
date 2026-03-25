@@ -12,13 +12,16 @@ app.use((req, res, next) => {
   const start = Date.now();
   res.on("finish", () => {
     const duration = Date.now() - start;
-    logger.info({
-      method: req.method,
-      path: req.path,
-      status: res.statusCode,
-      duration_ms: duration,
-      ip: req.ip,
-    }, "HTTP Request");
+    logger.info(
+      {
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        duration_ms: duration,
+        ip: req.ip,
+      },
+      "HTTP Request"
+    );
   });
   next();
 });
@@ -31,15 +34,19 @@ app.use("/api/markets", require("./routes/markets"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/reserves", require("./routes/reserves"));
+app.use("/api/whitelisted-tokens", require("./routes/whitelisted-tokens"));
 
 // Global error handler
-app.use((err, req, res, next) => {
-  logger.error({
-    err,
-    method: req.method,
-    path: req.path,
-    body: req.body,
-  }, "Unhandled error");
+app.use((err, req, res, _next) => {
+  logger.error(
+    {
+      err,
+      method: req.method,
+      path: req.path,
+      body: req.body,
+    },
+    "Unhandled error"
+  );
   res.status(500).json({ error: "Internal server error" });
 });
 

@@ -5,18 +5,42 @@ const logger = require("../utils/logger");
 
 // POST /api/bets — place a bet
 router.post("/", async (req, res) => {
-  const { marketId, outcomeIndex, amount, walletAddress } = req.body;
+  const { marketId, outcomeIndex, amount, walletAddress, tokenAddress } = req.body;
   if (!marketId || outcomeIndex === undefined || !amount || !walletAddress) {
-    return res.status(400).json({ error: "marketId, outcomeIndex, amount, and walletAddress are required" });
+    return res
+      .status(400)
+      .json({ error: "marketId, outcomeIndex, amount, and walletAddress are required" });
   }
   try {
+    // Collateral asset whitelist check — reject bets with unapproved tokens
+    if (tokenAddress) {
+      const whitelisted = await db.query(
+        "SELECT 1 FROM whitelisted_tokens WHERE token_address = $1",
+        [tokenAddress]
+      );
+      if (!whitelisted.rows.length) {
+        logger.warn(
+          {
+            market_id: marketId,
+            wallet_address: walletAddress,
+            token_address: tokenAddress,
+          },
+          "Bet rejected: token is not whitelisted as collateral"
+        );
+        return res.status(403).json({ error: "Token is not whitelisted as collateral" });
+      }
+    }
+
     // Check market exists and is not resolved
     const market = await db.query(
       "SELECT * FROM markets WHERE id = $1 AND resolved = FALSE AND end_date > NOW()",
       [marketId]
     );
     if (!market.rows.length) {
-      logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: market not found, resolved, or expired");
+      logger.warn(
+        { market_id: marketId, wallet_address: walletAddress },
+        "Bet rejected: market not found, resolved, or expired"
+      );
       return res.status(400).json({ error: "Market not found, already resolved, or expired" });
     }
 
@@ -27,22 +51,28 @@ router.post("/", async (req, res) => {
     );
 
     // Update total pool
-    await db.query(
-      "UPDATE markets SET total_pool = total_pool + $1 WHERE id = $2",
-      [amount, marketId]
-    );
-
-    logger.info({
-      bet_id: bet.rows[0].id,
-      market_id: marketId,
-      wallet_address: walletAddress,
-      outcome_index: outcomeIndex,
+    await db.query("UPDATE markets SET total_pool = total_pool + $1 WHERE id = $2", [
       amount,
-    }, "Bet placed");
+      marketId,
+    ]);
+
+    logger.info(
+      {
+        bet_id: bet.rows[0].id,
+        market_id: marketId,
+        wallet_address: walletAddress,
+        outcome_index: outcomeIndex,
+        amount,
+      },
+      "Bet placed"
+    );
 
     res.status(201).json({ bet: bet.rows[0] });
   } catch (err) {
-    logger.error({ err, market_id: marketId, wallet_address: walletAddress }, "Failed to place bet");
+    logger.error(
+      { err, market_id: marketId, wallet_address: walletAddress },
+      "Failed to place bet"
+    );
     res.status(500).json({ error: err.message });
   }
 });
@@ -50,10 +80,9 @@ router.post("/", async (req, res) => {
 // POST /api/bets/payout/:marketId — distribute rewards to winners
 router.post("/payout/:marketId", async (req, res) => {
   try {
-    const market = await db.query(
-      "SELECT * FROM markets WHERE id = $1 AND resolved = TRUE",
-      [req.params.marketId]
-    );
+    const market = await db.query("SELECT * FROM markets WHERE id = $1 AND resolved = TRUE", [
+      req.params.marketId,
+    ]);
     if (!market.rows.length) {
       logger.warn({ market_id: req.params.marketId }, "Payout rejected: market not resolved");
       return res.status(400).json({ error: "Market not resolved yet" });
@@ -77,18 +106,21 @@ router.post("/payout/:marketId", async (req, res) => {
     });
 
     // Mark bets as paid
-    await db.query(
-      "UPDATE bets SET paid_out = TRUE WHERE market_id = $1 AND outcome_index = $2",
-      [req.params.marketId, winning_outcome]
-    );
-
-    logger.info({
-      market_id: req.params.marketId,
+    await db.query("UPDATE bets SET paid_out = TRUE WHERE market_id = $1 AND outcome_index = $2", [
+      req.params.marketId,
       winning_outcome,
-      winners_count: winners.rows.length,
-      total_pool,
-      winning_stake: winningStake,
-    }, "Payouts distributed");
+    ]);
+
+    logger.info(
+      {
+        market_id: req.params.marketId,
+        winning_outcome,
+        winners_count: winners.rows.length,
+        total_pool,
+        winning_stake: winningStake,
+      },
+      "Payouts distributed"
+    );
 
     res.json({ payouts });
   } catch (err) {

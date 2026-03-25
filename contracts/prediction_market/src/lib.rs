@@ -10,6 +10,7 @@ pub enum DataKey {
     Market(u64),
     Bets(u64),
     TotalPool(u64),
+    WhitelistedTokens,
 }
 
 #[contracttype]
@@ -46,10 +47,90 @@ impl PredictionMarket {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Admin, &admin);
+        // Initialize an empty whitelisted-tokens set
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistedTokens, &Vec::<Address>::new(&env));
+    }
+
+    /// Add a token to the whitelist. Admin-only.
+    pub fn add_whitelisted_token(env: Env, token_address: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let mut tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+
+        // Prevent duplicates
+        for i in 0..tokens.len() {
+            if tokens.get(i).unwrap() == token_address {
+                panic!("Token already whitelisted");
+            }
+        }
+
+        tokens.push_back(token_address);
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistedTokens, &tokens);
+    }
+
+    /// Remove a token from the whitelist. Admin-only.
+    pub fn remove_whitelisted_token(env: Env, token_address: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+
+        let mut new_tokens = Vec::new(&env);
+        let mut found = false;
+        for i in 0..tokens.len() {
+            let t = tokens.get(i).unwrap();
+            if t == token_address {
+                found = true;
+            } else {
+                new_tokens.push_back(t);
+            }
+        }
+        assert!(found, "Token not found in whitelist");
+
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistedTokens, &new_tokens);
+    }
+
+    /// Query the current whitelisted tokens.
+    pub fn get_whitelisted_tokens(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Check whether a specific token is whitelisted.
+    pub fn is_token_whitelisted(env: Env, token_address: Address) -> bool {
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..tokens.len() {
+            if tokens.get(i).unwrap() == token_address {
+                return true;
+            }
+        }
+        false
     }
 
     /// Create a new prediction market.
     /// Market metadata (question, options, deadline) stored in persistent storage.
+    /// The token must be whitelisted before it can be used for a market.
     pub fn create_market(
         env: Env,
         id: u64,
@@ -71,6 +152,21 @@ impl PredictionMarket {
             "Deadline must be in the future"
         );
 
+        // Enforce collateral asset whitelisting
+        let whitelisted: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+        let mut token_allowed = false;
+        for i in 0..whitelisted.len() {
+            if whitelisted.get(i).unwrap() == token {
+                token_allowed = true;
+                break;
+            }
+        }
+        assert!(token_allowed, "Token is not whitelisted as collateral");
+
         let market = Market {
             id,
             question,
@@ -90,6 +186,7 @@ impl PredictionMarket {
     }
 
     /// Place a bet on an option — transfers tokens into the contract.
+    /// Rejects bets if the market's token is not in the WhitelistedTokens set.
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         bettor.require_auth();
         assert!(amount > 0, "Amount must be positive");
@@ -99,6 +196,24 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
+
+        // Collateral asset whitelist check — prevents spam-token bets
+        let whitelisted: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+        let mut token_allowed = false;
+        for i in 0..whitelisted.len() {
+            if whitelisted.get(i).unwrap() == market.token {
+                token_allowed = true;
+                break;
+            }
+        }
+        assert!(
+            token_allowed,
+            "Token is not whitelisted — bet rejected"
+        );
 
         assert!(!market.resolved, "Market already resolved");
         assert!(
@@ -220,41 +335,55 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, vec, Env, String};
 
+    /// Helper: set up an initialized contract and return (client, admin).
+    fn setup(env: &Env) -> (PredictionMarketClient, Address) {
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        client.initialize(&admin);
+        (client, admin)
+    }
+
+    // ─── Existing tests (retained) ────────────────────────────────────
+
     #[test]
     fn test_initialize_and_create_market() {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
+        let (client, _admin) = setup(&env);
         let token = Address::generate(&env);
 
-        // Initialize
-        client.initialize(&admin);
+        // Whitelist the token first
+        client.add_whitelisted_token(&token);
 
-        // Create market with question, options, deadline
         let question = String::from_str(&env, "Will BTC exceed $100k by end of 2025?");
         let options = vec![
             &env,
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
-        let deadline = env.ledger().timestamp() + 86400; // 1 day from now
+        let deadline = env.ledger().timestamp() + 86400;
 
         client.create_market(&1u64, &question, &options, &deadline, &token);
 
-        // Read back and verify stored metadata
         let market = client.get_market(&1u64);
         assert_eq!(market.id, 1u64);
-        assert_eq!(market.question, String::from_str(&env, "Will BTC exceed $100k by end of 2025?"));
+        assert_eq!(
+            market.question,
+            String::from_str(&env, "Will BTC exceed $100k by end of 2025?")
+        );
         assert_eq!(market.options.len(), 2);
         assert_eq!(market.deadline, deadline);
         assert!(!market.resolved);
 
-        // Visual validation — log stored market data
-        soroban_sdk::log!(&env, "✅ Market stored: id={}, deadline={}, resolved={}", market.id, market.deadline, market.resolved);
+        soroban_sdk::log!(
+            &env,
+            "Market stored: id={}, deadline={}, resolved={}",
+            market.id,
+            market.deadline,
+            market.resolved
+        );
     }
 
     #[test]
@@ -269,5 +398,219 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
         client.initialize(&admin); // should panic
+    }
+
+    // ─── Whitelist management tests ───────────────────────────────────
+
+    #[test]
+    fn test_add_whitelisted_token() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let xlm = Address::generate(&env);
+        let usdc = Address::generate(&env);
+
+        // Initially empty
+        let list = client.get_whitelisted_tokens();
+        assert_eq!(list.len(), 0);
+
+        // Add two tokens
+        client.add_whitelisted_token(&xlm);
+        client.add_whitelisted_token(&usdc);
+
+        let list = client.get_whitelisted_tokens();
+        assert_eq!(list.len(), 2);
+        assert!(client.is_token_whitelisted(&xlm));
+        assert!(client.is_token_whitelisted(&usdc));
+
+        soroban_sdk::log!(&env, "Whitelisted tokens count: {}", list.len());
+    }
+
+    #[test]
+    #[should_panic(expected = "Token already whitelisted")]
+    fn test_add_duplicate_token_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let token = Address::generate(&env);
+
+        client.add_whitelisted_token(&token);
+        client.add_whitelisted_token(&token); // should panic
+    }
+
+    #[test]
+    fn test_remove_whitelisted_token() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let xlm = Address::generate(&env);
+        let usdc = Address::generate(&env);
+
+        client.add_whitelisted_token(&xlm);
+        client.add_whitelisted_token(&usdc);
+        assert_eq!(client.get_whitelisted_tokens().len(), 2);
+
+        client.remove_whitelisted_token(&xlm);
+        assert_eq!(client.get_whitelisted_tokens().len(), 1);
+        assert!(!client.is_token_whitelisted(&xlm));
+        assert!(client.is_token_whitelisted(&usdc));
+    }
+
+    #[test]
+    #[should_panic(expected = "Token not found in whitelist")]
+    fn test_remove_nonexistent_token_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let token = Address::generate(&env);
+
+        client.remove_whitelisted_token(&token); // should panic
+    }
+
+    #[test]
+    fn test_is_token_whitelisted_false_for_unknown() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let spam_token = Address::generate(&env);
+
+        assert!(!client.is_token_whitelisted(&spam_token));
+    }
+
+    // ─── Create-market whitelist enforcement ──────────────────────────
+
+    #[test]
+    #[should_panic(expected = "Token is not whitelisted as collateral")]
+    fn test_create_market_with_non_whitelisted_token_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let spam_token = Address::generate(&env);
+
+        let question = String::from_str(&env, "Test market");
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        let deadline = env.ledger().timestamp() + 86400;
+
+        // Attempt to create a market with a non-whitelisted token
+        client.create_market(&1u64, &question, &options, &deadline, &spam_token);
+    }
+
+    // ─── Place-bet whitelist enforcement ──────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "Token is not whitelisted")]
+    fn test_place_bet_with_delisted_token_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let token = Address::generate(&env);
+        let bettor = Address::generate(&env);
+
+        // Whitelist, create market, then remove the token
+        client.add_whitelisted_token(&token);
+
+        let question = String::from_str(&env, "Test market");
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        let deadline = env.ledger().timestamp() + 86400;
+        client.create_market(&1u64, &question, &options, &deadline, &token);
+
+        // De-list the token after market creation
+        client.remove_whitelisted_token(&token);
+
+        // Visual validation — the contract should reject this bet
+        soroban_sdk::log!(
+            &env,
+            "Attempting bet with de-listed token — expecting rejection"
+        );
+
+        // This should panic because the token was removed from the whitelist
+        client.place_bet(&1u64, &0u32, &bettor, &100i128);
+    }
+
+    // ─── Whitelist with multiple tokens ───────────────────────────────
+
+    #[test]
+    fn test_whitelist_multiple_tokens_and_check() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let xlm = Address::generate(&env);
+        let usdc = Address::generate(&env);
+        let arst = Address::generate(&env);
+        let spam = Address::generate(&env);
+
+        client.add_whitelisted_token(&xlm);
+        client.add_whitelisted_token(&usdc);
+        client.add_whitelisted_token(&arst);
+
+        assert!(client.is_token_whitelisted(&xlm));
+        assert!(client.is_token_whitelisted(&usdc));
+        assert!(client.is_token_whitelisted(&arst));
+        assert!(!client.is_token_whitelisted(&spam));
+
+        assert_eq!(client.get_whitelisted_tokens().len(), 3);
+
+        soroban_sdk::log!(
+            &env,
+            "Whitelisted: XLM={}, USDC={}, ARST={}, SPAM={}",
+            client.is_token_whitelisted(&xlm),
+            client.is_token_whitelisted(&usdc),
+            client.is_token_whitelisted(&arst),
+            client.is_token_whitelisted(&spam)
+        );
+    }
+
+    // ─── Initialize sets empty whitelist ──────────────────────────────
+
+    #[test]
+    fn test_initialize_creates_empty_whitelist() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+
+        let tokens = client.get_whitelisted_tokens();
+        assert_eq!(tokens.len(), 0);
+    }
+
+    // ─── Remove middle token preserves others ─────────────────────────
+
+    #[test]
+    fn test_remove_middle_token_preserves_order() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _admin) = setup(&env);
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let c = Address::generate(&env);
+
+        client.add_whitelisted_token(&a);
+        client.add_whitelisted_token(&b);
+        client.add_whitelisted_token(&c);
+
+        client.remove_whitelisted_token(&b);
+
+        let list = client.get_whitelisted_tokens();
+        assert_eq!(list.len(), 2);
+        assert!(client.is_token_whitelisted(&a));
+        assert!(!client.is_token_whitelisted(&b));
+        assert!(client.is_token_whitelisted(&c));
     }
 }
