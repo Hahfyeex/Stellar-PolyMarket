@@ -28,13 +28,22 @@ pub enum DataKey {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MarketStatus {
+    Active,
+    Proposed,
+    Disputed,
+    Resolved,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct Market {
     pub id: u64,
     pub question: String,
     pub options: Vec<String>,
     pub deadline: u64,
-    pub resolved: bool,
+    pub status: MarketStatus,
     pub winning_outcome: u32,
     pub token: Address,
 }
@@ -101,7 +110,7 @@ impl PredictionMarket {
             question,
             options,
             deadline,
-            resolved: false,
+            status: MarketStatus::Active,
             winning_outcome: 0,
             token,
         };
@@ -138,7 +147,7 @@ impl PredictionMarket {
             .get(&DataKey::Market(market_id))
             .unwrap();
 
-        assert!(!market.resolved, "Market already resolved");
+        assert!(market.status == MarketStatus::Active, "Market not active");
         assert!(
             env.ledger().timestamp() < market.deadline,
             "Market deadline has passed"
@@ -200,7 +209,61 @@ impl PredictionMarket {
             .unwrap_or(true)
     }
 
-    /// Resolve market — only admin (oracle-triggered).
+    /// Propose market resolution — only admin (oracle-triggered).
+    pub fn propose_resolution(env: Env, market_id: u64, winning_outcome: u32) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let mut market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+
+        assert!(market.status == MarketStatus::Active, "Market not active");
+        assert!(
+            winning_outcome < market.options.len(),
+            "Invalid outcome index"
+        );
+
+        market.status = MarketStatus::Proposed;
+        market.winning_outcome = winning_outcome;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Market(market_id), &market);
+    }
+
+    /// Disputer challenges a Proposed result by posting a bond.
+    /// Moves market to Disputed state and freezes payouts.
+    pub fn dispute(env: Env, market_id: u64, disputer: Address, bond_amount: i128) {
+        disputer.require_auth();
+        assert!(bond_amount > 0, "Bond must be positive");
+
+        let mut market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+
+        assert!(market.status == MarketStatus::Proposed, "Market not in Proposed state");
+
+        // Escrow the bond
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&disputer, &env.current_contract_address(), &bond_amount);
+
+        market.status = MarketStatus::Disputed;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Market(market_id), &market);
+
+        // Emit DisputeBondEscrowed for visual validation / indexing
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "DisputeBondEscrowed"), market_id, disputer),
+            bond_amount
+        );
+    }
+
+    /// Resolve market finally after potential dispute.
     pub fn resolve_market(env: Env, market_id: u64, winning_outcome: u32) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -211,13 +274,17 @@ impl PredictionMarket {
             .get(&DataKey::Market(market_id))
             .unwrap();
 
-        assert!(!market.resolved, "Already resolved");
+        // Final resolution override by admin (e.g. after examining dispute)
+        assert!(
+            market.status == MarketStatus::Proposed || market.status == MarketStatus::Disputed,
+            "Market must be proposed or disputed to resolve"
+        );
         assert!(
             winning_outcome < market.options.len(),
             "Invalid outcome index"
         );
 
-        market.resolved = true;
+        market.status = MarketStatus::Resolved;
         market.winning_outcome = winning_outcome;
         env.storage()
             .persistent()
@@ -246,7 +313,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
 
         let positions: Map<Address, (u32, i128)> = env
             .storage()
@@ -460,6 +527,7 @@ mod tests {
             client.place_bet(&1u64, &0u32, &bettor, &100i128);
         }
         client.place_bet(&1u64, &1u32, &loser, &100i128);
+        client.propose_resolution(&1u64, &0u32);
         client.resolve_market(&1u64, &0u32);
 
         (env, client, bettors)
@@ -474,8 +542,8 @@ mod tests {
         assert_eq!(market.id, 1u64);
         assert_eq!(market.options.len(), 2);
         assert_eq!(market.deadline, deadline);
-        assert!(!market.resolved);
-        soroban_sdk::log!(&env, "✅ Market stored: id={}, deadline={}, resolved={}", market.id, market.deadline, market.resolved);
+        assert_eq!(market.status, MarketStatus::Active);
+        soroban_sdk::log!(&env, "✅ Market stored: id={}, status={:?}", market.id, market.status);
     }
 
     #[test]
@@ -579,7 +647,7 @@ mod tests {
         let (_, client, _, _, deadline) = setup();
         let market = client.get_market(&1u64);
         assert_eq!(market.deadline, deadline);
-        assert!(!market.resolved);
+        assert_eq!(market.status, MarketStatus::Active);
     }
 
     #[test]
@@ -648,11 +716,12 @@ mod tests {
     // ── Resolve & distribute ──────────────────────────────────────────────────
 
     #[test]
-    fn test_resolve_market() {
+    fn test_resolve_market_flow() {
         let (_, client, _, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32);
         client.resolve_market(&1u64, &0u32);
         let market = client.get_market(&1u64);
-        assert!(market.resolved);
+        assert_eq!(market.status, MarketStatus::Resolved);
         assert_eq!(market.winning_outcome, 0u32);
     }
 
@@ -748,10 +817,10 @@ mod tests {
     // ── Bet on resolved market ────────────────────────────────────────────────
 
     #[test]
-    #[should_panic(expected = "Market already resolved")]
-    fn test_bet_on_resolved_market_panics() {
+    #[should_panic(expected = "Market not active")]
+    fn test_bet_on_proposed_market_panics() {
         let (env, client, _, _, _) = setup();
-        client.resolve_market(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32);
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
     }
@@ -938,8 +1007,9 @@ mod tests {
     fn test_resolve_market_allowed_during_shutdown() {
         let (_, client, _, _, _) = setup();
         client.set_global_status(&false);
+        client.propose_resolution(&1u64, &0u32);
         client.resolve_market(&1u64, &0u32);
-        assert!(client.get_market(&1u64).resolved);
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::Resolved);
     }
 
     /// Re-activating the platform allows create_market again.
@@ -964,6 +1034,38 @@ mod tests {
             &token,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
+    }
+
+    // ── Dispute Mechanism ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dispute_false_proposal() {
+        let (env, client, _, _, _) = setup();
+        let disputer = Address::generate(&env);
+        
+        // 1. Propose something
+        client.propose_resolution(&1u64, &0u32);
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::Proposed);
+
+        // 2. Dispute it
+        // Note: mock_all_auths handles the token transfer of the bond
+        client.dispute(&1u64, &disputer, &100i128);
+        
+        let market = client.get_market(&1u64);
+        assert_eq!(market.status, MarketStatus::Disputed);
+        
+        // 3. Payouts should be frozen
+        // setup_market_with_winners does a full resolve, so we check on a Disputed market
+        // actually batch_distribute panics if not Resolved
+    }
+
+    #[test]
+    #[should_panic(expected = "Market not resolved yet")]
+    fn test_payout_frozen_when_disputed() {
+        let (env, client, _, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32);
+        client.dispute(&1u64, &Address::generate(&env), &100i128);
+        client.batch_distribute(&1u64, &5u32);
     }
 
     // ── TTL Bumping ──────────────────────────────────────────────────────────
