@@ -232,6 +232,15 @@ pub struct DisputeData {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MarketStatus {
+    Active,
+    Proposed,
+    Disputed,
+    Resolved,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct Market {
     pub id: u64,
@@ -2943,6 +2952,7 @@ mod tests {
             client.place_bet(&1u64, &0u32, &bettor, &100i128);
         }
         client.place_bet(&1u64, &1u32, &loser, &100i128);
+        client.propose_resolution(&1u64, &0u32);
         client.resolve_market(&1u64, &0u32);
 
         (env, client, bettors)
@@ -3554,8 +3564,9 @@ mod tests {
     fn test_resolve_market_allowed_during_shutdown() {
         let (_, client, _, _, _) = setup();
         client.set_global_status(&false);
+        client.propose_resolution(&1u64, &0u32);
         client.resolve_market(&1u64, &0u32);
-        assert!(client.get_market(&1u64).resolved);
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::Resolved);
     }
 
     /// Re-activating the platform allows create_market again.
@@ -3580,6 +3591,38 @@ mod tests {
             &token,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
+    }
+
+    // ── Dispute Mechanism ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dispute_false_proposal() {
+        let (env, client, _, _, _) = setup();
+        let disputer = Address::generate(&env);
+        
+        // 1. Propose something
+        client.propose_resolution(&1u64, &0u32);
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::Proposed);
+
+        // 2. Dispute it
+        // Note: mock_all_auths handles the token transfer of the bond
+        client.dispute(&1u64, &disputer, &100i128);
+        
+        let market = client.get_market(&1u64);
+        assert_eq!(market.status, MarketStatus::Disputed);
+        
+        // 3. Payouts should be frozen
+        // setup_market_with_winners does a full resolve, so we check on a Disputed market
+        // actually batch_distribute panics if not Resolved
+    }
+
+    #[test]
+    #[should_panic(expected = "Market not resolved yet")]
+    fn test_payout_frozen_when_disputed() {
+        let (env, client, _, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32);
+        client.dispute(&1u64, &Address::generate(&env), &100i128);
+        client.batch_distribute(&1u64, &5u32);
     }
 
     // ── TTL Bumping ──────────────────────────────────────────────────────────
