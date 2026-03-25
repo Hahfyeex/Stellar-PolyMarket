@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, Map, String, Vec,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Map, String, Vec,
 };
 
 /// Maximum winners processed per batch_distribute call.
@@ -25,6 +25,16 @@ pub enum DataKey {
     /// true = active (default), false = graceful shutdown.
     /// Only blocks create_market; existing markets resolve and pay out normally.
     GlobalStatus,
+    /// Vault balance: total funds swept from unclaimed payouts — Instance storage
+    VaultBalance,
+    /// Claim deadline: timestamp when market was resolved — Persistent storage per market
+    /// Used to determine when unclaimed funds can be swept (30 days after resolution)
+    ClaimDeadline(u64),
+    /// Original payout amounts: tracks exact payout owed to each bettor — Persistent storage
+    /// Ensures claimants always get their original amount even after vault sweep
+    OriginalPayouts(u64),
+    /// Swept flag: tracks if a market's unclaimed funds have been swept — Instance storage
+    MarketSwept(u64),
 }
 
 #[contracttype]
@@ -177,6 +187,11 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &(shares + amount));
+
+        // Emit Bet event
+        // Topics: ("Bet", market_id)
+        // Data: (bettor, amount, option_index)
+        env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), amount, option_index));
     }
 
     /// Pause or unpause a market (admin only).
@@ -289,6 +304,306 @@ impl PredictionMarket {
         env.storage()
             .persistent()
             .set(&DataKey::Market(market_id), &market);
+
+        // Record resolution timestamp for 30-day claim deadline tracking
+        let resolution_time = env.ledger().timestamp();
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClaimDeadline(market_id), &resolution_time);
+    }
+
+    /// Sweep unclaimed payouts from a resolved market into the vault.
+    /// Can only be called 30 days (2,592,000 seconds) after market resolution.
+    /// 
+    /// # Vault Re-balancing Logic
+    /// 1. Check market is resolved and 30 days have passed since resolution
+    /// 2. Calculate original payouts for all winners (if not already calculated)
+    /// 3. Identify unclaimed payouts (winners who haven't been paid via batch_distribute)
+    /// 4. Move unclaimed funds to vault balance
+    /// 5. Mark market as swept to prevent double-sweeping
+    /// 
+    /// # Claimant Protection
+    /// Original payout amounts are stored permanently in OriginalPayouts(market_id).
+    /// Even after sweep, claimants can call claim_original() to withdraw their exact amount.
+    /// 
+    /// Returns the amount swept into the vault.
+    pub fn sweep_unclaimed(env: Env, market_id: u64) -> i128 {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        // Check if market has already been swept
+        let already_swept: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::MarketSwept(market_id))
+            .unwrap_or(false);
+        assert!(!already_swept, "Market already swept");
+
+        // Verify market is resolved
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        assert!(market.resolved, "Market not resolved yet");
+
+        // Check 30-day claim deadline has passed (30 days = 2,592,000 seconds)
+        let resolution_time: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClaimDeadline(market_id))
+            .unwrap();
+        let current_time = env.ledger().timestamp();
+        let thirty_days: u64 = 30 * 24 * 60 * 60; // 2,592,000 seconds
+        assert!(
+            current_time >= resolution_time + thirty_days,
+            "Claim deadline not reached (30 days required)"
+        );
+
+        // Get positions and calculate payouts
+        let positions: Map<Address, (u32, i128)> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserPosition(market_id))
+            .unwrap();
+
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+
+        // Calculate winning stake and build winners list
+        let mut winners: Vec<(Address, i128)> = Vec::new(&env);
+        let mut winning_stake: i128 = 0;
+        for (addr, (outcome, amount)) in positions.iter() {
+            if outcome == market.winning_outcome {
+                winners.push_back((addr, amount));
+                winning_stake += amount;
+            }
+        }
+
+        if winning_stake == 0 {
+            // No winners, mark as swept and return 0
+            env.storage()
+                .instance()
+                .set(&DataKey::MarketSwept(market_id), &true);
+            return 0;
+        }
+
+        let payout_pool = total_pool * 97 / 100;
+
+        // Calculate and store original payouts for each winner
+        let mut original_payouts: Map<Address, i128> = Map::new(&env);
+        for (bettor, amount) in winners.iter() {
+            let payout = (amount * payout_pool) / winning_stake;
+            original_payouts.set(bettor, payout);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::OriginalPayouts(market_id), &original_payouts);
+
+        // Determine how many winners have already been paid via batch_distribute
+        let cursor: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SettlementCursor(market_id))
+            .unwrap_or(0);
+
+        // Calculate unclaimed amount (winners beyond cursor haven't been paid)
+        let mut unclaimed_total: i128 = 0;
+        let total_winners = winners.len();
+        for i in cursor..total_winners {
+            let (bettor, _) = winners.get(i).unwrap();
+            let payout = original_payouts.get(bettor).unwrap();
+            unclaimed_total += payout;
+        }
+
+        // Add unclaimed funds to vault balance
+        let current_vault: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::VaultBalance)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::VaultBalance, &(current_vault + unclaimed_total));
+
+        // Mark market as swept
+        env.storage()
+            .instance()
+            .set(&DataKey::MarketSwept(market_id), &true);
+
+        unclaimed_total
+    }
+
+    /// Invest vault balance via Stellar AMM or other yield strategies.
+    /// 
+    /// # AMM Re-investment Strategy
+    /// Takes the current vault balance and invests it in Stellar AMM pools
+    /// to generate yield. This is a placeholder for the actual AMM integration.
+    /// 
+    /// In production, this would:
+    /// 1. Call Stellar AMM deposit operation
+    /// 2. Swap tokens for optimal pool allocation
+    /// 3. Track LP tokens received
+    /// 4. Monitor yield generation
+    /// 
+    /// # Safety
+    /// - Only admin can trigger investment
+    /// - Original payout amounts are tracked separately
+    /// - Claimants can always withdraw their exact original amount
+    /// - Vault must maintain sufficient liquidity for claims
+    /// 
+    /// Returns the amount invested.
+    pub fn invest_vault(env: Env) -> i128 {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let vault_balance: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::VaultBalance)
+            .unwrap_or(0);
+
+        assert!(vault_balance > 0, "No funds in vault to invest");
+
+        // TODO: Implement actual Stellar AMM integration
+        // For now, this is a placeholder that validates the vault balance exists
+        // 
+        // Production implementation would:
+        // 1. Get token client for vault's token
+        // 2. Call Stellar AMM deposit/swap operations
+        // 3. Track LP tokens received
+        // 4. Update vault accounting
+        //
+        // Example (pseudo-code):
+        // let token_client = token::Client::new(&env, &vault_token);
+        // let amm_pool = Address::from_string(...);
+        // token_client.approve(&env.current_contract_address(), &amm_pool, &vault_balance);
+        // // Call AMM deposit operation
+        // let lp_tokens = amm_client.deposit(&vault_balance);
+        // env.storage().instance().set(&DataKey::VaultLPTokens, &lp_tokens);
+
+        vault_balance
+    }
+
+    /// Claim original payout amount for a winner, even after vault sweep.
+    /// 
+    /// # Claimant Protection
+    /// This function ensures winners can always claim their exact original payout,
+    /// regardless of whether the market has been swept or vault funds have been invested.
+    /// 
+    /// # Payment Source
+    /// - If market not swept: pays from contract's token balance (normal flow)
+    /// - If market swept: pays from vault balance (funds are reserved)
+    /// 
+    /// # Process
+    /// 1. Verify market is resolved
+    /// 2. Verify caller is a winner
+    /// 3. Get original payout amount from OriginalPayouts storage
+    /// 4. Transfer exact original amount to claimant
+    /// 5. Mark as paid to prevent double-claiming
+    /// 
+    /// Returns the amount claimed.
+    pub fn claim_original(env: Env, market_id: u64, claimant: Address) -> i128 {
+        claimant.require_auth();
+
+        // Verify market is resolved
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        assert!(market.resolved, "Market not resolved yet");
+
+        // Get original payouts map
+        let original_payouts: Map<Address, i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OriginalPayouts(market_id))
+            .unwrap_or(Map::new(&env));
+
+        // Verify claimant has a payout
+        assert!(
+            original_payouts.contains_key(claimant.clone()),
+            "No payout for this address"
+        );
+
+        let payout_amount = original_payouts.get(claimant.clone()).unwrap();
+
+        // Check if already claimed (payout would be 0 if claimed)
+        assert!(payout_amount > 0, "Already claimed");
+
+        // Transfer the original payout amount
+        let token_client = token::Client::new(&env, &market.token);
+        
+        // If market was swept, deduct from vault balance
+        let is_swept: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::MarketSwept(market_id))
+            .unwrap_or(false);
+        
+        if is_swept {
+            let vault_balance: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::VaultBalance)
+                .unwrap_or(0);
+            assert!(
+                vault_balance >= payout_amount,
+                "Insufficient vault balance"
+            );
+            env.storage()
+                .instance()
+                .set(&DataKey::VaultBalance, &(vault_balance - payout_amount));
+        }
+
+        token_client.transfer(&env.current_contract_address(), &claimant, &payout_amount);
+
+        // Mark as claimed by setting payout to 0
+        let mut updated_payouts = original_payouts;
+        updated_payouts.set(claimant, 0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OriginalPayouts(market_id), &updated_payouts);
+
+        payout_amount
+    }
+
+    /// Get the current vault balance.
+    pub fn get_vault_balance(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::VaultBalance)
+            .unwrap_or(0)
+    }
+
+    /// Get the claim deadline timestamp for a market.
+    pub fn get_claim_deadline(env: Env, market_id: u64) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ClaimDeadline(market_id))
+            .unwrap_or(0)
+    }
+
+    /// Check if a market has been swept.
+    pub fn is_market_swept(env: Env, market_id: u64) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::MarketSwept(market_id))
+            .unwrap_or(false)
+    }
+
+    /// Get original payout amount for a specific address in a market.
+    pub fn get_original_payout(env: Env, market_id: u64, address: Address) -> i128 {
+        let payouts: Map<Address, i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OriginalPayouts(market_id))
+            .unwrap_or(Map::new(&env));
+        payouts.get(address).unwrap_or(0)
     }
 
     /// Batch-distribute rewards to at most `batch_size` winners per call.
@@ -1077,3 +1392,4 @@ mod tests {
         client.bump_market_ttl(&1u64, &1000u32, &5000u32);
     }
 }
+
