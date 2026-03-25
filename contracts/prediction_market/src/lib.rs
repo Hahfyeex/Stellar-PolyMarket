@@ -344,6 +344,31 @@ impl PredictionMarket {
             .get(&DataKey::IsPaused(market_id))
             .unwrap_or(false)
     }
+
+    /// Bumps the TTL for all storage keys related to a specific market.
+    /// This ensures that market metadata and user positions don't expire from the ledger.
+    ///
+    /// # Parameters
+    /// - `threshold`: The minimum number of ledgers remaining before a bump is triggered.
+    /// - `extend_to`: The number of ledgers to extend the TTL to.
+    pub fn bump_market_ttl(env: Env, market_id: u64, threshold: u32, extend_to: u32) {
+        // 1. Bump Persistent Metadata
+        env.storage().persistent().extend_ttl(
+            &DataKey::Market(market_id),
+            threshold,
+            extend_to
+        );
+
+        // 2. Bump Persistent User Positions Map
+        env.storage().persistent().extend_ttl(
+            &DataKey::UserPosition(market_id),
+            threshold,
+            extend_to
+        );
+
+        // 3. Bump Instance storage (TotalShares, IsPaused, etc. are grouped here)
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
 }
 
 #[cfg(test)]
@@ -939,5 +964,14 @@ mod tests {
             &token,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
+    }
+
+    // ── TTL Bumping ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_bump_market_ttl() {
+        let (_env, client, _, _, _) = setup();
+        // Calling the function to ensure it doesn't panic and executes correctly.
+        client.bump_market_ttl(&1u64, &1000u32, &5000u32);
     }
 }
