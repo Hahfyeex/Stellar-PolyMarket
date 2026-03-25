@@ -8,6 +8,7 @@ import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 import { trackEvent } from "../lib/firebase";
+import OnboardingWizard from "../components/OnboardingWizard";
 
 interface Market {
   id: number;
@@ -26,6 +27,14 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    const complete = localStorage.getItem("onboardingComplete");
+    if (!complete) {
+      setShowOnboarding(true);
+    }
+  }, []);
 
   const handleHelpClick = () => {
     trackEvent('help_doc_read', {
@@ -197,6 +206,9 @@ export default function Home() {
 
   return (
     <>
+      {showOnboarding && (
+        <OnboardingWizard onComplete={() => setShowOnboarding(false)} />
+      )}
       {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell

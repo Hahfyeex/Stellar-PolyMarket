@@ -15,9 +15,10 @@ interface Props {
   market: Market;
   walletAddress: string | null;
   onBetPlaced?: () => void;
+  isPreview?: boolean;
 }
 
-export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
+export default function MarketCard({ market, walletAddress, onBetPlaced, isPreview }: Props) {
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
@@ -135,18 +136,19 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       </div>
 
       {/* Bet input */}
-      {!market.resolved && !isExpired && walletAddress && (
+      {!market.resolved && !isExpired && (walletAddress || isPreview) && (
         <div className="flex gap-2 mt-1">
           <input
             type="number"
             placeholder="Amount (XLM)"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="bg-gray-800 text-white rounded-lg px-3 py-2 text-sm flex-1 outline-none border border-gray-700 focus:border-blue-500"
+            disabled={isPreview}
+            className={`bg-gray-800 text-white rounded-lg px-3 py-2 text-sm flex-1 outline-none border border-gray-700 focus:border-blue-500 ${isPreview ? "opacity-50 cursor-not-allowed" : ""}`}
           />
           <button
             onClick={placeBet}
-            disabled={loading || selectedOutcome === null || !amount}
+            disabled={loading || selectedOutcome === null || !amount || isPreview}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
           >
             {loading ? "Placing..." : "Bet"}
