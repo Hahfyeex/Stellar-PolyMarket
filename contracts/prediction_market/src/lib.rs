@@ -12,6 +12,7 @@ pub const MAX_BATCH_SIZE: u32 = 25;
 pub enum DataKey {
     Initialized,
     Admin,
+    OracleAddress,
     Market(u64),
     /// Cold: per-user positions — Persistent storage
     UserPosition(u64),
@@ -47,6 +48,15 @@ pub enum MarketStatus {
 }
 
 #[contracttype]
+#[derive(Clone, PartialEq)]
+pub enum MarketStatus {
+    Open,
+    Locked,
+    Proposed,
+    Resolved,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct Market {
     pub id: u64,
@@ -56,6 +66,8 @@ pub struct Market {
     pub status: MarketStatus,
     pub winning_outcome: u32,
     pub token: Address,
+    pub proposed_outcome: Option<u32>,
+    pub proposal_timestamp: u64,
 }
 
 #[contract]
@@ -123,6 +135,8 @@ impl PredictionMarket {
             status: MarketStatus::Active,
             winning_outcome: 0,
             token,
+            proposed_outcome: None,
+            proposal_timestamp: 0,
         };
 
         // Cold: market metadata + user positions map → Persistent
@@ -295,8 +309,8 @@ impl PredictionMarket {
             "Market must be proposed or disputed to resolve"
         );
         assert!(
-            winning_outcome < market.options.len(),
-            "Invalid outcome index"
+            env.ledger().timestamp() >= market.proposal_timestamp + LIVENESS_WINDOW,
+            "Liveness window has not elapsed"
         );
 
         market.status = MarketStatus::Resolved;
@@ -345,7 +359,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
 
         // Check 30-day claim deadline has passed (30 days = 2,592,000 seconds)
         let resolution_time: u64 = env
@@ -703,12 +717,8 @@ impl PredictionMarket {
             .unwrap_or(0)
     }
 
-    /// Read a market's stored metadata.
     pub fn get_market(env: Env, market_id: u64) -> Market {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap()
+        env.storage().persistent().get(&DataKey::Market(market_id)).unwrap()
     }
 
     /// Get total shares for a market (hot read from Instance).
@@ -756,7 +766,7 @@ impl PredictionMarket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger}, vec, Env, String};
 
     // ── shared helpers ────────────────────────────────────────────────────────
 
