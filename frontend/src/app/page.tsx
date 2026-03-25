@@ -7,6 +7,7 @@ import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
+import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
 import { trackEvent } from "../lib/firebase";
 
 interface Market {
@@ -160,6 +161,13 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-4 pb-6 flex flex-col lg:flex-row gap-6">
         {/* Markets */}
         <div className="flex-1">
+          {/* Discovery cards — personalised / trending top 6 */}
+          <div className="mb-8">
+            <MarketDiscoveryGrid
+              onCardClick={(m) => setActiveMarket(markets.find((mk) => mk.id === m.id) ?? null)}
+            />
+          </div>
+
           <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
           {loading ? (
             <p className="text-gray-400">Loading markets...</p>

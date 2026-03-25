@@ -47,3 +47,15 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/**
+ * Market Discovery Card — hover lift effect.
+ * Only activates on devices that support true hover (not touch).
+ * This prevents the lift from firing during mobile scroll.
+ */
+@media (hover: hover) and (pointer: fine) {
+  .hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.2);
+  }
+}
