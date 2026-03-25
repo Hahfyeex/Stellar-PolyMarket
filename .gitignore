@@ -12,3 +12,6 @@ target/
 
 # Husky
 .husky/_/
+
+# Node
+node_modules/

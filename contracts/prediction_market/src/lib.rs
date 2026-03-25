@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, Map, String, Vec,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Map, String, Vec,
 };
 
 /// Maximum winners processed per batch_distribute call.
@@ -168,6 +168,11 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &(shares + amount));
+
+        // Emit Bet event
+        // Topics: ("Bet", market_id)
+        // Data: (bettor, amount, option_index)
+        env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), amount, option_index));
     }
 
     /// Pause or unpause a market (admin only).
