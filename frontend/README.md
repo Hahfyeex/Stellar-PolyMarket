@@ -165,3 +165,92 @@ addBet(
 1. POST `/api/bets/batch` → backend returns a Stellar XDR envelope
 2. `window.freighter.signTransaction(xdr)` → single user approval
 3. POST `/api/bets/submit` → backend submits signed XDR to Stellar testnet
+
+---
+
+## PoolOwnershipChart — Fractional Ownership Pie Chart
+
+Renders a live Recharts `PieChart` showing each bettor's fractional share of the pool. Updates in real-time via WebSocket when new bets arrive.
+
+### API data structure expected
+
+`GET /api/markets/:id` must return:
+
+```json
+{
+  "market": { "total_pool": "4200", ... },
+  "bets": [
+    { "wallet_address": "GABC...XY12", "amount": "150" },
+    { "wallet_address": "GDEF...AB34", "amount": "50" }
+  ]
+}
+```
+
+### Data transformation pipeline
+
+```
+bets[] → group by wallet_address → sum amounts
+       → calculate % share (amount / totalPool * 100)
+       → sort descending
+       → wallets < 1% merged into "Others" slice
+```
+
+Logic lives in `src/utils/poolOwnership.ts` (`buildOwnershipSlices`).
+
+### Live updates
+
+Uses `socket.io-client` to join `market_{id}` room. On `oddsUpdate` event, re-fetches bets and rebuilds slices without a page reload.
+
+### Usage
+
+```tsx
+<PoolOwnershipChart marketId={market.id} />
+```
+
+### Slice colors
+
+Slices use the Stella Polymarket design token palette (blue, green, purple, amber, red, cyan, pink, lime, indigo, orange). Wallets below 1% are grouped into a gray "Others" slice.
+
+---
+
+## useFormPersistence — Bet Form State Persistence
+
+Persists bet form inputs to `localStorage` so users don't lose their selections on refresh or accidental navigation.
+
+### Storage key format
+
+```
+stella_bet_form_{marketId}
+```
+
+Examples: `stella_bet_form_1`, `stella_bet_form_42`
+
+Each market has an independent key — switching markets restores that market's last state.
+
+### Persisted fields
+
+| Field | Type | Default |
+|---|---|---|
+| `outcomeIndex` | `number \| null` | `null` |
+| `amount` | `string` | `""` |
+| `slippageTolerance` | `number` | `0.5` |
+
+### Usage
+
+```tsx
+const { outcomeIndex, amount, slippageTolerance, setOutcomeIndex, setAmount, clearForm } =
+  useFormPersistence(market.id);
+
+// After successful bet submission:
+clearForm(); // removes localStorage entry and resets fields to defaults
+```
+
+### Clearing state for testing
+
+Open browser DevTools → Application → Local Storage and delete any key matching `stella_bet_form_*`, or run:
+
+```js
+Object.keys(localStorage)
+  .filter(k => k.startsWith("stella_bet_form_"))
+  .forEach(k => localStorage.removeItem(k));
+```

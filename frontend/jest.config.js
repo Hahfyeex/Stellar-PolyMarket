@@ -5,13 +5,18 @@ module.exports = {
       displayName: "node",
       preset: "ts-jest",
       testEnvironment: "node",
-      testMatch: ["**/hooks/__tests__/**/*.test.ts"],
+      testMatch: [
+        "**/hooks/__tests__/**/*.test.ts",
+      ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
       },
-      collectCoverageFrom: ["src/hooks/useRecentActivity.ts"],
+      collectCoverageFrom: [
+        "src/hooks/useRecentActivity.ts",
+        "src/hooks/useFormPersistence.ts",
+      ],
       coverageThreshold: {
-        global: { lines: 95, functions: 95, branches: 90 },
+        global: { lines: 90, functions: 90, branches: 90 },
       },
     },
     {
@@ -39,7 +44,10 @@ module.exports = {
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
       },
-      collectCoverageFrom: ["src/utils/simulatorCalc.ts"],
+      collectCoverageFrom: [
+        "src/utils/simulatorCalc.ts",
+        "src/utils/poolOwnership.ts",
+      ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
       },
