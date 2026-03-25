@@ -133,6 +133,9 @@ require("./indexer/mercury").subscribe();
 // Initialize self-healing gap detection and recovery
 require("./indexer/gap-detector").initializeSelfHealing();
 
+// Initialise bot registry — subscribes all strategies to the event bus
+require("./bots/registry");
+
 // Global error handler
 app.use((err, req, res, _next) => {
   const safeMessage = sanitizeError(err, req.requestId);
