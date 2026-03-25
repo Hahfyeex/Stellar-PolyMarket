@@ -1,7 +1,11 @@
 import { initializeApp } from "firebase/app";
-import { getMessaging, getToken, onMessage, Messaging } from "firebase/messaging";
+import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics, Analytics, logEvent } from "firebase/analytics";
+import {
+  initializeAppCheck,
+  ReCaptchaEnterpriseProvider,
+  CustomProvider,
+} from "firebase/app-check";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -15,54 +19,62 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
+// ---------------------------------------------------------------------------
+// Firebase App Check
+// Prevents unauthorized clients (bots, scrapers, curl) from calling your
+// Cloud Functions or reading Firestore.
+//
+// In production  → reCAPTCHA Enterprise provider (requires a site key from
+//                  the Google Cloud Console).
+// In development → App Check debug token so local dev still works without
+//                  a real reCAPTCHA challenge.  Set
+//                    NEXT_PUBLIC_APPCHECK_DEBUG_TOKEN=<token>
+//                  in your .env.local (never commit this value).
+// ---------------------------------------------------------------------------
+if (typeof window !== "undefined") {
+  const isDebug =
+    process.env.NODE_ENV !== "production" &&
+    Boolean(process.env.NEXT_PUBLIC_APPCHECK_DEBUG_TOKEN);
+
+  if (isDebug) {
+    // Expose the debug token so the Firebase SDK can pick it up.
+    // Must be set BEFORE initializeAppCheck is called.
+    (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN =
+      process.env.NEXT_PUBLIC_APPCHECK_DEBUG_TOKEN;
+  }
+
+  const recaptchaKey = process.env.NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_KEY;
+
+  if (!recaptchaKey && !isDebug) {
+    console.error(
+      "[AppCheck] NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_KEY is not set. " +
+        "App Check will not be enforced in this environment."
+    );
+  } else {
+    initializeAppCheck(app, {
+      provider: recaptchaKey
+        ? new ReCaptchaEnterpriseProvider(recaptchaKey)
+        : // Fallback: debug-only custom provider (never reaches production
+          // because isDebug guard above catches it first)
+          new CustomProvider({
+            getToken: async () => ({
+              token: process.env.NEXT_PUBLIC_APPCHECK_DEBUG_TOKEN ?? "",
+              expireTimeMillis: Date.now() + 3_600_000,
+            }),
+          }),
+      // isTokenAutoRefreshEnabled: keep tokens fresh without manual calls
+      isTokenAutoRefreshEnabled: true,
+    });
+  }
+}
+
 // Initialize Firestore
 const db = getFirestore(app);
 
-// Initialize Messaging
-let messaging: Messaging | null = null;
+// Initialize Messaging (browser only)
+let messaging = null;
 if (typeof window !== "undefined") {
   messaging = getMessaging(app);
 }
 
-// Initialize Analytics with privacy compliance
-let analytics: Analytics | null = null;
-if (typeof window !== "undefined") {
-  analytics = getAnalytics(app);
-}
-
-// Generate anonymous session ID for privacy compliance
-const generateSessionId = (): string => {
-  const stored = sessionStorage.getItem('analytics_session_id');
-  if (stored) return stored;
-  
-  const sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
-  sessionStorage.setItem('analytics_session_id', sessionId);
-  return sessionId;
-};
-
-// Analytics wrapper with privacy compliance
-export const trackEvent = (eventName: string, parameters?: Record<string, any>) => {
-  if (!analytics) return;
-  
-  // Add anonymous session ID to all events for user identification without PII
-  const enhancedParams: Record<string, any> = {
-    ...parameters,
-    session_id: generateSessionId(),
-    timestamp: new Date().toISOString(),
-  };
-  
-  // Ensure no wallet addresses or PII are included
-  const sanitizedParams: Record<string, any> = {};
-  Object.keys(enhancedParams).forEach((key) => {
-    const value = enhancedParams[key];
-    if (typeof value === 'string' && (value.includes('G') || value.includes('0x') || value.length > 100)) {
-      // Skip potential wallet addresses or long strings that might contain PII
-      return;
-    }
-    sanitizedParams[key] = value;
-  });
-  
-  logEvent(analytics, eventName, sanitizedParams);
-};
-
-export { app, db, messaging, analytics, getToken, onMessage };
+export { app, db, messaging, getToken, onMessage };
