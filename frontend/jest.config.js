@@ -18,7 +18,10 @@ module.exports = {
       displayName: "jsdom",
       preset: "ts-jest",
       testEnvironment: "jest-environment-jsdom",
-      testMatch: ["**/components/__tests__/**/*.test.tsx"],
+      testMatch: [
+        "**/components/__tests__/**/*.test.tsx",
+        "**/context/__tests__/**/*.test.tsx",
+      ],
       globals: {
         "ts-jest": {
           tsconfig: {

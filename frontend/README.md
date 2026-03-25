@@ -120,3 +120,48 @@ Calculation logic lives in `src/utils/simulatorCalc.ts` and is tested at 100% co
 ```bash
 npm test -- --testPathPattern="simulatorCalc|WhatIfSimulator"
 ```
+
+---
+
+## BettingSlip — Batch Betting (Slide-up Drawer)
+
+The `BettingSlip` component lets users queue up to 5 bets across different markets and submit them all in a single Freighter wallet approval.
+
+### Responsive layout
+
+- Mobile (`< 1024px`): slide-up drawer from bottom using `CSS transform: translateY`
+- Desktop (`≥ 1024px`): fixed right-side panel
+
+### Architecture
+
+| File | Role |
+|---|---|
+| `src/context/BettingSlipContext.tsx` | Global queue state — `isOpen`, `bets[]`, `addBet`, `removeBet`, `clearBets` |
+| `src/context/WalletContext.tsx` | Lifts wallet state globally so BettingSlip can submit |
+| `src/hooks/useBatchTransaction.ts` | Builds XDR via `/api/bets/batch`, signs with Freighter, submits via `/api/bets/submit` |
+| `src/components/BettingSlip.tsx` | Drawer/panel UI — bet list, remove buttons, submit |
+| `src/components/BettingSlipWrapper.tsx` | Client boundary that mounts BettingSlip in layout |
+| `src/components/Toast.tsx` | Queue-full warning toast |
+
+### Queue rules
+
+- Max 5 bets — adding a 6th shows a toast warning
+- Same market + outcome combination replaces the existing entry (no duplicates)
+- Auto-opens the slip when a bet is added
+
+### Adding a bet from a market card
+
+```tsx
+const { addBet } = useBettingSlip();
+
+addBet(
+  { marketId, marketTitle, outcomeIndex, outcomeName, amount },
+  () => showToast("Slip is full!")   // optional onQueueFull callback
+);
+```
+
+### Batch transaction flow
+
+1. POST `/api/bets/batch` → backend returns a Stellar XDR envelope
+2. `window.freighter.signTransaction(xdr)` → single user approval
+3. POST `/api/bets/submit` → backend submits signed XDR to Stellar testnet

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
+import { useBettingSlip } from "../context/BettingSlipContext";
+import Toast from "./Toast";
 
 interface Market {
   id: number;
@@ -23,7 +25,9 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [showQueueFullToast, setShowQueueFullToast] = useState(false);
 
+  const { addBet } = useBettingSlip();
   const isExpired = new Date(market.end_date) <= new Date();
 
   const handleShareMarket = async () => {
@@ -152,6 +156,28 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           >
             {loading ? "Placing..." : "Bet"}
           </button>
+          {/* Add to betting slip queue */}
+          <button
+            data-testid="add-to-slip"
+            onClick={() => {
+              if (selectedOutcome === null || !amount) return;
+              addBet(
+                {
+                  marketId: market.id,
+                  marketTitle: market.question,
+                  outcomeIndex: selectedOutcome,
+                  outcomeName: market.outcomes[selectedOutcome],
+                  amount: parseFloat(amount),
+                },
+                () => setShowQueueFullToast(true)
+              );
+            }}
+            disabled={selectedOutcome === null || !amount}
+            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap"
+            title="Add to betting slip"
+          >
+            + Slip
+          </button>
         </div>
       )}
 
@@ -159,6 +185,15 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         <p className={`text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
           {message}
         </p>
+      )}
+
+      {/* Queue-full toast */}
+      {showQueueFullToast && (
+        <Toast
+          message={`Betting slip is full (max ${5} bets). Remove one to add more.`}
+          type="warning"
+          onDismiss={() => setShowQueueFullToast(false)}
+        />
       )}
 
       {/* What-If Simulator — shown when an outcome is selected */}
