@@ -39,6 +39,7 @@ app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/reserves", require("./routes/reserves"));
 app.use("/api/status", require("./routes/status"));
 app.use("/api/images", require("./routes/images"));
+app.use("/api/v1/oracles", require("./routes/oracles"));
 
 // Global error handler
 app.use((err, req, res, next) => {
