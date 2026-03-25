@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
+import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
@@ -28,14 +29,14 @@ export default function Home() {
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
   const handleHelpClick = () => {
-    trackEvent('help_doc_read', {
-      source: 'navbar_help_button',
+    trackEvent("help_doc_read", {
+      source: "navbar_help_button",
       user_wallet_connected: !!publicKey,
     });
-    
+
     // Open help documentation
-    const helpUrl = 'https://docs.stella-polymarket.com/help';
-    window.open(helpUrl, '_blank');
+    const helpUrl = "https://docs.stella-polymarket.com/help";
+    window.open(helpUrl, "_blank");
   };
 
   async function fetchMarkets() {
@@ -50,7 +51,9 @@ export default function Home() {
     }
   }
 
-  useEffect(() => { fetchMarkets(); }, []);
+  useEffect(() => {
+    fetchMarkets();
+  }, []);
 
   // Auto-select first active market for the FAB
   useEffect(() => {
@@ -69,10 +72,16 @@ export default function Home() {
             className="text-gray-400 hover:text-white transition-colors"
             title="Help & Documentation"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="w-5 h-5"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
           </button>
         </div>
@@ -126,10 +135,7 @@ export default function Home() {
         </div>
       )}
 
-      <InsufficientGasModal
-        isOpen={isGasModalOpen}
-        onClose={() => setIsGasModalOpen(false)}
-      />
+      <InsufficientGasModal isOpen={isGasModalOpen} onClose={() => setIsGasModalOpen(false)} />
 
       {/* Hero */}
       <section className="flex flex-col items-center justify-center py-10 md:py-16 px-4 text-center">
@@ -146,7 +152,10 @@ export default function Home() {
       <section className="grid grid-cols-3 gap-3 max-w-2xl mx-auto px-4 pb-8 text-center">
         {[
           { label: "Active Markets", value: markets.filter((m) => !m.resolved).length },
-          { label: "Total Staked", value: `${markets.reduce((s, m) => s + parseFloat(m.total_pool || "0"), 0).toFixed(0)} XLM` },
+          {
+            label: "Total Staked",
+            value: `${markets.reduce((s, m) => s + parseFloat(m.total_pool || "0"), 0).toFixed(0)} XLM`,
+          },
           { label: "Markets", value: markets.length },
         ].map((stat) => (
           <div key={stat.label} className="bg-gray-900 rounded-xl p-4">
@@ -162,7 +171,11 @@ export default function Home() {
         <div className="flex-1">
           <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
           {loading ? (
-            <p className="text-gray-400">Loading markets...</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <MarketCardSkeleton key={i} />
+              ))}
+            </div>
           ) : markets.length === 0 ? (
             <p className="text-gray-400">No markets yet.</p>
           ) : (
@@ -204,16 +217,12 @@ export default function Home() {
           walletAddress={publicKey}
           onBetPlaced={fetchMarkets}
         >
-          <PullToRefresh onRefresh={fetchMarkets}>
-            {pageContent}
-          </PullToRefresh>
+          <PullToRefresh onRefresh={fetchMarkets}>{pageContent}</PullToRefresh>
         </MobileShell>
       </div>
 
       {/* Desktop layout: plain */}
-      <div className="hidden md:block">
-        {pageContent}
-      </div>
+      <div className="hidden md:block">{pageContent}</div>
     </>
   );
 }
