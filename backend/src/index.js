@@ -1,9 +1,15 @@
 require("dotenv").config();
 const express = require("express");
+const http = require("http");
 const cors = require("cors");
 const logger = require("./utils/logger");
+const { initWebSocket } = require("./websocket");
 
 const app = express();
+const server = http.createServer(app);
+
+// Initialize Socket.io
+initWebSocket(server);
 app.use(cors());
 app.use(express.json());
 
@@ -32,6 +38,7 @@ app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/reserves", require("./routes/reserves"));
 app.use("/api/status", require("./routes/status"));
+app.use("/api/images", require("./routes/images"));
 
 // Global error handler
 app.use((err, req, res, next) => {
@@ -45,6 +52,6 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   logger.info({ port: PORT, environment: process.env.NODE_ENV || "development" }, "Server started");
 });
