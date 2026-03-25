@@ -241,6 +241,15 @@ pub enum MarketStatus {
 }
 
 #[contracttype]
+#[derive(Clone, PartialEq)]
+pub enum MarketStatus {
+    Open,
+    Locked,
+    Proposed,
+    Resolved,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct Market {
     pub id: u64,
@@ -1344,8 +1353,8 @@ impl PredictionMarket {
             "ERR_118"
         );
         assert!(
-            winning_outcome < market.options.len(),
-            "Invalid outcome index"
+            env.ledger().timestamp() >= market.proposal_timestamp + LIVENESS_WINDOW,
+            "Liveness window has not elapsed"
         );
 
         market.status = MarketStatus::Resolved;
