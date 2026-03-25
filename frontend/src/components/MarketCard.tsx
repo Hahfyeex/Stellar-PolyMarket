@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { trackEvent } from "../lib/firebase";
+import { VOLATILITY_THRESHOLD } from "../lib/constants";
 
 interface Market {
   id: number;
@@ -15,13 +16,37 @@ interface Props {
   market: Market;
   walletAddress: string | null;
   onBetPlaced?: () => void;
+  odds?: number;
 }
 
-export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
+export default function MarketCard({ market, walletAddress, onBetPlaced, odds }: Props) {
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [pulseClass, setPulseClass] = useState<string>("");
+
+  const prevOddsRef = useRef<number | undefined>(undefined);
+
+  // Detect volatility and trigger pulse animation
+  useEffect(() => {
+    if (odds === undefined) return;
+
+    const prevOdds = prevOddsRef.current;
+    if (prevOdds !== undefined && prevOdds !== 0) {
+      const percentChange = Math.abs((odds - prevOdds) / prevOdds * 100);
+
+      if (percentChange > VOLATILITY_THRESHOLD) {
+        // Green for rising YES odds, red for falling
+        setPulseClass(odds > prevOdds ? "pulse-green" : "pulse-red");
+      }
+    }
+    prevOddsRef.current = odds;
+  }, [odds]);
+
+  const handleAnimationEnd = () => {
+    setPulseClass("");
+  };
 
   const isExpired = new Date(market.end_date) <= new Date();
 
@@ -86,7 +111,11 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800">
+    <div
+      className={`bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800 ${pulseClass}`}
+      onAnimationEnd={handleAnimationEnd}
+      data-testid="market-card"
+    >
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
         <div className="flex items-center gap-2">
