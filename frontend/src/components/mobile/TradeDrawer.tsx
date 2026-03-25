@@ -1,5 +1,6 @@
 "use client";
 import { useRef, useState, useEffect } from "react";
+import { trackEvent } from "../../lib/firebase";
 
 interface Market {
   id: number;
@@ -42,7 +43,18 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   // Reset drag when drawer opens/closes
   useEffect(() => {
     if (!open) setDragY(0);
-  }, [open]);
+    
+    // Track begin_checkout event when bet modal opens
+    if (open && market) {
+      trackEvent('begin_checkout', {
+        market_id: market.id,
+        market_question: market.question.substring(0, 50), // Truncate for privacy
+        total_pool: parseFloat(market.total_pool),
+        outcomes_count: market.outcomes.length,
+        market_resolved: market.resolved,
+      });
+    }
+  }, [open, market?.id]);
 
   function handleTouchStart(e: React.TouchEvent) {
     touchStartY.current = e.touches[0].clientY;
@@ -86,9 +98,25 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setMessage("Bet placed successfully!");
+      
+      // Track successful bet placement
+      trackEvent('bet_placed', {
+        market_id: market.id,
+        outcome_index: selectedOutcome,
+        amount: parseFloat(amount),
+        outcome_name: market.outcomes[selectedOutcome],
+      });
+      
       onBetPlaced?.();
     } catch (err: any) {
       setMessage(`Error: ${err.message}`);
+      
+      // Track bet placement error
+      trackEvent('bet_error', {
+        market_id: market?.id,
+        error_message: err.message.substring(0, 100), // Truncate for privacy
+        amount: parseFloat(amount) || 0,
+      });
     } finally {
       setLoading(false);
     }

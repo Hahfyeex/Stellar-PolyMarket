@@ -7,6 +7,7 @@ import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
+import { trackEvent } from "../lib/firebase";
 
 interface Market {
   id: number;
@@ -25,6 +26,17 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+
+  const handleHelpClick = () => {
+    trackEvent('help_doc_read', {
+      source: 'navbar_help_button',
+      user_wallet_connected: !!publicKey,
+    });
+    
+    // Open help documentation
+    const helpUrl = 'https://docs.stella-polymarket.com/help';
+    window.open(helpUrl, '_blank');
+  };
 
   async function fetchMarkets() {
     try {
@@ -50,7 +62,20 @@ export default function Home() {
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
       <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-800">
-        <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+        <div className="flex items-center gap-4">
+          <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+          <button
+            onClick={handleHelpClick}
+            className="text-gray-400 hover:text-white transition-colors"
+            title="Help & Documentation"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </button>
+        </div>
         {publicKey ? (
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-400">
