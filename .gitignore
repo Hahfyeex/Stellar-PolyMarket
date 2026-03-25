@@ -12,3 +12,6 @@ target/
 
 # Husky
 .husky/_/
+node_modules/
+backend/coverage/
+backend/node_modules/
