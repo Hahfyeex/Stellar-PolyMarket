@@ -250,6 +250,15 @@ pub enum MarketStatus {
 }
 
 #[contracttype]
+#[derive(Clone, PartialEq)]
+pub enum MarketStatus {
+    Open,
+    Locked,
+    Proposed,
+    Resolved,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct Market {
     pub id: u64,
