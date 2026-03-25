@@ -60,6 +60,7 @@ app.use("/api/reserves", require("./routes/reserves"));
 app.use("/api/status", require("./routes/status"));
 app.use("/api/images", require("./routes/images"));
 app.use("/api/v1/oracles", require("./routes/oracles"));
+app.use("/api/markets/trending", require("./routes/trending"));
 
 // Initialise bot registry — subscribes all strategies to the event bus
 require("./bots/registry");
