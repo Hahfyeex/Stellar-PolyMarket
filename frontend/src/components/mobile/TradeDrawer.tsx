@@ -13,7 +13,7 @@ interface Market {
   pool_depth?: Record<string, number>;
 }
 
-import LiquidityHeatmap from "./LiquidityHeatmap";
+import LiquidityHeatmap from "../LiquidityHeatmap";
 
 interface Props {
   market: Market | null;
