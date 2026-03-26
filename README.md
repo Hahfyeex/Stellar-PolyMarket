@@ -150,6 +150,18 @@ distribute_rewards(market_id)
 
 ---
 
+## ⚖️ Dispute Voting & Governance
+
+Oracles can sometimes be wrong. The dispute voting mechanism gives the community a way to challenge incorrect resolutions and protect users.
+
+**Dispute Flow:**
+1. **Open Dispute:** Any token holder can open a dispute within 24 hours of market resolution. This pauses all payout distributions.
+2. **Weighted Voting:** For the next 24 hours, users can cast votes (Support or Reject). Voting power is strictly weighted 1:1 by the user's STELLA token balance at the time of voting.
+3. **Threshold Check:** If the 'Support' votes cross the 60% threshold (`support_votes / total_votes > 0.6`), the market immediately enters a `ReReview` state.
+4. **Resolution:** After the deadline, the dispute is closed, and the final outcome is determined based on the vote results or admin review if in `ReReview`.
+
+---
+
 ## 🧰 Tech Stack
 
 | Layer | Technology |

@@ -27,7 +27,11 @@ module.exports = {
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
+<<<<<<< feat/150-search-filter-engine
         "**/hooks/__tests__/useMarketSearch.test.ts",
+=======
+        "**/hooks/__tests__/useBatchTransaction.test.ts",
+>>>>>>> Default
       ],
       globals: {
         "ts-jest": {
@@ -37,7 +41,14 @@ module.exports = {
           },
         },
       },
+<<<<<<< feat/150-search-filter-engine
       collectCoverageFrom: ["src/hooks/useMarketSearch.ts"],
+=======
+      collectCoverageFrom: [
+        "src/hooks/useBatchTransaction.ts",
+        "src/components/VirtualizedOrderBook.tsx",
+      ],
+>>>>>>> Default
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
       },
@@ -55,6 +66,7 @@ module.exports = {
         "src/utils/poolOwnership.ts",
         "src/utils/trustline.ts",
         "src/utils/marketDiscovery.ts",
+        "src/utils/slippageCalc.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
