@@ -60,10 +60,24 @@ app.use("/api/reserves", require("./routes/reserves"));
 app.use("/api/status", require("./routes/status"));
 app.use("/api/images", require("./routes/images"));
 app.use("/api/v1/oracles", require("./routes/oracles"));
-app.use("/api/markets/trending", require("./routes/trending"));
+app.use("/api/governance", require("./routes/governance"));
+app.use("/api/admin", require("./routes/admin"));
+app.use("/api/indexer", require("./routes/indexer"));
+
+// GraphQL endpoint (graphql-yoga as Express middleware)
+const { createYoga } = require("graphql-yoga");
+const schema = require("./graphql/schema");
+const yoga = createYoga({ schema, graphqlEndpoint: "/graphql", logging: false });
+app.use("/graphql", yoga);
 
 // Initialise bot registry — subscribes all strategies to the event bus
 require("./bots/registry");
+
+// Start automated market resolver cron (every 5 minutes)
+require("./workers/resolver").start();
+
+// Subscribe prediction market contract to Mercury Indexer
+require("./indexer/mercury").subscribe();
 
 // Global error handler
 app.use((err, req, res, next) => {
