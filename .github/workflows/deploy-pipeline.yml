@@ -55,10 +55,10 @@ jobs:
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libudev-dev pkg-config
 
-      - name: Install Soroban CLI
-        # Using cargo-binstall is 10x faster than compiling from source
+      - name: FIXED Install cargo-binstall
         run: |
-          cargo install cargo-binstall@1.11.0
+          cargo install cargo-audit@0.21.1 --locked
+          cargo install cargo-binstall@1.11.0 --locked
           cargo binstall soroban-cli --secure --locked -y
 
       - name: Build Smart Contract
