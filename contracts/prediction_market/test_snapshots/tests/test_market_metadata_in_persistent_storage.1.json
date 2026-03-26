@@ -1007,40 +1007,6 @@
         }
       },
       "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "log"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "string": "\\xe2\\x9c\\x85 Market stored: id={}, status={:?}"
-                },
-                {
-                  "u64": 1
-                },
-                {
-                  "vec": [
-                    {
-                      "symbol": "Active"
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
     }
   ]
 }
