@@ -25,7 +25,7 @@ app.use(cors());
 app.use(express.json());
 
 // Request logging middleware
-app.use((req, res, next) => {
+app.use((req, res, _next) => {
   const start = Date.now();
   res.on("finish", () => {
     const duration = Date.now() - start;
@@ -40,11 +40,12 @@ app.use((req, res, next) => {
       "HTTP Request"
     );
   });
-  next();
+  _next();
 });
 
 // Health check – intentionally NOT behind App Check so uptime monitors work
 app.get("/health", (req, res) => res.json({ status: "ok" }));
+app.use("/api/health", require("./routes/health/protocolHealth"));
 
 // ── App Check enforcement ───────────────────────────────────────────────────
 // All /api/* routes are protected. Any request without a valid
@@ -80,7 +81,7 @@ require("./workers/resolver").start();
 require("./indexer/mercury").subscribe();
 
 // Global error handler
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   logger.error(
     {
       err,
@@ -95,8 +96,5 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  logger.info(
-    { port: PORT, environment: process.env.NODE_ENV || "development" },
-    "Server started"
-  );
+  logger.info({ port: PORT, environment: process.env.NODE_ENV || "development" }, "Server started");
 });
