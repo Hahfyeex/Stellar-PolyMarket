@@ -7,6 +7,7 @@ module.exports = {
       testEnvironment: "node",
       testMatch: [
         "**/hooks/__tests__/**/*.test.ts",
+        "**/store/__tests__/**/*.test.ts",
         "!**/hooks/__tests__/useMarketSearch.test.ts",
       ],
       globals: {
@@ -15,6 +16,7 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
+        "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
