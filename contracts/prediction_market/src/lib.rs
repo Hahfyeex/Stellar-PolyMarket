@@ -3,6 +3,9 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
 };
 
+mod lmsr;
+use lmsr::{lmsr_cost, lmsr_price};
+
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
 #[derive(Clone, PartialEq)]
@@ -58,6 +61,10 @@ pub enum DataKey {
     MaxBetAmount,
     /// Minimum bet amount in stroops — Instance storage. Default: 1_000_000 (0.1 XLM).
     MinBetAmount,
+    /// LMSR liquidity parameter b for a market — Instance storage.
+    LmsrB(u64),
+    /// Per-outcome cumulative share quantities for LMSR — Instance storage.
+    OutcomeShares(u64),
 }
 
 #[contracttype]
@@ -162,10 +169,12 @@ impl PredictionMarket {
         options: Vec<String>,
         deadline: u64,
         token: Address,
+        lmsr_b: i128,
     ) {
         creator.require_auth();
         check_role(&env, Role::Admin);
         panic_if_paused(&env);
+        assert!(lmsr_b > 0, "lmsr_b must be positive");
 
         // Graceful shutdown guard — checked before any other work
         let active: bool = env
@@ -244,9 +253,18 @@ impl PredictionMarket {
             .persistent()
             .set(&DataKey::UserPosition(id), &Vec::<(Address, u32, i128)>::new(&env));
 
-        // Hot: total_shares + is_paused → Instance (cheaper reads/writes)
+        // Hot: total_shares + is_paused + LMSR state → Instance (cheaper reads/writes)
         env.storage().instance().set(&DataKey::TotalShares(id), &0i128);
         env.storage().instance().set(&DataKey::IsPaused(id), &false);
+        env.storage().instance().set(&DataKey::LmsrB(id), &lmsr_b);
+        // Initialise outcome shares to 0 for each option
+        let n = market.options.len();
+        let mut shares: Vec<i128> = Vec::new(&env);
+        for _ in 0..n {
+            shares.push_back(0i128);
+        }
+        env.storage().instance().set(&DataKey::OutcomeShares(id), &shares);
+        env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
     /// Place a bet on an option.
@@ -298,39 +316,71 @@ impl PredictionMarket {
         );
         assert!(option_index < market.options.len(), "Invalid option index");
 
+        // ── LMSR cost delta ──────────────────────────────────────────────────
+        // `amount` is the number of shares the bettor wants to buy.
+        // The actual cost charged is C(q_after) - C(q_before).
+        let b: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LmsrB(market_id))
+            .unwrap();
+        let outcome_shares: Vec<i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OutcomeShares(market_id))
+            .unwrap();
+
+        // Build q_before and q_after as plain slices via a fixed-size stack array.
+        // Max 5 outcomes (enforced at market creation: options.len() <= 5 implied by Vec).
+        let n = outcome_shares.len() as usize;
+        let mut q_before = [0i128; 8];
+        let mut q_after = [0i128; 8];
+        for j in 0..n {
+            q_before[j] = outcome_shares.get(j as u32).unwrap();
+            q_after[j] = q_before[j];
+        }
+        q_after[option_index as usize] += amount;
+
+        let cost_before = lmsr_cost(&q_before[..n], b);
+        let cost_after = lmsr_cost(&q_after[..n], b);
+        let cost_delta = cost_after - cost_before;
+        assert!(cost_delta > 0, "cost delta must be positive");
+
+        // Charge the bettor the LMSR cost delta (not raw `amount`)
         let token_client = token::Client::new(&env, &market.token);
-        token_client.transfer(&bettor, &env.current_contract_address(), &amount);
+        token_client.transfer(&bettor, &env.current_contract_address(), &cost_delta);
+
+        // Update outcome shares in Instance storage
+        let mut new_shares = outcome_shares.clone();
+        new_shares.set(option_index, q_after[option_index as usize]);
+        env.storage().instance().set(&DataKey::OutcomeShares(market_id), &new_shares);
+        // ── end LMSR ─────────────────────────────────────────────────────────
 
         // Cold write: user position → Persistent
-        // Gas optimization: Vec with linear scan instead of Map with key hashing
         let mut positions: Vec<(Address, u32, i128)> = env
             .storage()
             .persistent()
             .get(&DataKey::UserPosition(market_id))
             .unwrap();
-        
-        // Find existing position for this bettor (linear scan)
+
         let mut found = false;
         for i in 0..positions.len() {
-            let (addr, _, _) = positions.get(i).unwrap();
+            let (addr, _, prev_amount) = positions.get(i).unwrap();
             if addr == bettor {
-                // Update existing position
-                positions.set(i, (bettor.clone(), option_index, amount));
+                positions.set(i, (bettor.clone(), option_index, prev_amount + amount));
                 found = true;
                 break;
             }
         }
-        
-        // If not found, append new position
         if !found {
             positions.push_back((bettor.clone(), option_index, amount));
         }
-        
+
         env.storage()
             .persistent()
             .set(&DataKey::UserPosition(market_id), &positions);
 
-        // Hot write: total_shares → Instance (avoids expensive Persistent write on every bet)
+        // Hot write: total_shares → Instance
         let shares: i128 = env
             .storage()
             .instance()
@@ -338,13 +388,10 @@ impl PredictionMarket {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares(market_id), &(shares + amount));
+            .set(&DataKey::TotalShares(market_id), &(shares + cost_delta));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
-        // Emit Bet event
-        // Topics: ("Bet", market_id)
-        // Data: (bettor, amount, option_index)
-        env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), amount, option_index));
+        env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), cost_delta, option_index));
     }
 
     /// Pause or unpause a market (admin only).
@@ -433,7 +480,31 @@ impl PredictionMarket {
         (min, max)
     }
 
-    /// Propose market resolution — only admin (oracle-triggered).
+    /// Get the LMSR implied price for outcome `option_index` in SCALE units (1.0 = 10_000_000).
+    pub fn get_lmsr_price(env: Env, market_id: u64, option_index: u32) -> i128 {
+        let b: i128 = env.storage().instance().get(&DataKey::LmsrB(market_id)).unwrap();
+        let outcome_shares: Vec<i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OutcomeShares(market_id))
+            .unwrap();
+        let n = outcome_shares.len() as usize;
+        let mut q = [0i128; 8];
+        for j in 0..n {
+            q[j] = outcome_shares.get(j as u32).unwrap();
+        }
+        lmsr_price(&q[..n], b, option_index as usize)
+    }
+
+    /// Get the current cumulative outcome share quantities for a market.
+    pub fn get_outcome_shares(env: Env, market_id: u64) -> Vec<i128> {
+        env.storage()
+            .instance()
+            .get(&DataKey::OutcomeShares(market_id))
+            .unwrap()
+    }
+
+
     pub fn propose_resolution(env: Env, market_id: u64, winning_outcome: u32) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -999,7 +1070,7 @@ mod tests {
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
-        client.create_market(&creator, &1u64, &question, &options, &deadline, &token);
+        client.create_market(&creator, &1u64, &question, &options, &deadline, &token, &100_000_000i128);
         (env, client, admin, token, deadline)
     }
 
@@ -1050,6 +1121,7 @@ mod tests {
             &options,
             &deadline,
             &sac.address(),
+            &100_000_000i128,
         );
 
         for bettor in bettors.iter() {
@@ -1121,6 +1193,7 @@ mod tests {
             &options,
             &deadline,
             &token_addr,
+            &100_000_000i128,
         );
 
         // Register a mock token contract so transfers succeed
@@ -1142,7 +1215,8 @@ mod tests {
         client.place_bet(&2u64, &0u32, &bettor1, &100i128);
         client.place_bet(&2u64, &1u32, &bettor2, &200i128);
 
-        assert_eq!(client.get_total_shares(&2u64), 300i128);
+        // total_shares accumulates LMSR cost deltas — must be > 0
+        assert!(client.get_total_shares(&2u64) > 0);
     }
 
     // ── Instance storage: is_paused ───────────────────────────────────────────
@@ -1198,6 +1272,7 @@ mod tests {
             &options,
             &deadline,
             &token,
+            &100_000_000i128,
         );
     }
 
@@ -1225,6 +1300,7 @@ mod tests {
             &options,
             &0u64,
             &token,
+            &100_000_000i128,
         );
     }
 
@@ -1247,6 +1323,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &token,
+            &100_000_000i128,
         );
     }
 
@@ -1336,6 +1413,7 @@ mod tests {
             &options,
             &deadline,
             &token,
+            &100_000_000i128,
         );
         // Advance ledger past deadline
         env.ledger().with_mut(|l| l.timestamp += 10);
@@ -1480,6 +1558,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &token,
+            &100_000_000i128,
         );
         client.batch_distribute(&1u64, &1u32);
     }
@@ -1521,6 +1600,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &token,
+            &100_000_000i128,
         );
     }
 
@@ -1533,7 +1613,8 @@ mod tests {
         let bettor = Address::generate(&env);
         // mock_all_auths covers token transfer; no panic expected
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
-        assert_eq!(client.get_total_shares(&1u64), 50i128);
+        // total_shares reflects LMSR cost delta, which is > 0
+        assert!(client.get_total_shares(&1u64) > 0);
     }
 
     /// batch_distribute still works during shutdown.
@@ -1577,6 +1658,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &token,
+            &100_000_000i128,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
     }
@@ -1638,6 +1720,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &token,
+            &100_000_000i128,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
         // Fee config should still be (0, None, Treasury)
@@ -1678,6 +1761,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &sac.address(),
+            &100_000_000i128,
         );
 
         // Creator paid 100, fee_dest received 100
@@ -1715,6 +1799,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &sac.address(),
+            &100_000_000i128,
         );
 
         let fee_token = token::Client::new(&env, &sac.address());
@@ -1750,6 +1835,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &sac.address(),
+            &100_000_000i128,
         );
     }
 
@@ -1802,6 +1888,7 @@ mod tests {
             &options,
             &(env.ledger().timestamp() + 100),
             &token,
+            &100_000_000i128,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
     }
@@ -1878,6 +1965,73 @@ mod tests {
         client.update_bet_limits(&1_000_000i128, &0i128);
         let (_, max) = client.get_bet_limits();
         assert_eq!(max, i128::MAX);
+    }
+
+    // ── LMSR pricing ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_lmsr_price_equal_at_creation() {
+        // Fresh market with b=100_000_000: both outcomes should be ~0.5
+        let (_, client, _, _, _) = setup();
+        let p0 = client.get_lmsr_price(&1u64, &0u32);
+        let p1 = client.get_lmsr_price(&1u64, &1u32);
+        // Each should be within 1% of 5_000_000 (0.5 in SCALE)
+        assert!((p0 - 5_000_000i128).abs() < 50_000, "p0={}", p0);
+        assert!((p1 - 5_000_000i128).abs() < 50_000, "p1={}", p1);
+    }
+
+    #[test]
+    fn test_lmsr_price_shifts_after_bet() {
+        // After buying shares on outcome 0, its price should rise above 0.5
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &50_000_000i128);
+        let p0 = client.get_lmsr_price(&1u64, &0u32);
+        let p1 = client.get_lmsr_price(&1u64, &1u32);
+        assert!(p0 > 5_000_000i128, "p0 should be > 0.5 after buying: {}", p0);
+        assert!(p1 < 5_000_000i128, "p1 should be < 0.5 after buying: {}", p1);
+    }
+
+    #[test]
+    fn test_lmsr_outcome_shares_updated() {
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &10_000_000i128);
+        let shares = client.get_outcome_shares(&1u64);
+        assert_eq!(shares.get(0).unwrap(), 10_000_000i128);
+        assert_eq!(shares.get(1).unwrap(), 0i128);
+    }
+
+    #[test]
+    fn test_lmsr_cost_delta_charged_not_raw_amount() {
+        // The cost delta for buying 10 XLM of shares on a fresh binary market
+        // should be less than 10 XLM (LMSR cost < raw amount for large b)
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        let shares_before = client.get_total_shares(&1u64);
+        client.place_bet(&1u64, &0u32, &bettor, &10_000_000i128);
+        let shares_after = client.get_total_shares(&1u64);
+        let cost_delta = shares_after - shares_before;
+        // Cost delta must be positive and less than the raw amount
+        assert!(cost_delta > 0, "cost delta must be positive");
+        assert!(cost_delta < 10_000_000i128, "cost delta should be < raw amount for large b");
+    }
+
+    #[test]
+    #[should_panic(expected = "lmsr_b must be positive")]
+    fn test_create_market_zero_b_panics() {
+        let (env, client, _, token, _) = setup();
+        let creator = Address::generate(&env);
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+        client.create_market(
+            &creator,
+            &2u64,
+            &String::from_str(&env, "Bad b"),
+            &options,
+            &(env.ledger().timestamp() + 100),
+            &token,
+            &0i128,
+        );
     }
 }
 
