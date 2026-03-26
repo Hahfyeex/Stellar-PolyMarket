@@ -36,7 +36,10 @@ module.exports = {
           },
         },
       },
-      collectCoverageFrom: ["src/hooks/useBatchTransaction.ts"],
+      collectCoverageFrom: [
+        "src/hooks/useBatchTransaction.ts",
+        "src/components/VirtualizedOrderBook.tsx",
+      ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
       },

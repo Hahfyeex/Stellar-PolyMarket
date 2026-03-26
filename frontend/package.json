@@ -14,11 +14,13 @@
     "@sentry/nextjs": "^10.46.0",
     "@stellar/freighter-api": "^1.7.1",
     "@stellar/stellar-sdk": "^11.0.0",
+    "@types/react-window": "^1.8.8",
     "firebase": "^12.11.0",
     "next": "^16.2.1",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "react-redux": "^9.2.0",
+    "react-window": "^2.2.7",
     "recharts": "^3.8.0",
     "socket.io-client": "^4.8.3"
   },
