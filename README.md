@@ -2,6 +2,19 @@
 
 > A decentralized prediction market built on the Stellar blockchain
 
+---
+
+## 🏗️ Monorepo Layout
+
+Root workspace now uses npm workspaces and shares constants through `constants/`.
+
+- `contracts/` - Soroban smart contract Rust code
+- `frontend/` - Next.js frontend
+- `backend/` - Node.js API server
+- `oracle/` - Oracle connectors
+- `constants/` - shared TypeScript constants / config
+
+
 ![Stellar](https://img.shields.io/badge/Stellar-XLM-blue?logo=stellar)
 ![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-purple)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -79,8 +92,10 @@ Markets are created instantly without admin approval through automated validatio
 - **End Date**: Must be future date within 1 year
 - **No Duplicates**: Unique questions only
 - **Rate Limit**: 3 markets per wallet per 24 hours
+- **Creation Fee**: Configurable fee (default 0) charged in the market's token — burned or sent to DAO treasury
 
 See [Permissionless Launch Guide](PERMISSIONLESS_LAUNCH_README.md) for details.
+See [Creation Fee & DAO Governance](contracts/prediction_market/CREATION_FEE_README.md) for fee configuration.
 
 ---
 
