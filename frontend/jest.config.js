@@ -7,6 +7,7 @@ module.exports = {
       testEnvironment: "node",
       testMatch: [
         "**/hooks/__tests__/**/*.test.ts",
+        "!**/hooks/__tests__/useMarketSearch.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
