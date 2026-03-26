@@ -1218,7 +1218,7 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "get_market"
+                "symbol": "get_total_shares"
               }
             ],
             "data": {
@@ -1241,127 +1241,14 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "get_market"
+                "symbol": "get_total_shares"
               }
             ],
             "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "deadline"
-                  },
-                  "val": {
-                    "u64": 86400
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "id"
-                  },
-                  "val": {
-                    "u64": 1
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "options"
-                  },
-                  "val": {
-                    "vec": [
-                      {
-                        "string": "Yes"
-                      },
-                      {
-                        "string": "No"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "proposal_timestamp"
-                  },
-                  "val": {
-                    "u64": 0
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "proposed_outcome"
-                  },
-                  "val": "void"
-                },
-                {
-                  "key": {
-                    "symbol": "question"
-                  },
-                  "val": {
-                    "string": "Will BTC exceed $100k?"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "status"
-                  },
-                  "val": {
-                    "vec": [
-                      {
-                        "symbol": "Active"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "token"
-                  },
-                  "val": {
-                    "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "winning_outcome"
-                  },
-                  "val": {
-                    "u32": 0
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "log"
+              "i128": {
+                "hi": 0,
+                "lo": 0
               }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "string": "\\xe2\\x9c\\x85 Market stored: id={}, status={:?}"
-                },
-                {
-                  "u64": 1
-                },
-                {
-                  "vec": [
-                    {
-                      "symbol": "Active"
-                    }
-                  ]
-                }
-              ]
             }
           }
         }

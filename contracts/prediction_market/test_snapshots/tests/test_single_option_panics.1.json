@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 2,
+    "address": 4,
     "nonce": 0
   },
   "auth": [
@@ -262,11 +262,34 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "initialize"
+                "symbol": "create_market"
               }
             ],
             "data": {
-              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+              "vec": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "u64": 4
+                },
+                {
+                  "string": "Bad market"
+                },
+                {
+                  "vec": [
+                    {
+                      "string": "Only"
+                    }
+                  ]
+                },
+                {
+                  "u64": 100
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                }
+              ]
             }
           }
         }
@@ -288,10 +311,29 @@
             "data": {
               "vec": [
                 {
-                  "string": "caught panic 'Contract already initialized' from contract function 'Symbol(obj#31)'"
+                  "string": "caught panic 'Need at least 2 options' from contract function 'Symbol(obj#41)'"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "u64": 4
+                },
+                {
+                  "string": "Bad market"
+                },
+                {
+                  "vec": [
+                    {
+                      "string": "Only"
+                    }
+                  ]
+                },
+                {
+                  "u64": 100
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 }
               ]
             }
@@ -348,12 +390,31 @@
                   "string": "contract call failed"
                 },
                 {
-                  "symbol": "initialize"
+                  "symbol": "create_market"
                 },
                 {
                   "vec": [
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                    },
+                    {
+                      "u64": 4
+                    },
+                    {
+                      "string": "Bad market"
+                    },
+                    {
+                      "vec": [
+                        {
+                          "string": "Only"
+                        }
+                      ]
+                    },
+                    {
+                      "u64": 100
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                     }
                   ]
                 }
