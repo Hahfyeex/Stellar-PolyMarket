@@ -106,10 +106,10 @@ fn check_initialized(env: &Env) {
         .instance()
         .get(&DataKey::Initialized)
         .unwrap_or(false);
-    assert!(!is_init, "Contract already initialized");
+    assert!(!is_init, "ERR_101");
 }
 
-/// Reads IsPaused from persistent storage (defaults false). Panics with "ContractPaused" if set.
+/// Reads IsPaused from persistent storage (defaults false). Panics with "ERR_102" if set.
 fn panic_if_paused(env: &Env) {
     let paused: bool = env
         .storage()
@@ -117,7 +117,7 @@ fn panic_if_paused(env: &Env) {
         .get(&DataKey::IsPaused)
         .unwrap_or(false);
     if paused {
-        panic!("ContractPaused");
+        panic!("ERR_102");
     }
 }
 
@@ -142,7 +142,7 @@ impl PredictionMarket {
     /// If a non-zero CreationFee is configured, the creator must hold sufficient
     /// balance of `token` to cover the fee. The fee is transferred to FeeDestination
     /// before the market is stored. If the transfer fails (insufficient balance),
-    /// the transaction aborts with "InsufficientFeeBalance" and no market is created.
+    /// the transaction aborts with "ERR_108" and no market is created.
     ///
     /// Fee routing is controlled by FeeMode:
     ///   - FeeMode::Burn     → fee sent to a burn/lock address (e.g. issuer with locked trustline)
@@ -169,14 +169,14 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::GlobalStatus)
             .unwrap_or(true);
-        assert!(active, "Platform is shut down");
+        assert!(active, "ERR_103");
 
         assert!(
             !env.storage().persistent().has(&DataKey::Market(id)),
-            "Market already exists"
+            "ERR_104"
         );
-        assert!(options.len() >= 2, "Need at least 2 options");
-        assert!(deadline > env.ledger().timestamp(), "Deadline must be in the future");
+        assert!(options.len() >= 2, "ERR_105");
+        assert!(deadline > env.ledger().timestamp(), "ERR_106");
 
         // --- Creation fee collection ---
         // Read configured fee; default 0 means free market creation.
@@ -192,19 +192,19 @@ impl PredictionMarket {
                 .storage()
                 .instance()
                 .get(&DataKey::FeeDestination)
-                .expect("FeeDestination not configured");
+                .expect("ERR_107");
 
             // Transfer fee from creator to destination (burn address or DAO treasury).
             // The token contract will panic with a host error if the creator has
             // insufficient balance, aborting the entire transaction — no market is created.
             // We wrap in try_transfer and map any error to our own panic message so
-            // callers see a clear "InsufficientFeeBalance" reason.
+            // callers see a clear "ERR_108" reason.
             let fee_token = token::Client::new(&env, &token);
             if fee_token
                 .try_transfer(&creator, &fee_destination, &creation_fee)
                 .is_err()
             {
-                panic!("InsufficientFeeBalance");
+                panic!("ERR_108");
             }
 
             // Emit FeeCollected event for off-chain indexing.
@@ -255,7 +255,7 @@ impl PredictionMarket {
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         panic_if_paused(&env);
         bettor.require_auth();
-        assert!(amount > 0, "Amount must be positive");
+        assert!(amount > 0, "ERR_109");
 
         // Hot read: is_paused from Instance
         let paused: bool = env
@@ -263,7 +263,7 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::IsPaused(market_id))
             .unwrap_or(false);
-        assert!(!paused, "Market is paused");
+        assert!(!paused, "ERR_110");
 
         // Cold read: market metadata from Persistent
         let market: Market = env
@@ -272,12 +272,12 @@ impl PredictionMarket {
             .get(&DataKey::Market(market_id))
             .unwrap();
 
-        assert!(market.status == MarketStatus::Active, "Market not active");
+        assert!(market.status == MarketStatus::Active, "ERR_111");
         assert!(
             env.ledger().timestamp() < market.deadline,
             "Market deadline has passed"
         );
-        assert!(option_index < market.options.len(), "Invalid option index");
+        assert!(option_index < market.options.len(), "ERR_112");
 
         let token_client = token::Client::new(&env, &market.token);
         token_client.transfer(&bettor, &env.current_contract_address(), &amount);
@@ -372,7 +372,7 @@ impl PredictionMarket {
     pub fn update_fee(env: Env, new_fee: i128, new_destination: Address, new_mode: FeeMode) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
-        assert!(new_fee >= 0, "Fee must be non-negative");
+        assert!(new_fee >= 0, "ERR_113");
         env.storage().instance().set(&DataKey::CreationFee, &new_fee);
         env.storage().instance().set(&DataKey::FeeDestination, &new_destination);
         env.storage().instance().set(&DataKey::FeeModeConfig, &new_mode);
@@ -402,10 +402,10 @@ impl PredictionMarket {
             .get(&DataKey::Market(market_id))
             .unwrap();
 
-        assert!(market.status == MarketStatus::Active, "Market not active");
+        assert!(market.status == MarketStatus::Active, "ERR_111");
         assert!(
             winning_outcome < market.options.len(),
-            "Invalid outcome index"
+            "ERR_114"
         );
 
         market.status = MarketStatus::Proposed;
@@ -419,7 +419,7 @@ impl PredictionMarket {
     /// Moves market to Disputed state and freezes payouts.
     pub fn dispute(env: Env, market_id: u64, disputer: Address, bond_amount: i128) {
         disputer.require_auth();
-        assert!(bond_amount > 0, "Bond must be positive");
+        assert!(bond_amount > 0, "ERR_115");
 
         let mut market: Market = env
             .storage()
@@ -427,7 +427,7 @@ impl PredictionMarket {
             .get(&DataKey::Market(market_id))
             .unwrap();
 
-        assert!(market.status == MarketStatus::Proposed, "Market not in Proposed state");
+        assert!(market.status == MarketStatus::Proposed, "ERR_116");
 
         // Escrow the bond
         let token_client = token::Client::new(&env, &market.token);
@@ -459,11 +459,11 @@ impl PredictionMarket {
         // Final resolution override by admin (e.g. after examining dispute)
         assert!(
             market.status == MarketStatus::Proposed || market.status == MarketStatus::Disputed,
-            "Market must be proposed or disputed to resolve"
+            "ERR_117"
         );
         assert!(
             env.ledger().timestamp() >= market.proposal_timestamp + LIVENESS_WINDOW,
-            "Liveness window has not elapsed"
+            "ERR_118"
         );
 
         market.status = MarketStatus::Resolved;
@@ -504,7 +504,7 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::MarketSwept(market_id))
             .unwrap_or(false);
-        assert!(!already_swept, "Market already swept");
+        assert!(!already_swept, "ERR_119");
 
         // Verify market is resolved
         let market: Market = env
@@ -512,7 +512,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "ERR_120");
 
         // Check 30-day claim deadline has passed (30 days = 2,592,000 seconds)
         let resolution_time: u64 = env
@@ -524,7 +524,7 @@ impl PredictionMarket {
         let thirty_days: u64 = 30 * 24 * 60 * 60; // 2,592,000 seconds
         assert!(
             current_time >= resolution_time + thirty_days,
-            "Claim deadline not reached (30 days required)"
+            "ERR_121"
         );
 
         // Get positions and calculate payouts
@@ -632,7 +632,7 @@ impl PredictionMarket {
             .get(&DataKey::VaultBalance)
             .unwrap_or(0);
 
-        assert!(vault_balance > 0, "No funds in vault to invest");
+        assert!(vault_balance > 0, "ERR_122");
 
         // TODO: Implement actual Stellar AMM integration
         // For now, this is a placeholder that validates the vault balance exists
@@ -681,7 +681,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.resolved, "Market not resolved yet");
+        assert!(market.resolved, "ERR_120");
 
         // Get original payouts map
         let original_payouts: Map<Address, i128> = env
@@ -693,13 +693,13 @@ impl PredictionMarket {
         // Verify claimant has a payout
         assert!(
             original_payouts.contains_key(claimant.clone()),
-            "No payout for this address"
+            "ERR_123"
         );
 
         let payout_amount = original_payouts.get(claimant.clone()).unwrap();
 
         // Check if already claimed (payout would be 0 if claimed)
-        assert!(payout_amount > 0, "Already claimed");
+        assert!(payout_amount > 0, "ERR_124");
 
         // Transfer the original payout amount
         let token_client = token::Client::new(&env, &market.token);
@@ -719,7 +719,7 @@ impl PredictionMarket {
                 .unwrap_or(0);
             assert!(
                 vault_balance >= payout_amount,
-                "Insufficient vault balance"
+                "ERR_125"
             );
             env.storage()
                 .instance()
@@ -790,7 +790,7 @@ impl PredictionMarket {
     pub fn batch_distribute(env: Env, market_id: u64, batch_size: u32) -> u32 {
         assert!(
             batch_size > 0 && batch_size <= MAX_BATCH_SIZE,
-            "batch_size must be 1..=MAX_BATCH_SIZE"
+            "ERR_126"
         );
 
         let market: Market = env
@@ -798,7 +798,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "ERR_120");
 
         // Gas optimization: Vec instead of Map for positions
         let positions: Vec<(Address, u32, i128)> = env
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Contract already initialized")]
+    #[should_panic(expected = "ERR_101")]
     fn test_double_initialize_panics() {
         let env = Env::default();
         env.mock_all_auths();
@@ -1121,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Market is paused")]
+    #[should_panic(expected = "ERR_110")]
     fn test_place_bet_blocked_when_paused() {
         let (env, client, _, _, _) = setup();
         client.set_paused(&1u64, &true);
@@ -1140,7 +1140,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Market already exists")]
+    #[should_panic(expected = "ERR_104")]
     fn test_duplicate_market_panics() {
         let (env, client, _, token, deadline) = setup();
         let creator = Address::generate(&env);
@@ -1160,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Deadline must be in the future")]
+    #[should_panic(expected = "ERR_106")]
     fn test_past_deadline_panics() {
         let env = Env::default();
         env.mock_all_auths();
@@ -1187,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Need at least 2 options")]
+    #[should_panic(expected = "ERR_105")]
     fn test_single_option_panics() {
         let env = Env::default();
         env.mock_all_auths();
@@ -1221,7 +1221,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Already resolved")]
+    #[should_panic(expected = "ERR_117")]
     fn test_double_resolve_panics() {
         let (_, client, _, _, _) = setup();
         client.resolve_market(&1u64, &0u32);
@@ -1229,14 +1229,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid outcome index")]
+    #[should_panic(expected = "ERR_114")]
     fn test_invalid_outcome_panics() {
         let (_, client, _, _, _) = setup();
         client.resolve_market(&1u64, &99u32);
     }
 
     #[test]
-    #[should_panic(expected = "Market not resolved yet")]
+    #[should_panic(expected = "ERR_120")]
     fn test_distribute_before_resolve_panics() {
         let (_, client, _, _, _) = setup();
         client.distribute_rewards(&1u64);
@@ -1253,7 +1253,7 @@ mod tests {
     // ── Amount validation ─────────────────────────────────────────────────────
 
     #[test]
-    #[should_panic(expected = "Amount must be positive")]
+    #[should_panic(expected = "ERR_109")]
     fn test_zero_amount_panics() {
         let (env, client, _, _, _) = setup();
         let bettor = Address::generate(&env);
@@ -1261,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Amount must be positive")]
+    #[should_panic(expected = "ERR_109")]
     fn test_negative_amount_panics() {
         let (env, client, _, _, _) = setup();
         let bettor = Address::generate(&env);
@@ -1304,7 +1304,7 @@ mod tests {
     // ── Invalid option index ──────────────────────────────────────────────────
 
     #[test]
-    #[should_panic(expected = "Invalid option index")]
+    #[should_panic(expected = "ERR_112")]
     fn test_invalid_option_index_panics() {
         let (env, client, _, _, _) = setup();
         let bettor = Address::generate(&env);
@@ -1314,7 +1314,7 @@ mod tests {
     // ── Bet on resolved market ────────────────────────────────────────────────
 
     #[test]
-    #[should_panic(expected = "Market not active")]
+    #[should_panic(expected = "ERR_111")]
     fn test_bet_on_proposed_market_panics() {
         let (env, client, _, _, _) = setup();
         client.propose_resolution(&1u64, &0u32);
@@ -1400,7 +1400,7 @@ mod tests {
 
     /// batch_size=0 must panic.
     #[test]
-    #[should_panic(expected = "batch_size must be 1..=MAX_BATCH_SIZE")]
+    #[should_panic(expected = "ERR_126")]
     fn test_batch_size_zero_panics() {
         let (_, client, _) = setup_market_with_winners(3);
         client.batch_distribute(&1u64, &0u32);
@@ -1408,7 +1408,7 @@ mod tests {
 
     /// batch_size > MAX_BATCH_SIZE must panic.
     #[test]
-    #[should_panic(expected = "batch_size must be 1..=MAX_BATCH_SIZE")]
+    #[should_panic(expected = "ERR_126")]
     fn test_batch_size_exceeds_max_panics() {
         let (_, client, _) = setup_market_with_winners(3);
         client.batch_distribute(&1u64, &(MAX_BATCH_SIZE + 1));
@@ -1416,7 +1416,7 @@ mod tests {
 
     /// batch_distribute on unresolved market must panic.
     #[test]
-    #[should_panic(expected = "Market not resolved yet")]
+    #[should_panic(expected = "ERR_120")]
     fn test_batch_distribute_unresolved_panics() {
         let env = Env::default();
         env.mock_all_auths();
@@ -1462,7 +1462,7 @@ mod tests {
 
     /// set_global_status(false) blocks create_market.
     #[test]
-    #[should_panic(expected = "Platform is shut down")]
+    #[should_panic(expected = "ERR_103")]
     fn test_create_market_blocked_when_shutdown() {
         let (env, client, _, token, _) = setup();
         client.set_global_status(&false);
@@ -1563,7 +1563,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Market not resolved yet")]
+    #[should_panic(expected = "ERR_120")]
     fn test_payout_frozen_when_disputed() {
         let (env, client, _, _, _) = setup();
         client.propose_resolution(&1u64, &0u32);
@@ -1682,7 +1682,7 @@ mod tests {
 
     /// Insufficient balance aborts market creation with InsufficientFeeBalance.
     #[test]
-    #[should_panic(expected = "InsufficientFeeBalance")]
+    #[should_panic(expected = "ERR_108")]
     fn test_insufficient_fee_balance_aborts() {
         let env = Env::default();
         env.mock_all_auths();
