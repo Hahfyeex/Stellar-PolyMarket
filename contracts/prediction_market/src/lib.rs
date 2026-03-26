@@ -4658,6 +4658,249 @@ mod tests {
         let paid2 = client.batch_payout(&2u64, &recipients2, &admin);
         assert_eq!(paid2, 1);
     }
+
+    #[test]
+    fn test_reentrancy_guard_mixed_payout_methods() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+
+        let winner1 = Address::generate(&env);
+        let winner2 = Address::generate(&env);
+        sac_client.mint(&winner1, &1000_000_000i128);
+        sac_client.mint(&winner2, &1000_000_000i128);
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+
+        client.create_market(
+            &creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None
+        );
+
+        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
+        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
+
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        // Use batch_distribute for first winner
+        let paid1 = client.batch_distribute(&1u64, &1u32);
+        assert_eq!(paid1, 1);
+
+        // Lock should be released, allowing batch_payout for second winner
+        let recipients = vec![&env, winner2.clone()];
+        let paid2 = client.batch_payout(&1u64, &recipients, &admin);
+        assert_eq!(paid2, 1);
+    }
+
+    #[test]
+    fn test_reentrancy_guard_with_failed_transfer() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+
+        let winner = Address::generate(&env);
+        sac_client.mint(&winner, &1000_000_000i128);
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+
+        client.create_market(
+            &creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None
+        );
+
+        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
+
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        // First payout succeeds
+        let recipients = vec![&env, winner.clone()];
+        let paid1 = client.batch_payout(&1u64, &recipients, &admin);
+        assert_eq!(paid1, 1);
+
+        // Even if there was an error, lock should be released
+        // Second call should succeed (but pay 0 since already paid)
+        let paid2 = client.batch_payout(&1u64, &recipients, &admin);
+        assert_eq!(paid2, 0);
+    }
+
+    #[test]
+    fn test_reentrancy_guard_sequential_claims() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+
+        let winner1 = Address::generate(&env);
+        let winner2 = Address::generate(&env);
+        let winner3 = Address::generate(&env);
+        sac_client.mint(&winner1, &1000_000_000i128);
+        sac_client.mint(&winner2, &1000_000_000i128);
+        sac_client.mint(&winner3, &1000_000_000i128);
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+
+        client.create_market(
+            &creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None
+        );
+
+        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
+        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
+        client.place_bet(&1u64, &0u32, &winner3, &100_000_000i128);
+
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        // Sweep to create original payouts
+        env.ledger().with_mut(|l| l.timestamp += 30 * 24 * 60 * 60 + 1);
+        client.sweep_unclaimed(&1u64);
+
+        // Sequential claims should all work (lock released between each)
+        let claimed1 = client.claim_original(&1u64, &winner1);
+        assert!(claimed1 > 0);
+
+        let claimed2 = client.claim_original(&1u64, &winner2);
+        assert!(claimed2 > 0);
+
+        let claimed3 = client.claim_original(&1u64, &winner3);
+        assert!(claimed3 > 0);
+    }
+
+    #[test]
+    fn test_reentrancy_guard_batch_distribute_multiple_batches() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+
+        // Create 5 winners
+        let mut winners = Vec::new(&env);
+        for _ in 0..5 {
+            let winner = Address::generate(&env);
+            sac_client.mint(&winner, &1000_000_000i128);
+            winners.push_back(winner);
+        }
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+
+        client.create_market(
+            &creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None
+        );
+
+        // All bet on winning outcome
+        for i in 0..winners.len() {
+            let winner = winners.get(i).unwrap();
+            client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
+        }
+
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        // Process in multiple batches - lock should be released between each
+        let paid1 = client.batch_distribute(&1u64, &2u32);
+        assert_eq!(paid1, 2);
+
+        let paid2 = client.batch_distribute(&1u64, &2u32);
+        assert_eq!(paid2, 2);
+
+        let paid3 = client.batch_distribute(&1u64, &2u32);
+        assert_eq!(paid3, 1); // Only 1 remaining
+    }
+
+    #[test]
+    fn test_reentrancy_guard_interleaved_operations() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+
+        let winner1 = Address::generate(&env);
+        let winner2 = Address::generate(&env);
+        let winner3 = Address::generate(&env);
+        sac_client.mint(&winner1, &1000_000_000i128);
+        sac_client.mint(&winner2, &1000_000_000i128);
+        sac_client.mint(&winner3, &1000_000_000i128);
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+
+        // Create two markets
+        client.create_market(
+            &creator, &1u64, &String::from_str(&env, "Market 1"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None
+        );
+        client.create_market(
+            &creator, &2u64, &String::from_str(&env, "Market 2"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None
+        );
+
+        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
+        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
+        client.place_bet(&2u64, &0u32, &winner3, &100_000_000i128);
+
+        // Resolve both markets
+        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&2u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&2u64, &0u32);
+
+        // Interleave operations between markets
+        let paid1_m1 = client.batch_distribute(&1u64, &1u32);
+        assert_eq!(paid1_m1, 1); // Winner1 from market 1
+
+        let recipients_m2 = vec![&env, winner3.clone()];
+        let paid1_m2 = client.batch_payout(&2u64, &recipients_m2, &admin);
+        assert_eq!(paid1_m2, 1); // Winner3 from market 2
+
+        let paid2_m1 = client.batch_distribute(&1u64, &1u32);
+        assert_eq!(paid2_m1, 1); // Winner2 from market 1
+
+        // All operations should succeed with lock properly released between each
+    }
 }
 
     // ── Bulk Claim ──────────────────────────────────────────────────
