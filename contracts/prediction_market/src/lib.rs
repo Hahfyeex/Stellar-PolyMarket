@@ -36,6 +36,8 @@ pub enum DataKey {
     OriginalPayouts(u64),
     /// Swept flag: tracks if a market's unclaimed funds have been swept — Instance storage
     MarketSwept(u64),
+    /// Active dispute data for a market — Persistent storage
+    Dispute(u64),
 }
 
 #[contracttype]
@@ -44,12 +46,13 @@ pub enum MarketStatus {
     Active,
     Proposed,
     Disputed,
+    ReReview, // threshold crossed, paused for final admin review
     Resolved,
 }
 
 #[contracttype]
 #[derive(Clone, PartialEq)]
-pub enum MarketStatus {
+pub enum MarketStatus1 {
     Open,
     Locked,
     Proposed,
@@ -58,11 +61,21 @@ pub enum MarketStatus {
 
 #[contracttype]
 #[derive(Clone, PartialEq)]
-pub enum MarketStatus {
+pub enum MarketStatus2 {
     Open,
     Locked,
     Proposed,
     Resolved,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct DisputeData {
+    pub active: bool,
+    pub votes: soroban_sdk::Map<Address, i128>,
+    pub total_votes: i128,
+    pub support_votes: i128,
+    pub deadline: u64,
 }
 
 #[contracttype]
@@ -374,6 +387,116 @@ impl PredictionMarket {
         env.storage()
             .persistent()
             .set(&DataKey::ClaimDeadline(market_id), &resolution_time);
+    }
+
+    /// Opens a dispute voting window for 24 hours. Callable by any token holder within 24h of resolution.
+    /// Requires that the caller has a token balance > 0 in the market token (STELLA).
+    pub fn open_dispute(env: Env, market_id: u64, caller: Address) {
+        caller.require_auth();
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+
+        assert!(market.status == MarketStatus::Resolved, "Market must be resolved to open a dispute");
+
+        // Must be within 24h of resolution
+        let resolution_time: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClaimDeadline(market_id))
+            .unwrap_or(0);
+        let current_time = env.ledger().timestamp();
+        assert!(current_time <= resolution_time + 86400, "Dispute window closed");
+
+        // Verify token holding
+        let token_client = token::Client::new(&env, &market.token);
+        assert!(token_client.balance(&caller) > 0, "Only token holders can open a dispute");
+
+        // Ensure no active dispute exists
+        let has_dispute = env.storage().persistent().has(&DataKey::Dispute(market_id));
+        assert!(!has_dispute, "Dispute already opened");
+
+        let dispute = DisputeData {
+            active: true,
+            votes: soroban_sdk::Map::new(&env),
+            total_votes: 0,
+            support_votes: 0,
+            deadline: current_time + 86400, // 24 hours from now
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(market_id), &dispute);
+
+        env.events().publish((soroban_sdk::Symbol::new(&env, "DisputeOpened"), market_id), caller);
+    }
+
+    /// Cast a weighted vote in an active dispute using STELLA token balance (market.token).
+    /// Weight is mathematically correct (1:1 with token balance).
+    pub fn cast_vote(env: Env, market_id: u64, voter: Address, support: bool) {
+        voter.require_auth();
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+
+        let mut dispute: DisputeData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(market_id))
+            .expect("No dispute found");
+
+        assert!(dispute.active, "Dispute is not active");
+        let current_time = env.ledger().timestamp();
+        assert!(current_time <= dispute.deadline, "Voting deadline passed");
+        assert!(!dispute.votes.contains_key(voter.clone()), "Already voted");
+
+        let token_client = token::Client::new(&env, &market.token);
+        let balance = token_client.balance(&voter);
+        assert!(balance > 0, "No voting weight");
+
+        dispute.votes.set(voter.clone(), balance);
+        dispute.total_votes += balance;
+        if support {
+            dispute.support_votes += balance;
+        }
+
+        // Check threshold: more than 60% support (support_votes / total_votes > 0.6)
+        // Equivalent to: support_votes * 10 > total_votes * 6
+        if dispute.support_votes * 10 > dispute.total_votes * 6 {
+            let mut updated_market = market;
+            updated_market.status = MarketStatus::ReReview;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Market(market_id), &updated_market);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(market_id), &dispute);
+    }
+
+    /// Closes an active dispute after the deadline.
+    pub fn close_dispute(env: Env, market_id: u64) {
+        let mut dispute: DisputeData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(market_id))
+            .expect("No dispute found");
+
+        assert!(dispute.active, "Dispute already closed");
+        let current_time = env.ledger().timestamp();
+        assert!(current_time > dispute.deadline, "Voting still in progress");
+
+        dispute.active = false;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(market_id), &dispute);
     }
 
     /// Sweep unclaimed payouts from a resolved market into the vault.
@@ -696,6 +819,12 @@ impl PredictionMarket {
             .get(&DataKey::Market(market_id))
             .unwrap();
         assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+
+        // Check if there's an active dispute
+        let dispute_opt: Option<DisputeData> = env.storage().persistent().get(&DataKey::Dispute(market_id));
+        if let Some(dispute) = dispute_opt {
+            assert!(!dispute.active, "Payouts paused during an active dispute");
+        }
 
         // Gas optimization: Vec instead of Map for positions
         let positions: Vec<(Address, u32, i128)> = env
@@ -1456,6 +1585,58 @@ mod tests {
         let (_env, client, _, _, _) = setup();
         // Calling the function to ensure it doesn't panic and executes correctly.
         client.bump_market_ttl(&1u64, &1000u32, &5000u32);
+    }
+
+    // ── Weighted Dispute Voting ──────────────────────────────────────────────
+
+    #[test]
+    fn test_dispute_voting_flow() {
+        let (env, client, bettors) = setup_market_with_winners(3);
+        
+        let voter1 = bettors.get(0).unwrap();
+        let voter2 = bettors.get(1).unwrap();
+        let voter3 = bettors.get(2).unwrap();
+        
+        let market = client.get_market(&1u64);
+        assert_eq!(market.status, MarketStatus::Resolved);
+        
+        // 1. Open Dispute
+        client.open_dispute(&1u64, &voter1);
+        
+        // 2. Cast Votes
+        client.cast_vote(&1u64, &voter1, &true);
+        client.cast_vote(&1u64, &voter2, &false);
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::Resolved);
+        
+        client.cast_vote(&1u64, &voter3, &true);
+        // Exceeds 60% support, should transition to ReReview
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::ReReview);
+        
+        // Fast forward 24h
+        env.ledger().with_mut(|l| l.timestamp += 86401);
+        
+        // 3. Close Dispute
+        client.close_dispute(&1u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "Dispute window closed")]
+    fn test_open_dispute_after_window_panics() {
+        let (env, client, bettors) = setup_market_with_winners(1);
+        let voter = bettors.get(0).unwrap();
+        
+        // Fast forward 25h
+        env.ledger().with_mut(|l| l.timestamp += 90000);
+        client.open_dispute(&1u64, &voter);
+    }
+    
+    #[test]
+    #[should_panic(expected = "Payouts paused during an active dispute")]
+    fn test_distribute_rewards_paused_during_voting() {
+        let (_env, client, bettors) = setup_market_with_winners(1);
+        let voter = bettors.get(0).unwrap();
+        client.open_dispute(&1u64, &voter);
+        client.distribute_rewards(&1u64);
     }
 }
 
