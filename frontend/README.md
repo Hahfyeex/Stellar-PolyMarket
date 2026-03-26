@@ -257,38 +257,209 @@ Object.keys(localStorage)
 
 ---
 
-## PayoutTooltip — Soroban Simulation Preview
+## Dynamic Theming Engine (Issue #149)
 
-Shows users their exact estimated payout and network fee before signing, using the Soroban `simulateTransaction` RPC. The tooltip appears below the bet amount input and updates dynamically as the user types.
+The Stella Polymarket frontend features a CSS variable-based dynamic dark/light theme engine, which ensures zero hardcoded color values and immediate theme application.
 
-### How it works
+### Adding New Theme Tokens
 
-1. User types a stake amount → `useSimulateBet` debounces 400ms
-2. Hook calls `SorobanRpc.Server.simulateTransaction` with a `place_bet` invocation
-3. `parseSimulationResponse` extracts `minResourceFee` (network fee in stroops) and computes payout from current pool state
-4. `PayoutTooltip` renders "Estimated Payout", "Net Profit", and "Network Fee"
+1. **Open `src/app/globals.css`**
+   Add your new token to both the `:root` and `[data-theme='light']` blocks:
+   ```css
+   :root {
+     ...
+     --color-brand-new: #123456;
+   }
+   
+   [data-theme='light'] {
+     ...
+     --color-brand-new: #abcdef;
+   }
+   ```
 
-### Handling outdated simulations (ledger staleness)
+2. **Open `tailwind.config.js`**
+   Update the Tailwind configuration to map the standard classes to your token:
+   ```js
+   theme: {
+     extend: {
+       colors: {
+         ...
+         brand: {
+           new: 'var(--color-brand-new)',
+         }
+       }
+     }
+   }
+   ```
+   
+3. **Use the new Token in React Components**
+   You can now use `bg-brand-new`, `text-brand-new`, `border-brand-new`, etc., anywhere in the `.tsx` files.
 
-Each simulation captures `latestLedger` from the RPC response. A background interval polls the current ledger every 5 seconds. If the ledger has advanced by more than **3 ledgers** (`STALE_LEDGER_THRESHOLD`) since the last simulation, `isStale` becomes `true` and a "Refreshing..." badge appears.
+### useTheme hook
+We provide a `useTheme` hook (`src/hooks/useTheme.ts`) that will respect the user's system preferences `window.matchMedia('(prefers-color-scheme: dark)')` on the first load and save user override configurations into `localStorage` under the `stella_theme` key.
 
-The last known values remain visible during the refresh window — the UI never blanks out. The next debounced simulation (triggered by any input change, or automatically on the next keystroke) clears the stale flag.
 
-On Stellar, a new ledger closes every ~5 seconds. Pool odds can shift with each new bet, so 3 ledgers (~15 seconds) is a reasonable staleness window for a betting UI.
+---
 
-### Environment variable
+## Transaction Batching (Issue #136)
+
+### Overview
+
+`useBatchTransaction` bundles multiple Soroban operations into a **single Freighter wallet pop-up** using Stellar's `TransactionBuilder`. This eliminates repeated approval dialogs and dramatically improves UX.
+
+### Hook API
+
+```ts
+import { useBatchTransaction } from "@/hooks/useBatchTransaction";
+
+const { submitting, error, success, submitBatch, submitOperations } =
+  useBatchTransaction(onSuccess?: () => void);
+```
+
+| Return value | Type | Description |
+|---|---|---|
+| `submitting` | `boolean` | True while the transaction is in-flight |
+| `error` | `string \| null` | Specific error message identifying which operation failed |
+| `success` | `boolean` | True after a successful submission |
+| `submitBatch` | `(bets, walletAddress) => Promise<boolean>` | Convenience: converts `QueuedBet[]` into payment ops and submits atomically |
+| `submitOperations` | `(ops, walletAddress) => Promise<boolean>` | Low-level: submit an explicit `BatchOperation[]` atomically |
+
+### Supported Batch Flows
+
+| Flow | Operations |
+|---|---|
+| Bet + trustline setup | `[placeBet, addTrustline]` |
+| Bet + fee payment | `[placeBet, payFee]` |
+| Multi-bet slip | `[placeBet, placeBet, ...]` (up to 5) |
+
+### Usage Examples
+
+**BettingSlip** — multi-bet submission:
+```tsx
+const { submitBatch } = useBatchTransaction(() => clearBets());
+await submitBatch(bets, walletAddress); // one Freighter pop-up for all bets
+```
+
+**LPDepositModal** — deposit + trustline in one transaction:
+```tsx
+const { submitOperations } = useBatchTransaction(onClose);
+await submitOperations([
+  { type: "placeBet",    operation: Operation.payment({ ... }) },
+  { type: "addTrustline", operation: Operation.changeTrust({ ... }) },
+], walletAddress);
+```
+
+### Error Handling
+
+On failure the entire transaction rolls back atomically — no partial state is left on-chain. The `error` string identifies the specific failing operation:
 
 ```
-NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
-NEXT_PUBLIC_CONTRACT_ID=<your deployed contract address>
+"Add Trustline" failed: op no trust
 ```
 
-### Payout formula
+### Testnet Instructions
+
+1. Install [Freighter](https://freighter.app) and switch to **Testnet**
+2. Fund your testnet wallet at [friendbot](https://friendbot.stellar.org)
+3. Set `NEXT_PUBLIC_API_URL=http://localhost:4000` in `.env.local`
+4. Run the app: `npm run dev`
+5. Place a bet on any market — a single Freighter pop-up will appear for the entire batch
+
+RPC endpoint used: `https://soroban-testnet.stellar.org`
+Horizon endpoint: `https://horizon-testnet.stellar.org`
+
+---
+
+## Client-Side Slippage Protection (Issue #138)
+
+### Overview
+
+XLM uses 7-decimal precision and market odds shift between bet-form-open and submission. Slippage protection captures odds at form-open time and compares them just before submission using **pure BigInt arithmetic** — zero floating-point operations.
+
+### Slippage Calculation Methodology
+
+All values are converted to **stroops** (1 XLM = 10,000,000 stroops) before any arithmetic:
 
 ```
-share = stakeAmount / (poolForOutcome + stakeAmount)
-estimatedPayout = share * totalPool * 0.97   // 3% platform fee
-networkFeeXlm = minResourceFee / 10_000_000  // stroops → XLM
+toStroops(xlm) = BigInt(Math.round(xlm × 1e7))
 ```
 
-Logic lives in `src/utils/simulateBet.ts` and is tested at 95%+ coverage.
+Payout formula (integer arithmetic, 97/100 for the 3% fee):
+```
+payout = (stake × totalPool × 97) / ((outcomePool + stake) × 100)
+```
+
+Slippage check (no division by floats):
+```
+drift_scaled     = (expected - current) × 1e7
+tolerance_scaled = BigInt(Math.round(tolerancePct × 1e7)) × expected / 100
+exceeded         = drift_scaled > tolerance_scaled
+```
+
+### Tolerance Presets
+
+| Preset | Use case |
+|---|---|
+| 0.5% | Default — low-volatility markets |
+| 1% | Moderate activity |
+| 2% | High-volume markets |
+| Custom | User-defined (0.01%–50%) |
+
+Preference persists in `localStorage` under key `stella_slippage_pref`.
+
+### Components & Hooks
+
+| File | Purpose |
+|---|---|
+| `src/utils/slippageCalc.ts` | `toStroops`, `calcPayoutStroops`, `isSlippageExceeded`, `stroopsToXlm` |
+| `src/hooks/useSlippageGuard.ts` | `snapshotOdds()` + `checkSlippage()` — useRef snapshot pattern |
+| `src/components/SlippageSettings.tsx` | 4 preset buttons + custom input + localStorage persistence |
+| `src/components/SlippageWarningModal.tsx` | Expected vs current payout, Proceed/Cancel |
+
+### Flow
+
+1. User selects outcome → `snapshotOdds()` captures payout in a `useRef`
+2. User clicks Bet → `checkSlippage()` fetches current pool and compares
+3. If drift > tolerance → `SlippageWarningModal` shown with exact XLM difference
+4. User can Proceed (submit anyway) or Cancel
+
+---
+
+## Virtualized Order Book (Issue #141)
+
+### Overview
+
+Markets with hundreds of bets previously rendered thousands of DOM nodes. `VirtualizedOrderBook` uses `react-window` `FixedSizeList` to mount only the ~8 visible rows at any time, keeping the DOM lean regardless of dataset size.
+
+### Performance Configuration
+
+```
+itemSize = 48px   — fixed row height; enables O(1) scroll position math
+height   = 400px  — visible viewport (~8 rows)
+```
+
+Only rows within the visible window are mounted. Scrolling through 500+ rows never creates more than ~10 DOM nodes for the list body.
+
+### Live Update Strategy
+
+Row data is held in a `useRef` (`dataRef`) — appending new rows does **not** trigger a full re-render of existing rows. After appending, `listRef.current.resetAfterIndex(prevLength)` tells react-window to only re-measure the newly added rows.
+
+### Infinite Scroll
+
+`onItemsRendered` fires on every scroll event. When `visibleStopIndex >= itemCount - 10` the next page is fetched and appended via `appendRows()`.
+
+### Performance Benchmarks
+
+| Metric | Result |
+|---|---|
+| DOM nodes for 500-row list | ~10 (virtualized window) |
+| Rows rendered at once | ≤ 8 visible + overscan |
+| Append 50 new rows | Zero existing row re-renders |
+| Test dataset | 500 rows, no frame drops |
+
+### Components & Hooks
+
+| File | Purpose |
+|---|---|
+| `src/components/VirtualizedOrderBook.tsx` | `FixedSizeList` wrapper, row renderer, infinite scroll |
+| `src/hooks/useOrderBook.ts` | Live polling + pagination for a single market |
