@@ -7,6 +7,15 @@ mod access;
 use crate::access::{
     check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
     AccessRole, check_whitelisted_token, set_whitelisted_token,
+    Role, require_role, assign_role, revoke_role, bootstrap_super_admin, get_role_address,
+};
+mod checked_math;
+use crate::checked_math::{cadd, csub, cmul, cdiv, cmuldiv};
+mod events;
+use crate::events::{
+    emit_bet_placed, emit_contract_initialized, emit_dispute_raised, emit_fee_collected,
+    emit_lp_reward_claimed, emit_liquidity_provided, emit_market_created, emit_market_paused,
+    emit_market_resolved, emit_market_voided, emit_payout_claimed,
 };
 mod lmsr;
 mod position_token;
@@ -15,6 +24,12 @@ use crate::lmsr::{lmsr_cost, lmsr_price};
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
 use math::normalize_scalar;
+
+#[cfg(test)]
+mod fuzz_arithmetic;
+
+#[cfg(test)]
+mod tests;
 
 mod position_token;
 mod lmsr;
@@ -58,18 +73,17 @@ pub const DISPUTE_WINDOW: u64 = 86_400;
 /// Pure function: O(1) time complexity, O(1) space complexity.
 /// Logic: Fee = Max(0.5%, 2% - (Volume / Threshold))
 pub fn calculate_dynamic_fee(volume: i128) -> u32 {
-    let base_fee_bps: i128 = 200;      // 2.0%
-    let floor_fee_bps: i128 = 50;       // 0.5%
-    let total_reduction_bps: i128 = 150; // Difference (2.0% - 0.5%)
-    let threshold: i128 = 100_000 * 10_000_000; // 100k XLM = 1,000,000,000,000 stroops
+    let base_fee_bps: i128 = 200;
+    let floor_fee_bps: i128 = 50;
+    let total_reduction_bps: i128 = 150;
+    let threshold: i128 = 100_000 * 10_000_000;
 
     if volume <= 0 {
         return base_fee_bps as u32;
     }
 
-    // Linear scaling: reduction = (Volume / Threshold) * total_reduction
-    let reduction = (volume * total_reduction_bps) / threshold;
-    let fee = base_fee_bps - reduction;
+    let reduction = cdiv(cmul(volume, total_reduction_bps, "fee reduction"), threshold, "fee reduction");
+    let fee = csub(base_fee_bps, reduction, "fee calc");
 
     if fee < floor_fee_bps {
         floor_fee_bps as u32
@@ -249,7 +263,7 @@ fn upsert_user_position(
     for i in 0..positions.len() {
         let (addr, position_outcome, prev_amount) = positions.get(i).unwrap();
         if addr == *bettor && position_outcome == outcome {
-            let new_amount = prev_amount + amount_delta;
+            let new_amount = cadd(prev_amount, amount_delta, "upsert position");
             assert!(new_amount >= 0, "Insufficient position balance");
             positions.set(i, (bettor.clone(), outcome, new_amount));
             found = true;
@@ -276,14 +290,35 @@ impl PredictionMarket {
         check_initialized(&env);
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
+        // Bootstrap SuperAdmin in Persistent storage (new role system)
+        bootstrap_super_admin(&env, &admin);
+        // Legacy Instance write for backward-compat shim
         set_role(&env, AccessRole::Admin, &admin);
-        // Platform starts active by default
         set_platform_status(&env, AccessPlatformStatus::Active);
+        emit_contract_initialized(&env, &admin);
+    }
+
+    /// Assign a role to an address. Only SuperAdmin may call this.
+    pub fn assign_role(env: Env, caller: Address, role: Role, address: Address) {
+        assign_role(&env, &caller, role, &address);
+        env.storage().instance().extend_ttl(100, 1_000_000);
+    }
+
+    /// Revoke a role (remove its mapping). Only SuperAdmin may call this.
+    /// SuperAdmin cannot revoke their own role.
+    pub fn revoke_role(env: Env, caller: Address, role: Role) {
+        revoke_role(&env, &caller, role);
+    }
+
+    /// Read the address currently assigned to a role (returns None if unset).
+    pub fn get_role(env: Env, role: Role) -> Option<Address> {
+        get_role_address(&env, role)
     }
 
     /// Update the whitelist status of a token (admin only).
-    pub fn set_token_whitelist(env: Env, token: Address, is_whitelisted: bool) {
-        check_role(&env, AccessRole::Admin);
+    /// Update the whitelist status of a token (FeeSetter only).
+    pub fn set_token_whitelist(env: Env, caller: Address, token: Address, is_whitelisted: bool) {
+        require_role(&env, &caller, Role::FeeSetter);
         set_whitelisted_token(&env, &token, is_whitelisted);
     }
 
@@ -317,7 +352,7 @@ impl PredictionMarket {
         condition_outcome: Option<u32>,
     ) {
         creator.require_auth();
-        check_role(&env, AccessRole::Admin);
+        require_role(&env, &creator, Role::Pauser);
         check_platform_active(&env);
         assert!(lmsr_b > 0, "lmsr_b must be positive");
 
@@ -359,17 +394,12 @@ impl PredictionMarket {
             }
 
             // Emit FeeCollected event for off-chain indexing.
-            // Topics: ("FeeCollected", creator)
-            // Data: (fee_destination, creation_fee, fee_mode)
             let fee_mode: FeeMode = env
                 .storage()
                 .instance()
                 .get(&DataKey::FeeModeConfig)
                 .unwrap_or(FeeMode::Treasury);
-            env.events().publish(
-                (symbol_short!("FeeColl"), creator.clone()),
-                (fee_destination, creation_fee, fee_mode),
-            );
+            emit_fee_collected(&env, id, &creator, &fee_destination, creation_fee);
         }
         // --- End fee collection ---
 
@@ -418,6 +448,18 @@ impl PredictionMarket {
             .extend_ttl(&DataKey::OutcomePoolBalances(id), 100, 1_000_000);
         
         env.storage().instance().extend_ttl(100, 1_000_000);
+
+        emit_market_created(
+            &env,
+            id,
+            &creator,
+            &market.question,
+            market.options.len(),
+            deadline,
+            &market.token,
+            lmsr_b,
+            creation_fee,
+        );
     }
 
     /// Place a bet on an option.
@@ -532,11 +574,11 @@ impl PredictionMarket {
         for j in 0..n {
             q_after[j] = q_before[j];
         }
-        q_after[option_index as usize] += amount;
+        q_after[option_index as usize] = cadd(q_after[option_index as usize], amount, "q_after shares");
 
         let cost_before = lmsr_cost(&q_before[..n], b);
         let cost_after = lmsr_cost(&q_after[..n], b);
-        let cost_delta = cost_after - cost_before;
+        let cost_delta = csub(cost_after, cost_before, "lmsr cost delta");
         assert!(cost_delta > 0, "cost delta must be positive");
 
         // Charge the bettor the LMSR cost delta (not raw `amount`)
@@ -564,10 +606,10 @@ impl PredictionMarket {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares(market_id), &(shares + cost_delta));
+            .set(&DataKey::TotalShares(market_id), &cadd(shares, cost_delta, "total shares"));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
-        env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), cost_delta, option_index));
+        emit_bet_placed(&env, market_id, &bettor, option_index, cost_delta, amount);
     }
 
     /// Seed a market's liquidity pool. Transfers `amount` from `provider` into the contract
@@ -593,7 +635,7 @@ impl PredictionMarket {
             .unwrap_or(soroban_sdk::Map::new(&env));
 
         let existing = contributions.get(provider.clone()).unwrap_or(0);
-        contributions.set(provider.clone(), existing + amount);
+        contributions.set(provider.clone(), cadd(existing, amount, "lp contribution"));
 
         env.storage()
             .persistent()
@@ -607,7 +649,7 @@ impl PredictionMarket {
         // Accumulate user's cost investment for future refunds (if voided)
         let cost_key = DataKey::UserCost(market_id, bettor.clone());
         let prev_cost: i128 = env.storage().persistent().get(&cost_key).unwrap_or(0);
-        env.storage().persistent().set(&cost_key, &(prev_cost + cost_delta));
+        env.storage().persistent().set(&cost_key, &cadd(prev_cost, cost_delta, "user cost"));
         env.storage().persistent().extend_ttl(&cost_key, 100, 1_000_000);
 
         // Hot write: total_shares → Instance
@@ -618,13 +660,14 @@ impl PredictionMarket {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares(market_id), &(shares + amount));
+            .set(&DataKey::TotalShares(market_id), &cadd(shares, amount, "lp total shares"));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
         env.events().publish(
             (symbol_short!("LpSeed"), market_id),
             (provider, amount),
         );
+        emit_liquidity_provided(&env, market_id, &provider, amount);
     }
 
     /// Claim proportional share of the fee pool for a liquidity provider.
@@ -658,10 +701,10 @@ impl PredictionMarket {
         // Sum total LP contributions
         let mut total_lp: i128 = 0;
         for (_, v) in contributions.iter() {
-            total_lp += v;
+            total_lp = cadd(total_lp, v, "total lp sum");
         }
 
-        let reward = (lp_amount * fee_pool) / total_lp;
+        let reward = cmuldiv(lp_amount, fee_pool, total_lp, "lp reward");
         assert!(reward > 0, "Reward rounds to zero");
 
         // Zero out this LP's contribution to prevent double-claim
@@ -678,7 +721,7 @@ impl PredictionMarket {
         // Deduct from fee pool
         env.storage()
             .persistent()
-            .set(&DataKey::LpFeePool(market_id), &(fee_pool - reward));
+            .set(&DataKey::LpFeePool(market_id), &csub(fee_pool, reward, "lp fee pool"));
         env.storage().persistent().extend_ttl(
             &DataKey::LpFeePool(market_id),
             100,
@@ -692,23 +735,23 @@ impl PredictionMarket {
             (symbol_short!("LpClaim"), market_id),
             (lp, reward),
         );
+        emit_lp_reward_claimed(&env, market_id, &lp, reward);
 
         reward
     }
 
-    /// Pause or unpause a market (admin only).
-    /// Writes to Instance storage — single cheap write.
-    pub fn set_paused(env: Env, market_id: u64, paused: bool) {
-        check_role(&env, AccessRole::Admin);
+    /// Pause or unpause a market (Pauser only).
+    pub fn set_paused(env: Env, caller: Address, market_id: u64, paused: bool) {
+        require_role(&env, &caller, Role::Pauser);
         env.storage()
             .instance()
             .set(&DataKey::IsPaused(market_id), &paused);
+        emit_market_paused(&env, market_id, paused);
     }
 
-    /// Graceful shutdown / re-activation (admin only).
-    /// active=false → shutdown; active=true → active.
-    pub fn set_global_status(env: Env, active: bool) {
-        check_role(&env, AccessRole::Admin);
+    /// Graceful shutdown / re-activation (SuperAdmin only).
+    pub fn set_global_status(env: Env, caller: Address, active: bool) {
+        require_role(&env, &caller, Role::SuperAdmin);
         let status = if active {
             AccessPlatformStatus::Active
         } else {
@@ -739,8 +782,8 @@ impl PredictionMarket {
     /// # Auth
     /// Requires admin authorization. No redeployment needed — config is stored in
     /// Instance storage and takes effect on the next create_market call.
-    pub fn update_fee(env: Env, new_fee: i128, new_destination: Address, new_mode: FeeMode) {
-        check_role(&env, AccessRole::Admin);
+    pub fn update_fee(env: Env, caller: Address, new_fee: i128, new_destination: Address, new_mode: FeeMode) {
+        require_role(&env, &caller, Role::FeeSetter);
         assert!(new_fee >= 0, "Fee must be non-negative");
         env.storage().instance().set(&DataKey::CreationFee, &new_fee);
         env.storage().instance().set(&DataKey::FeeDestination, &new_destination);
@@ -764,8 +807,8 @@ impl PredictionMarket {
     /// `min_amount` — minimum bet in stroops (must be >= 1).
     /// `max_amount` — maximum bet in stroops (must be >= min_amount).
     /// Pass 0 for `max_amount` to remove the cap (sets to i128::MAX internally).
-    pub fn update_bet_limits(env: Env, min_amount: i128, max_amount: i128) {
-        check_role(&env, AccessRole::Admin);
+    pub fn update_bet_limits(env: Env, caller: Address, min_amount: i128, max_amount: i128) {
+        require_role(&env, &caller, Role::FeeSetter);
         assert!(min_amount >= 1, "min must be >= 1");
         let effective_max = if max_amount == 0 { i128::MAX } else { max_amount };
         assert!(effective_max >= min_amount, "max must be >= min");
@@ -801,6 +844,7 @@ impl PredictionMarket {
     /// Writes to Instance storage with TTL extension for rent management.
     pub fn configure_fee_split(
         env: Env,
+        caller: Address,
         treasury_bps: u32,
         lp_bps: u32,
         burn_bps: u32,
@@ -808,18 +852,10 @@ impl PredictionMarket {
         lp_addr: Address,
         burn_addr: Address,
     ) {
-        check_role(&env, AccessRole::Admin);
-        
-        // Assert BPS split totals 100%
+        require_role(&env, &caller, Role::FeeSetter);
         let total_bps = treasury_bps + lp_bps + burn_bps;
         assert!(total_bps == 10000, "BPS split must total 10000 (100%)");
-        
-        let config = FeeConfig {
-            treasury_bps,
-            lp_bps,
-            burn_bps,
-        };
-        
+        let config = FeeConfig { treasury_bps, lp_bps, burn_bps };
         env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
         env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
         env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
@@ -827,39 +863,31 @@ impl PredictionMarket {
         env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
-    /// Update fee distribution configuration (admin only).
-    /// Validates that BPS split totals 100% before updating.
+    /// Update fee distribution split (FeeSetter only).
     pub fn update_fee_split(
         env: Env,
+        caller: Address,
         treasury_bps: u32,
         lp_bps: u32,
         burn_bps: u32,
     ) {
-        check_role(&env, AccessRole::Admin);
-        
-        // Assert BPS split totals 100%
+        require_role(&env, &caller, Role::FeeSetter);
         let total_bps = treasury_bps + lp_bps + burn_bps;
         assert!(total_bps == 10000, "BPS split must total 10000 (100%)");
-        
-        let config = FeeConfig {
-            treasury_bps,
-            lp_bps,
-            burn_bps,
-        };
-        
+        let config = FeeConfig { treasury_bps, lp_bps, burn_bps };
         env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
         env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
-    /// Update fee destination addresses (admin only).
+    /// Update fee destination addresses (FeeSetter only).
     pub fn update_fee_addresses(
         env: Env,
+        caller: Address,
         treasury_addr: Address,
         lp_addr: Address,
         burn_addr: Address,
     ) {
-        check_role(&env, AccessRole::Admin);
-        
+        require_role(&env, &caller, Role::FeeSetter);
         env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
         env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
         env.storage().instance().set(&DataKey::BurnAddress, &burn_addr);
@@ -952,11 +980,9 @@ impl PredictionMarket {
             .get(&DataKey::BurnAddress)
             .expect("Burn address not configured");
         
-        // Calculate split amounts using BPS (zero-float policy)
-        // Formula: amount * bps / 10000
-        let treasury_amount = (fee_amount * config.treasury_bps as i128) / 10000;
-        let lp_amount = (fee_amount * config.lp_bps as i128) / 10000;
-        let burn_amount = (fee_amount * config.burn_bps as i128) / 10000;
+        let treasury_amount = cmuldiv(fee_amount, config.treasury_bps as i128, 10000, "treasury fee split");
+        let lp_amount       = cmuldiv(fee_amount, config.lp_bps as i128,       10000, "lp fee split");
+        let burn_amount     = cmuldiv(fee_amount, config.burn_bps as i128,     10000, "burn fee split");
         
         let token_client = token::Client::new(env, token);
         
@@ -996,9 +1022,9 @@ impl PredictionMarket {
         env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
-    /// Propose market resolution — only admin (oracle-triggered).
-    pub fn propose_resolution(env: Env, market_id: u64, winning_outcome: u32) {
-        check_role(&env, AccessRole::Admin);
+    /// Propose market resolution — Resolver only.
+    pub fn propose_resolution(env: Env, resolver: Address, market_id: u64, winning_outcome: u32) {
+        require_role(&env, &resolver, Role::Resolver);
 
         let mut market: Market = env
             .storage()
@@ -1044,16 +1070,13 @@ impl PredictionMarket {
             .persistent()
             .set(&DataKey::Market(market_id), &market);
 
-        // Emit DisputeBondEscrowed for visual validation / indexing
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "DisputeBondEscrowed"), market_id, disputer),
-            bond_amount
-        );
+        // Emit DisputeRaised for visual validation / indexing
+        emit_dispute_raised(&env, market_id, &disputer, bond_amount);
     }
 
-    /// Resolve market finally after potential dispute.
-    pub fn resolve_market(env: Env, market_id: u64, winning_outcome: u32) {
-        check_role(&env, AccessRole::Admin);
+    /// Resolve market finally after potential dispute. Resolver only.
+    pub fn resolve_market(env: Env, resolver: Address, market_id: u64, winning_outcome: u32) {
+        require_role(&env, &resolver, Role::Resolver);
 
         let mut market: Market = env
             .storage()
@@ -1096,7 +1119,7 @@ impl PredictionMarket {
                 market.status = MarketStatus::Voided;
                 env.storage().persistent().set(&DataKey::Market(market_id), &market);
                 env.storage().persistent().extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
-                env.events().publish((symbol_short!("Voided"), market_id), cond_market.winning_outcome);
+                emit_market_voided(&env, market_id, cond_id, cond_market.winning_outcome);
                 return;
             }
         }
@@ -1121,7 +1144,7 @@ impl PredictionMarket {
                 .instance()
                 .get(&DataKey::TotalShares(market_id))
                 .unwrap_or(0);
-            let fee_pool = total_pool * 3 / 100;
+            let fee_pool = cmuldiv(total_pool, 3, 100, "lp fee pool 3pct");
             if fee_pool > 0 {
                 env.storage()
                     .persistent()
@@ -1134,6 +1157,14 @@ impl PredictionMarket {
             }
         }
         env.storage().persistent().extend_ttl(&DataKey::ClaimDeadline(market_id), 100, 1_000_000);
+
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+        let fee_bps = calculate_dynamic_fee(total_pool);
+        emit_market_resolved(&env, market_id, winning_outcome, total_pool, fee_bps);
     }
 
     /// Opens a dispute voting window for 24 hours. Callable by any token holder within 24h of resolution.
@@ -1178,7 +1209,7 @@ impl PredictionMarket {
             .persistent()
             .set(&DataKey::Dispute(market_id), &dispute);
 
-        env.events().publish((soroban_sdk::Symbol::new(&env, "DisputeOpened"), market_id), caller);
+        env.events().publish((soroban_sdk::Symbol::new(&env, "DisputeOpened"), market_id), caller.clone());
     }
 
     /// Cast a weighted vote in an active dispute using STELLA token balance (market.token).
@@ -1208,14 +1239,14 @@ impl PredictionMarket {
         assert!(balance > 0, "No voting weight");
 
         dispute.votes.set(voter.clone(), balance);
-        dispute.total_votes += balance;
+        dispute.total_votes = cadd(dispute.total_votes, balance, "total votes");
         if support {
-            dispute.support_votes += balance;
+            dispute.support_votes = cadd(dispute.support_votes, balance, "support votes");
         }
 
-        // Check threshold: more than 60% support (support_votes / total_votes > 0.6)
-        // Equivalent to: support_votes * 10 > total_votes * 6
-        if dispute.support_votes * 10 > dispute.total_votes * 6 {
+        // Check threshold: more than 60% support
+        // support_votes * 10 > total_votes * 6  (no floats)
+        if cmul(dispute.support_votes, 10, "vote threshold") > cmul(dispute.total_votes, 6, "vote threshold") {
             let mut updated_market = market;
             updated_market.status = MarketStatus::ReReview;
             env.storage()
@@ -1261,8 +1292,8 @@ impl PredictionMarket {
     /// Even after sweep, claimants can call claim_original() to withdraw their exact amount.
     /// 
     /// Returns the amount swept into the vault.
-    pub fn sweep_unclaimed(env: Env, market_id: u64) -> i128 {
-        check_role(&env, AccessRole::Admin);
+    pub fn sweep_unclaimed(env: Env, caller: Address, market_id: u64) -> i128 {
+        require_role(&env, &caller, Role::Resolver);
 
         // Check if market has already been swept
         let already_swept: bool = env
@@ -1313,11 +1344,10 @@ impl PredictionMarket {
             let (addr, outcome, amount) = positions.get(i).unwrap();
             if outcome == market.winning_outcome {
                 winners.push_back((addr, amount));
-                winning_stake += amount;
+                winning_stake = cadd(winning_stake, amount, "winning stake sweep");
             }
         }
         if winning_stake == 0 {
-            // No winners, mark as swept and return 0
             env.storage()
                 .instance()
                 .set(&DataKey::MarketSwept(market_id), &true);
@@ -1325,12 +1355,12 @@ impl PredictionMarket {
         }
 
         let fee_bps = calculate_dynamic_fee(total_pool);
-        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+        let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool sweep");
 
         // Calculate and store original payouts for each winner
         let mut original_payouts: Map<Address, i128> = Map::new(&env);
         for (bettor, amount) in winners.iter() {
-            let payout = (amount * payout_pool) / winning_stake;
+            let payout = cmuldiv(amount, payout_pool, winning_stake, "original payout");
             original_payouts.set(bettor, payout);
         }
         env.storage()
@@ -1350,14 +1380,14 @@ impl PredictionMarket {
             .get(&DataKey::Claimed(market_id))
             .unwrap_or(Map::new(&env));
 
-        // Calculate unclaimed amount (winners beyond cursor haven't been paid AND haven't eager claimed)
+        // Calculate unclaimed amount
         let mut unclaimed_total: i128 = 0;
         let total_winners = winners.len();
         for i in cursor..total_winners {
             let (bettor, _) = winners.get(i).unwrap();
             if !claimed_map.get(bettor.clone()).unwrap_or(false) {
                 let payout = original_payouts.get(bettor).unwrap();
-                unclaimed_total += payout;
+                unclaimed_total = cadd(unclaimed_total, payout, "unclaimed total");
             }
         }
 
@@ -1369,7 +1399,7 @@ impl PredictionMarket {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::VaultBalance, &(current_vault + unclaimed_total));
+            .set(&DataKey::VaultBalance, &cadd(current_vault, unclaimed_total, "vault balance"));
 
         // Mark market as swept
         env.storage()
@@ -1398,8 +1428,8 @@ impl PredictionMarket {
     /// - Vault must maintain sufficient liquidity for claims
     /// 
     /// Returns the amount invested.
-    pub fn invest_vault(env: Env) -> i128 {
-        check_role(&env, AccessRole::Admin);
+    pub fn invest_vault(env: Env, caller: Address) -> i128 {
+        require_role(&env, &caller, Role::SuperAdmin);
 
         let vault_balance: i128 = env
             .storage()
@@ -1506,13 +1536,10 @@ impl PredictionMarket {
                 .instance()
                 .get(&DataKey::VaultBalance)
                 .unwrap_or(0);
-            assert!(
-                vault_balance >= payout_amount,
-                "Insufficient vault balance"
-            );
+            assert!(vault_balance >= payout_amount, "Insufficient vault balance");
             env.storage()
                 .instance()
-                .set(&DataKey::VaultBalance, &(vault_balance - payout_amount));
+                .set(&DataKey::VaultBalance, &csub(vault_balance, payout_amount, "vault deduct claim"));
         }
 
         token_client.transfer(&env.current_contract_address(), &claimant, &payout_amount);
@@ -1630,7 +1657,7 @@ impl PredictionMarket {
             let (addr, outcome, amount) = positions.get(i).unwrap();
             if outcome == market.winning_outcome {
                 winners.push_back((addr, amount));
-                winning_stake += amount;
+                winning_stake = cadd(winning_stake, amount, "winning stake distribute");
             }
         }
 
@@ -1639,8 +1666,8 @@ impl PredictionMarket {
         }
 
         let fee_bps = calculate_dynamic_fee(total_pool);
-        let fee_amount = (total_pool * fee_bps as i128) / 10000;
-        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+        let fee_amount = cmuldiv(total_pool, fee_bps as i128, 10000, "fee amount");
+        let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool distribute");
         let token_client = token::Client::new(env, &market.token);
 
         // Hot read: cursor from Instance
@@ -1666,8 +1693,7 @@ impl PredictionMarket {
 
         for i in cursor..end {
             let (bettor, amount) = winners.get(i).unwrap();
-            let payout = (amount * payout_pool) / winning_stake;
-            // Burn position token on claim
+            let payout = cmuldiv(amount, payout_pool, winning_stake, "batch distribute payout");
             position_token::burn(env, market_id, market.winning_outcome, &bettor);
             token_client.transfer(&env.current_contract_address(), &bettor, &payout);
             paid += 1;
@@ -1682,6 +1708,15 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::SettlementCursor(market_id), &end);
+
+        // Emit typed PayoutClaimed event with cursor position for downstream tracking
+        let total_distributed: i128 = winners
+            .iter()
+            .skip(cursor as usize)
+            .take((end - cursor) as usize)
+            .map(|(_, amount)| cmuldiv(amount, payout_pool, winning_stake, "batch distribute total"))
+            .fold(0i128, |acc, x| cadd(acc, x, "batch distribute sum"));
+        emit_payout_claimed(env, market_id, paid, total_distributed, end);
 
         paid
     }
@@ -1728,7 +1763,7 @@ impl PredictionMarket {
         resolver: Address,
     ) -> u32 {
         resolver.require_auth();
-        check_role(&env, AccessRole::Admin);
+        require_role(&env, &resolver, Role::Resolver);
 
         // Acquire re-entrancy lock
         acquire_reentrancy_lock(&env);
@@ -1785,14 +1820,14 @@ impl PredictionMarket {
         for i in 0..positions.len() {
             let (_, outcome, amount) = positions.get(i).unwrap();
             if outcome == market.winning_outcome {
-                winning_stake += amount;
+                winning_stake = cadd(winning_stake, amount, "winning stake batch payout");
             }
         }
 
         assert!(winning_stake > 0, "No winners to pay out");
 
         let fee_bps = calculate_dynamic_fee(total_pool);
-        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+        let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool batch");
         let token_client = token::Client::new(env, &market.token);
 
         let mut paid_count: u32 = 0;
@@ -1830,13 +1865,11 @@ impl PredictionMarket {
                 continue;
             }
 
-            // Calculate payout using zero-float arithmetic
-            let payout = (recipient_stake * payout_pool) / winning_stake;
+            // Calculate payout using checked arithmetic (zero-float policy)
+            let payout = cmuldiv(recipient_stake, payout_pool, winning_stake, "batch payout calc");
 
-            // Transfer payout to recipient
             token_client.transfer(&env.current_contract_address(), &recipient, &payout);
 
-            // Mark as paid in Persistent storage with TTL extension
             env.storage()
                 .persistent()
                 .set(&DataKey::PayoutClaimed(market_id, recipient.clone()), &true);
@@ -1844,18 +1877,14 @@ impl PredictionMarket {
                 .persistent()
                 .extend_ttl(&DataKey::PayoutClaimed(market_id, recipient.clone()), 100, 1_000_000);
 
-            // Burn position token on claim
             position_token::burn(env, market_id, market.winning_outcome, &recipient);
 
             paid_count += 1;
-            total_distributed += payout;
+            total_distributed = cadd(total_distributed, payout, "total distributed");
         }
 
-        // Emit BatchPayoutProcessed event for off-chain indexing
-        env.events().publish(
-            (symbol_short!("BatchPay"), market_id),
-            (paid_count, total_distributed),
-        );
+        // Emit PayoutClaimed event for off-chain indexing
+        emit_payout_claimed(&env, market_id, paid_count, total_distributed, 0);
 
         paid_count
     }
@@ -1946,7 +1975,7 @@ impl PredictionMarket {
                         user_amount = amount;
                         user_winner_index = winner_count;
                     }
-                    winning_stake += amount;
+                    winning_stake = cadd(winning_stake, amount, "bulk claim winning stake");
                     winner_count += 1;
                 }
             }
@@ -1972,9 +2001,9 @@ impl PredictionMarket {
                 .instance()
                 .get(&DataKey::TotalShares(market_id))
                 .unwrap_or(0);
-            let payout_pool = total_pool * 97 / 100;
+            let payout_pool = cmuldiv(total_pool, 97, 100, "bulk claim payout pool");
 
-            let payout = (user_amount * payout_pool) / winning_stake;
+            let payout = cmuldiv(user_amount, payout_pool, winning_stake, "bulk claim payout");
             
             if payout > 0 {
                 let token_client = token::Client::new(&env, &market.token);
@@ -2083,9 +2112,8 @@ impl PredictionMarket {
         proof_scalar: soroban_sdk::BytesN<32>,
         expected: soroban_sdk::BytesN<32>,
     ) -> bool {
-        // Only admin may trigger proof verification
-        check_role(&env, AccessRole::Admin);
-        caller.require_auth();
+        // Only SuperAdmin may trigger proof verification
+        require_role(&env, &caller, Role::SuperAdmin);
 
         // Normalize both scalars to canonical range [0, r) before comparison.
         // This prevents a prover from bypassing equality by supplying s + k*r.
