@@ -1,5 +1,7 @@
 require("dotenv").config();
 const axios = require("axios");
+const { OracleMedianizer } = require("./medianizer");
+const { btcSources } = require("./sources");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
 
@@ -59,19 +61,18 @@ async function fetchOutcome(question, outcomes) {
 
 async function resolveCryptoPrice(question, outcomes) {
   try {
-    const { data } = await axios.get(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-    );
-    const btcPrice = data.bitcoin.usd;
-    console.log(`[Oracle] BTC price: $${btcPrice}`);
+    // Use medianizer to aggregate 4 independent BTC/USD sources in parallel,
+    // filter outliers, and return a manipulation-resistant median price.
+    const medianizer = new OracleMedianizer(btcSources);
+    const btcPrice = await medianizer.aggregate();
+    console.log(`[Oracle] BTC median price: $${btcPrice}`);
 
-    // Example: "Will Bitcoin reach $100k?" → Yes=0, No=1
     if (question.toLowerCase().includes("100k") || question.includes("100,000")) {
       return btcPrice >= 100000 ? 0 : 1;
     }
     return 0;
   } catch (err) {
-    console.error("[Oracle] Crypto price fetch failed:", err.message);
+    console.error("[Oracle] Crypto price aggregation failed:", err.message);
     return 0;
   }
 }

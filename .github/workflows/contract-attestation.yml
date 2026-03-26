@@ -1,0 +1,188 @@
+name: Contract Source Attestation (SEP-0157)
+
+# Triggers on version tags only — e.g. v1.0.0-mvp, v1.2.3
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Required permissions for GitHub Attestations API
+permissions:
+  contents: read
+  id-token: write       # needed to mint the OIDC token for attestation signing
+  attestations: write   # needed to write the attestation to GitHub
+
+env:
+  RUST_VERSION: "1.79.0"
+  WASM_PATH: contracts/prediction_market/target/wasm32-unknown-unknown/release/prediction_market.wasm
+  OPTIMIZED_WASM_PATH: contracts/prediction_market/target/wasm32-unknown-unknown/release/prediction_market.optimized.wasm
+
+jobs:
+  # ── 1. Reproducible WASM build ────────────────────────────────────────────
+  build-wasm:
+    name: Reproducible WASM Build
+    runs-on: ubuntu-latest
+
+    outputs:
+      wasm-hash: ${{ steps.hash.outputs.wasm-hash }}
+      tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract tag name
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Setup Rust toolchain (pinned for reproducibility)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          target: wasm32-unknown-unknown
+          cache: true
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "contracts/prediction_market"
+
+      - name: Build WASM (release)
+        working-directory: ./contracts/prediction_market
+        run: |
+          echo "🔨 Building WASM for tag ${{ steps.tag.outputs.tag }}..."
+          # Set SOURCE_DATE_EPOCH for reproducible builds
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          cargo build --target wasm32-unknown-unknown --release
+          echo "✅ WASM build complete"
+
+      - name: Install Soroban CLI (for optimization)
+        run: |
+          cargo install cargo-binstall --locked
+          cargo binstall soroban-cli --secure --locked -y
+
+      - name: Optimize WASM with soroban contract optimize
+        working-directory: ./contracts/prediction_market
+        run: |
+          soroban contract optimize \
+            --wasm ${{ env.WASM_PATH }} \
+            --wasm-out ${{ env.OPTIMIZED_WASM_PATH }}
+          echo "✅ WASM optimized"
+
+      - name: Compute WASM SHA-256 hash
+        id: hash
+        run: |
+          HASH=$(sha256sum ${{ env.OPTIMIZED_WASM_PATH }} | awk '{print $1}')
+          echo "wasm-hash=$HASH" >> $GITHUB_OUTPUT
+          echo "### 🔐 WASM SHA-256" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`$HASH\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "Tag: \`${{ steps.tag.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prediction-market-wasm-${{ steps.tag.outputs.tag }}
+          path: |
+            ${{ env.WASM_PATH }}
+            ${{ env.OPTIMIZED_WASM_PATH }}
+          retention-days: 90
+
+  # ── 2. GitHub Attestation (SEP-0157) ──────────────────────────────────────
+  attest:
+    name: Generate GitHub Attestation
+    runs-on: ubuntu-latest
+    needs: build-wasm
+
+    steps:
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: prediction-market-wasm-${{ needs.build-wasm.outputs.tag }}
+          path: ./wasm-output
+
+      - name: Generate GitHub build attestation
+        id: attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ./wasm-output/prediction_market.optimized.wasm
+
+      - name: Log attestation details
+        run: |
+          echo "### ✅ GitHub Attestation Generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ needs.build-wasm.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| WASM SHA-256 | \`${{ needs.build-wasm.outputs.wasm-hash }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Attestation URL | ${{ steps.attest.outputs.bundle-path }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verify at: https://github.com/Idrhas/Stellar-PolyMarket/attestations" >> $GITHUB_STEP_SUMMARY
+
+  # ── 3. Create GitHub Release with WASM + attestation bundle ──────────────
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-wasm, attest]
+
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: prediction-market-wasm-${{ needs.build-wasm.outputs.tag }}
+          path: ./wasm-output
+
+      - name: Create release with WASM binary
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-wasm.outputs.tag }}
+          name: "Prediction Market ${{ needs.build-wasm.outputs.tag }}"
+          body: |
+            ## Prediction Market Contract — ${{ needs.build-wasm.outputs.tag }}
+
+            ### 🔐 Source Attestation (SEP-0157)
+            This release includes a GitHub-signed build attestation linking the
+            compiled WASM binary to commit `${{ github.sha }}`.
+
+            **WASM SHA-256:**
+            ```
+            ${{ needs.build-wasm.outputs.wasm-hash }}
+            ```
+
+            ### Verify the attestation
+            ```bash
+            # 1. Install Soroban CLI
+            cargo install soroban-cli --locked
+
+            # 2. Download the WASM from this release
+            curl -L -o prediction_market.optimized.wasm \
+              https://github.com/Idrhas/Stellar-PolyMarket/releases/download/${{ needs.build-wasm.outputs.tag }}/prediction_market.optimized.wasm
+
+            # 3. Hash it locally and compare
+            sha256sum prediction_market.optimized.wasm
+
+            # 4. Verify via GitHub CLI
+            gh attestation verify prediction_market.optimized.wasm \
+              --repo Idrhas/Stellar-PolyMarket
+            ```
+
+            ### View attestation
+            https://github.com/Idrhas/Stellar-PolyMarket/attestations
+          files: |
+            ./wasm-output/prediction_market.wasm
+            ./wasm-output/prediction_market.optimized.wasm
+          draft: false
+          prerelease: ${{ contains(needs.build-wasm.outputs.tag, 'alpha') || contains(needs.build-wasm.outputs.tag, 'beta') || contains(needs.build-wasm.outputs.tag, 'rc') }}

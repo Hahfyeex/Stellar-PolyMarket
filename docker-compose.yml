@@ -12,6 +12,22 @@ services:
     volumes:
       - stellar-data:/opt/stellar/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: stellar-polymarket-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
 volumes:
   stellar-data:
     name: stellar_polymarket_data
+  redis-data:
+    name: stellar_polymarket_redis_data
