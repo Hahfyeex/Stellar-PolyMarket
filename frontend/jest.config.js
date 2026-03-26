@@ -26,6 +26,7 @@ module.exports = {
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
+        "**/hooks/__tests__/useBatchTransaction.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -34,6 +35,10 @@ module.exports = {
             esModuleInterop: true,
           },
         },
+      },
+      collectCoverageFrom: ["src/hooks/useBatchTransaction.ts"],
+      coverageThreshold: {
+        global: { lines: 90, functions: 90, branches: 90 },
       },
     },
     {

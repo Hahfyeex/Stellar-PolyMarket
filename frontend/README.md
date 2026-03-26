@@ -297,3 +297,73 @@ The Stella Polymarket frontend features a CSS variable-based dynamic dark/light 
 
 ### useTheme hook
 We provide a `useTheme` hook (`src/hooks/useTheme.ts`) that will respect the user's system preferences `window.matchMedia('(prefers-color-scheme: dark)')` on the first load and save user override configurations into `localStorage` under the `stella_theme` key.
+
+
+---
+
+## Transaction Batching (Issue #136)
+
+### Overview
+
+`useBatchTransaction` bundles multiple Soroban operations into a **single Freighter wallet pop-up** using Stellar's `TransactionBuilder`. This eliminates repeated approval dialogs and dramatically improves UX.
+
+### Hook API
+
+```ts
+import { useBatchTransaction } from "@/hooks/useBatchTransaction";
+
+const { submitting, error, success, submitBatch, submitOperations } =
+  useBatchTransaction(onSuccess?: () => void);
+```
+
+| Return value | Type | Description |
+|---|---|---|
+| `submitting` | `boolean` | True while the transaction is in-flight |
+| `error` | `string \| null` | Specific error message identifying which operation failed |
+| `success` | `boolean` | True after a successful submission |
+| `submitBatch` | `(bets, walletAddress) => Promise<boolean>` | Convenience: converts `QueuedBet[]` into payment ops and submits atomically |
+| `submitOperations` | `(ops, walletAddress) => Promise<boolean>` | Low-level: submit an explicit `BatchOperation[]` atomically |
+
+### Supported Batch Flows
+
+| Flow | Operations |
+|---|---|
+| Bet + trustline setup | `[placeBet, addTrustline]` |
+| Bet + fee payment | `[placeBet, payFee]` |
+| Multi-bet slip | `[placeBet, placeBet, ...]` (up to 5) |
+
+### Usage Examples
+
+**BettingSlip** — multi-bet submission:
+```tsx
+const { submitBatch } = useBatchTransaction(() => clearBets());
+await submitBatch(bets, walletAddress); // one Freighter pop-up for all bets
+```
+
+**LPDepositModal** — deposit + trustline in one transaction:
+```tsx
+const { submitOperations } = useBatchTransaction(onClose);
+await submitOperations([
+  { type: "placeBet",    operation: Operation.payment({ ... }) },
+  { type: "addTrustline", operation: Operation.changeTrust({ ... }) },
+], walletAddress);
+```
+
+### Error Handling
+
+On failure the entire transaction rolls back atomically — no partial state is left on-chain. The `error` string identifies the specific failing operation:
+
+```
+"Add Trustline" failed: op no trust
+```
+
+### Testnet Instructions
+
+1. Install [Freighter](https://freighter.app) and switch to **Testnet**
+2. Fund your testnet wallet at [friendbot](https://friendbot.stellar.org)
+3. Set `NEXT_PUBLIC_API_URL=http://localhost:4000` in `.env.local`
+4. Run the app: `npm run dev`
+5. Place a bet on any market — a single Freighter pop-up will appear for the entire batch
+
+RPC endpoint used: `https://soroban-testnet.stellar.org`
+Horizon endpoint: `https://horizon-testnet.stellar.org`
