@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { messaging, getToken, onMessage } from "../lib/firebase";
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
 export default function NotificationManager({ walletAddress }: Props) {
   const [token, setToken] = useState<string | null>(null);
   const [permission, setPermission] = useState<NotificationPermission>("default");
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -19,14 +21,14 @@ export default function NotificationManager({ walletAddress }: Props) {
 
   const requestPermission = async () => {
     if (!walletAddress) {
-      alert("Please connect your wallet first.");
+      alert(t("notifications.connectWalletFirst"));
       return;
     }
 
     try {
       const status = await Notification.requestPermission();
       setPermission(status);
-      
+
       if (status === "granted" && messaging) {
         const currentToken = await getToken(messaging, {
           vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,
@@ -84,22 +86,20 @@ export default function NotificationManager({ walletAddress }: Props) {
     <div className="bg-white/5 backdrop-blur-md p-4 rounded-xl border border-white/10 mt-6 shadow-xl">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-white">Push Notifications</h3>
-          <p className="text-sm text-gray-400">
-            Get alerts for markets you've bet on (Proposed/Resolved).
-          </p>
+          <h3 className="text-lg font-semibold text-white">{t("notifications.title")}</h3>
+          <p className="text-sm text-gray-400">{t("notifications.description")}</p>
         </div>
         {permission !== "granted" ? (
           <button
             onClick={requestPermission}
             className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-medium hover:scale-105 transition-transform"
           >
-            Enable Alerts
+            {t("notifications.enableAlerts")}
           </button>
         ) : (
           <div className="flex items-center text-green-400">
             <span className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse" />
-            Active
+            {t("notifications.active")}
           </div>
         )}
       </div>

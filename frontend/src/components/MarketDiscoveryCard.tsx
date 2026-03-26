@@ -12,6 +12,7 @@
  *   so it doesn't fire on mobile scroll.
  */
 import Image from "next/image";
+import { useTranslation } from "react-i18next";
 import { ScoredMarket, MarketCategory } from "../utils/marketDiscovery";
 
 const CATEGORY_META: Record<MarketCategory, { color: string; bg: string; border: string }> = {
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export default function MarketDiscoveryCard({ market, onClick }: Props) {
+  const { t } = useTranslation();
   const meta = CATEGORY_META[market.category];
   const daysLeft = Math.max(
     0,
@@ -55,7 +57,7 @@ export default function MarketDiscoveryCard({ market, onClick }: Props) {
           data-testid="hot-badge"
           className="absolute top-3 right-3 z-10 flex items-center gap-1 bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-lg"
         >
-          🔥 Hot
+          🔥 {t("discovery.hot")}
         </div>
       )}
 
@@ -63,7 +65,7 @@ export default function MarketDiscoveryCard({ market, onClick }: Props) {
       <div className={`relative h-28 flex items-center justify-center ${meta.bg} border-b ${meta.border}`}>
         <Image
           src={`/categories/${market.category.toLowerCase()}.svg`}
-          alt={`${market.category} category illustration`}
+          alt={t("discovery.categoryAlt", { category: market.category })}
           width={72}
           height={72}
           className="drop-shadow-lg"
@@ -101,9 +103,9 @@ export default function MarketDiscoveryCard({ market, onClick }: Props) {
               <path d="M5 1v3M11 1v3M2 7h12" />
             </svg>
             {daysLeft === 0 ? (
-              <span className="text-red-400">Ends today</span>
+              <span className="text-red-400">{t("discovery.endsToday")}</span>
             ) : (
-              <span>{daysLeft}d left</span>
+              <span>{t("discovery.daysLeft", { count: daysLeft })}</span>
             )}
           </span>
         </div>

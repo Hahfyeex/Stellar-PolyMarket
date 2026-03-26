@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
 import { useBettingSlip } from "../context/BettingSlipContext";
@@ -7,6 +8,7 @@ import PoolOwnershipChart from "./PoolOwnershipChart";
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useTrustline } from "../hooks/useTrustline";
 import TrustlineModal from "./TrustlineModal";
+import { MAX_BETS } from "../context/BettingSlipContext";
 
 interface Market {
   id: number;
@@ -40,6 +42,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [showQueueFullToast, setShowQueueFullToast] = useState(false);
+  const { t } = useTranslation();
 
   const { addBet } = useBettingSlip();
   const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
@@ -69,7 +72,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           share_method: 'clipboard',
           market_question: market.question.substring(0, 50), // Truncate for privacy
         });
-        setMessage("Market link copied to clipboard!");
+        setMessage(t("market.linkCopied"));
         setTimeout(() => setMessage(""), 3000);
       }
     } catch (err) {
@@ -137,25 +140,25 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           <button
             onClick={handleShareMarket}
             className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
-            title="Share market"
+            title={t("market.shareMarket")}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
               <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
             </svg>
           </button>
           {market.resolved ? (
-            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">Resolved</span>
+            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">{t("market.resolved")}</span>
           ) : isExpired ? (
-            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">Ended</span>
+            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">{t("market.ended")}</span>
           ) : (
-            <span className="text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded-full">Live</span>
+            <span className="text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded-full">{t("market.live")}</span>
           )}
         </div>
       </div>
 
       <p className="text-gray-400 text-sm">
-        Pool: <span className="text-white font-medium">{parseFloat(market.total_pool).toFixed(2)} XLM</span>
-        &nbsp;·&nbsp;Ends: {new Date(market.end_date).toLocaleDateString()}
+        {t("market.pool")} <span className="text-white font-medium">{parseFloat(market.total_pool).toFixed(2)} XLM</span>
+        &nbsp;·&nbsp;{t("market.ends")} {new Date(market.end_date).toLocaleDateString()}
       </p>
 
       {/* Pool ownership pie chart — live updates via WebSocket */}
@@ -187,7 +190,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           <div className="flex gap-2">
             <input
               type="number"
-              placeholder="Amount (XLM)"
+              placeholder={t("market.amountPlaceholder")}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="bg-gray-800 text-white rounded-lg px-3 py-2 text-sm flex-1 outline-none border border-gray-700 focus:border-blue-500"
@@ -197,7 +200,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
               disabled={loading || selectedOutcome === null || !amount}
               className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
             >
-              {loading ? "Placing..." : "Bet"}
+              {loading ? t("market.placing") : t("market.bet")}
             </button>
             {/* Add to betting slip queue */}
             <button
@@ -217,16 +220,16 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
               }}
               disabled={selectedOutcome === null || !amount}
               className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap"
-              title="Add to betting slip"
+              title={t("market.addToSlip")}
             >
-              + Slip
+              {t("market.addSlip")}
             </button>
           </div>
 
           {/* Slippage tolerance + clear form row */}
           <div className="flex items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-xs text-gray-400">
-              Slippage
+              {t("market.slippage")}
               <select
                 data-testid="slippage-select"
                 value={slippageTolerance}
@@ -244,7 +247,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
               onClick={() => { clearForm(); setMessage(""); }}
               className="text-xs text-gray-500 hover:text-red-400 transition-colors"
             >
-              Clear form
+              {t("market.clearForm")}
             </button>
           </div>
         </div>
@@ -259,7 +262,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       {/* Queue-full toast */}
       {showQueueFullToast && (
         <Toast
-          message={`Betting slip is full (max ${5} bets). Remove one to add more.`}
+          message={t("market.queueFull", { max: MAX_BETS })}
           type="warning"
           onDismiss={() => setShowQueueFullToast(false)}
         />

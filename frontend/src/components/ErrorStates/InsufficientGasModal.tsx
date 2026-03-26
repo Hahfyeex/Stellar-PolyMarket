@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import ErrorLayout from './ErrorLayout';
 
 interface Props {
@@ -8,6 +9,8 @@ interface Props {
 }
 
 export default function InsufficientGasModal({ isOpen, onClose }: Props) {
+  const { t } = useTranslation();
+
   if (!isOpen) return null;
 
   return (
@@ -17,14 +20,14 @@ export default function InsufficientGasModal({ isOpen, onClose }: Props) {
         <div className="p-8">
           <ErrorLayout
             illustration="/illustrations/rocket-empty-fuel.png"
-            title="Insufficient Gas"
-            message="You don't have enough XLM to cover the transaction gas fees. The Stellar network requires a small amount of XLM for every operation."
+            title={t("errors.insufficientGas.title")}
+            message={t("errors.insufficientGas.message")}
             primaryAction={{
-              label: "Deposit XLM",
+              label: t("errors.insufficientGas.depositXlm"),
               onClick: () => { /* Logic to open deposit / buy */ }
             }}
             secondaryAction={{
-              label: "Close",
+              label: t("errors.insufficientGas.close"),
               onClick: onClose
             }}
           />

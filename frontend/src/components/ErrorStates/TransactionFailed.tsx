@@ -1,9 +1,12 @@
 "use client";
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import ErrorLayout from './ErrorLayout';
 import { trackEvent } from '../../lib/firebase';
 
 export default function TransactionFailed() {
+  const { t } = useTranslation();
+
   React.useEffect(() => {
     // Track when users see transaction failure screen
     trackEvent('slippage_changed', {
@@ -17,10 +20,10 @@ export default function TransactionFailed() {
     <div className="bg-gray-950/50 backdrop-blur-sm rounded-3xl p-8 border border-red-500/20">
       <ErrorLayout
         illustration="/illustrations/rocket-maintenance.png"
-        title="Transaction Failed"
-        message="The Ledger rejected this transaction. This could be due to slippage, network congestion, or an expired deadline."
+        title={t("errors.transactionFailed.title")}
+        message={t("errors.transactionFailed.message")}
         primaryAction={{
-          label: "Try Again",
+          label: t("errors.transactionFailed.tryAgain"),
           onClick: () => {
             trackEvent('slippage_changed', {
               failure_type: 'transaction_failed',
@@ -30,7 +33,7 @@ export default function TransactionFailed() {
           }
         }}
         secondaryAction={{
-          label: "Return to Dashboard",
+          label: t("errors.transactionFailed.returnToDashboard"),
           href: "/"
         }}
       />

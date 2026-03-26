@@ -1,0 +1,109 @@
+{
+  "nav": {
+    "brand": "Stella Polymarket",
+    "toggleTheme": "Yi ẹ̀wù",
+    "helpDocs": "Ìrànlọ́wọ́ àti Àkọsílẹ̀",
+    "connectWallet": "So àpamọ́ pọ̀",
+    "connecting": "Ntopọ...",
+    "disconnect": "Yọ",
+    "connect": "So pọ̀"
+  },
+  "hero": {
+    "headline": "Sọtẹ́lẹ̀. Gbe. Jèrè.",
+    "subheading": "Àwọn ọjà asọtẹ́lẹ̀ aláìlọkansi lórí Stellar. Yára, din owo, àti gbangba."
+  },
+  "stats": {
+    "activeMarkets": "Àwọn Ọjà tó Ṣiṣẹ́",
+    "totalStaked": "Iye tí a Gbé",
+    "markets": "Àwọn Ọjà"
+  },
+  "markets": {
+    "openMarkets": "Àwọn Ọjà Ìlọsíwájú",
+    "noMarkets": "Kò sí ọjà.",
+    "recentActivity": "Iṣẹ́ Àìpẹ́"
+  },
+  "bettingSlip": {
+    "title": "Iwe Tẹ",
+    "betsQueued": "{{count}} / {{max}} tẹ dúró",
+    "noBets": "Kò sí tẹ tó dúró. Ṣàfikún tẹ lọ́dọ̀ ọjà eyikeyi láti kó wọn pọ̀.",
+    "outcome": "Àbájáde",
+    "amount": "Iye",
+    "totalStake": "Àpapọ̀ tẹ:",
+    "connectWalletPrompt": "So àpamọ́ rẹ pọ̀ láti fi tẹ sílẹ̀",
+    "submitting": "Ntẹ̀...",
+    "placeBet": "Fi {{count}} tẹ sílẹ̀",
+    "placeBets": "Fi {{count}} tẹ sílẹ̀",
+    "close": "Pa iwe tẹ mọ́",
+    "removeBet": "Yọ tẹ lórí {{market}}"
+  },
+  "tabs": {
+    "home": "Ilé",
+    "search": "Wàásù",
+    "portfolio": "Àpò",
+    "profile": "Ìròyìn"
+  },
+  "notifications": {
+    "title": "Ìkọsẹ Ìfítipọ̀",
+    "description": "Gba ìkọsẹ fún àwọn ọjà tí o ti tẹ lé (Tíi gba/Yanjú).",
+    "enableAlerts": "Mú Ìkọsẹ ṣiṣẹ́",
+    "active": "Tí Ṣiṣẹ́",
+    "connectWalletFirst": "Jọ̀wọ́ so àpamọ́ rẹ pọ̀ kí ó tó."
+  },
+  "errors": {
+    "insufficientGas": {
+      "title": "Epo Kò Tó",
+      "message": "O kò ní XLM tó láti bọ àwọn ìdíyẹlé gbigbe. Nẹtìwọ̀ọ̀kì Stellar nílò ìwọ̀nba kékeré XLM fún iṣẹ́ kọ̀ọ̀kan.",
+      "depositXlm": "Fi XLM sọ",
+      "close": "Pa"
+    },
+    "transactionFailed": {
+      "title": "Iṣòwò Kùnà",
+      "message": "Ledger kọ iṣòwò yìí. Èyí lè jẹ́ nítorí ìrọ́lẹ̀, ìdúpẹ́ nẹtìwọ̀ọ̀kì, tàbí àkókò tó ti parí.",
+      "tryAgain": "Gbìyànjú Lẹẹkansi",
+      "returnToDashboard": "Padà sí Àpẹẹrẹ"
+    },
+    "walletDisconnected": {
+      "title": "Àpamọ́ Yọkuro",
+      "message": "Ìsopọ̀ rẹ sí nẹtìwọ̀ọ̀kì Stellar ti dáwọ́ dúró. Jọ̀wọ́ tún so àpamọ́ rẹ pọ̀ láti tẹ̀síwájú.",
+      "reconnect": "Tún So Àpamọ́ Pọ̀",
+      "returnToDashboard": "Padà sí Àpẹẹrẹ"
+    },
+    "marketPaused": {
+      "title": "Ọjà Dúró",
+      "message": "Ìfagilé ọjà yìí ti mú ṣiṣẹ́. Ọja ti dáwọ́ dúró fún ìgbà díẹ̀ nígbà tí àwọn ẹlẹ́rọ wa ṣe àtúnṣe.",
+      "returnToDashboard": "Padà sí Àpẹẹrẹ",
+      "checkNetworkStatus": "Ṣàyẹ̀wò Ipò Nẹtìwọ̀ọ̀kì"
+    }
+  },
+  "discovery": {
+    "hot": "Gbóná",
+    "endsToday": "Parí lónìí",
+    "daysLeft": "{{count}}ọjọ́ kù",
+    "categoryAlt": "Àwòrán ìsọríkọ̀ọ̀lẹ̀ {{category}}"
+  },
+  "market": {
+    "linkCopied": "Ọ̀nà ọjà ti daakọ sí àkóbẹrẹ!",
+    "shareMarket": "Pin ọjà",
+    "resolved": "Yanjú",
+    "ended": "Parí",
+    "live": "Tí ṣiṣẹ́",
+    "pool": "Àkójọpọ̀:",
+    "ends": "Parí:",
+    "amountPlaceholder": "Iye (XLM)",
+    "placing": "Ntẹ̀...",
+    "bet": "Tẹ",
+    "addToSlip": "Ṣàfikún sí iwe tẹ",
+    "addSlip": "+ Iwe",
+    "slippage": "Ìrọ́lẹ̀",
+    "clearForm": "Pa fọ́ọ̀mù mọ́",
+    "queueFull": "Iwe tẹ kún (tó pọ̀ jùlọ {{max}} tẹ). Yọ ọ̀kan kí o bàá lè ṣàfikún."
+  },
+  "language": {
+    "selectLanguage": "Yan Èdè",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Swahili"
+  }
+}

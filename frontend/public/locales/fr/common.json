@@ -1,0 +1,109 @@
+{
+  "nav": {
+    "brand": "Stella Polymarket",
+    "toggleTheme": "Basculer le thème",
+    "helpDocs": "Aide et documentation",
+    "connectWallet": "Connecter le portefeuille",
+    "connecting": "Connexion...",
+    "disconnect": "Déconnecter",
+    "connect": "Connecter"
+  },
+  "hero": {
+    "headline": "Prédisez. Misez. Gagnez.",
+    "subheading": "Marchés de prédiction décentralisés sur Stellar. Rapide, bon marché et transparent."
+  },
+  "stats": {
+    "activeMarkets": "Marchés actifs",
+    "totalStaked": "Total misé",
+    "markets": "Marchés"
+  },
+  "markets": {
+    "openMarkets": "Marchés ouverts",
+    "noMarkets": "Aucun marché pour l'instant.",
+    "recentActivity": "Activité récente"
+  },
+  "bettingSlip": {
+    "title": "Fiche de paris",
+    "betsQueued": "{{count}} / {{max}} paris en file d'attente",
+    "noBets": "Aucun pari en file d'attente. Ajoutez des paris de n'importe quel marché pour les regrouper.",
+    "outcome": "Résultat",
+    "amount": "Montant",
+    "totalStake": "Mise totale :",
+    "connectWalletPrompt": "Connectez votre portefeuille pour soumettre des paris",
+    "submitting": "Soumission...",
+    "placeBet": "Placer {{count}} pari",
+    "placeBets": "Placer {{count}} paris",
+    "close": "Fermer la fiche de paris",
+    "removeBet": "Supprimer le pari sur {{market}}"
+  },
+  "tabs": {
+    "home": "Accueil",
+    "search": "Recherche",
+    "portfolio": "Portefeuille",
+    "profile": "Profil"
+  },
+  "notifications": {
+    "title": "Notifications push",
+    "description": "Recevez des alertes pour les marchés sur lesquels vous avez parié (Proposé/Résolu).",
+    "enableAlerts": "Activer les alertes",
+    "active": "Actif",
+    "connectWalletFirst": "Veuillez d'abord connecter votre portefeuille."
+  },
+  "errors": {
+    "insufficientGas": {
+      "title": "Gaz insuffisant",
+      "message": "Vous n'avez pas assez de XLM pour couvrir les frais de gaz de la transaction. Le réseau Stellar nécessite une petite quantité de XLM pour chaque opération.",
+      "depositXlm": "Déposer XLM",
+      "close": "Fermer"
+    },
+    "transactionFailed": {
+      "title": "Transaction échouée",
+      "message": "Le Ledger a rejeté cette transaction. Cela pourrait être dû au glissement, à la congestion du réseau ou à une échéance expirée.",
+      "tryAgain": "Réessayer",
+      "returnToDashboard": "Retour au tableau de bord"
+    },
+    "walletDisconnected": {
+      "title": "Portefeuille déconnecté",
+      "message": "Votre connexion au réseau Stellar a été interrompue. Veuillez reconnecter votre portefeuille pour continuer à prédire.",
+      "reconnect": "Reconnecter le portefeuille",
+      "returnToDashboard": "Retour au tableau de bord"
+    },
+    "marketPaused": {
+      "title": "Marché en pause",
+      "message": "Le disjoncteur de ce marché a été déclenché. Les échanges sont temporairement suspendus pendant que nos ingénieurs recalibrent les capteurs.",
+      "returnToDashboard": "Retour au tableau de bord",
+      "checkNetworkStatus": "Vérifier l'état du réseau"
+    }
+  },
+  "discovery": {
+    "hot": "Tendance",
+    "endsToday": "Se termine aujourd'hui",
+    "daysLeft": "{{count}}j restants",
+    "categoryAlt": "Illustration de la catégorie {{category}}"
+  },
+  "market": {
+    "linkCopied": "Lien du marché copié dans le presse-papiers !",
+    "shareMarket": "Partager le marché",
+    "resolved": "Résolu",
+    "ended": "Terminé",
+    "live": "En direct",
+    "pool": "Cagnotte :",
+    "ends": "Se termine :",
+    "amountPlaceholder": "Montant (XLM)",
+    "placing": "Placement...",
+    "bet": "Parier",
+    "addToSlip": "Ajouter à la fiche de paris",
+    "addSlip": "+ Fiche",
+    "slippage": "Glissement",
+    "clearForm": "Effacer le formulaire",
+    "queueFull": "La fiche de paris est pleine (max {{max}} paris). Retirez-en un pour en ajouter davantage."
+  },
+  "language": {
+    "selectLanguage": "Choisir la langue",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Swahili"
+  }
+}

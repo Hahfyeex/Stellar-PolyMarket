@@ -1,0 +1,109 @@
+{
+  "nav": {
+    "brand": "Stella Polymarket",
+    "toggleTheme": "Sauya jigon",
+    "helpDocs": "Taimako da Takardun shaida",
+    "connectWallet": "Haɗa wallet",
+    "connecting": "Ana haɗawa...",
+    "disconnect": "Yanke",
+    "connect": "Haɗa"
+  },
+  "hero": {
+    "headline": "Yi hasashe. Sa gaske. Samu.",
+    "subheading": "Kasuwannin hasashe na rarrabawa akan Stellar. Da sauri, mai arha, kuma mai bayyana."
+  },
+  "stats": {
+    "activeMarkets": "Kasuwannin Aiki",
+    "totalStaked": "Jimlar da aka sa",
+    "markets": "Kasuwanni"
+  },
+  "markets": {
+    "openMarkets": "Buɗe Kasuwanni",
+    "noMarkets": "Babu kasuwanni tukuna.",
+    "recentActivity": "Ayyukan Kwanan nan"
+  },
+  "bettingSlip": {
+    "title": "Takarda ta Caca",
+    "betsQueued": "{{count}} / {{max}} cace-cace na jira",
+    "noBets": "Babu cace-cace da suke jira. Ƙara cace-cace daga kowane kasuwa don haɗa su tare.",
+    "outcome": "Sakamakon",
+    "amount": "Adadin",
+    "totalStake": "Jimlar saka:",
+    "connectWalletPrompt": "Haɗa wallet ɗinku don ƙaddamar da cace-cace",
+    "submitting": "Ana ƙaddamarwa...",
+    "placeBet": "Saka {{count}} bet",
+    "placeBets": "Saka {{count}} cace-cace",
+    "close": "Rufe takarda ta caca",
+    "removeBet": "Cire bet akan {{market}}"
+  },
+  "tabs": {
+    "home": "Gida",
+    "search": "Bincike",
+    "portfolio": "Akwatin kuɗi",
+    "profile": "Bayani"
+  },
+  "notifications": {
+    "title": "Sanarwar Push",
+    "description": "Karɓi faɗakarwa don kasuwannin da kuka caca (An ba da shawarar/An warware).",
+    "enableAlerts": "Kunna Faɗakarwa",
+    "active": "Aiki",
+    "connectWalletFirst": "Da fatan za a haɗa wallet ɗinku da farko."
+  },
+  "errors": {
+    "insufficientGas": {
+      "title": "Gas ba ya Isawa",
+      "message": "Ba ku da isassun XLM don rufe kuɗin gas na ma'amala. Hanyar sadarwar Stellar tana buƙatar ƙaramin XLM don kowane aikin.",
+      "depositXlm": "Saka XLM",
+      "close": "Rufe"
+    },
+    "transactionFailed": {
+      "title": "Ma'amala Ta Kasa",
+      "message": "Ledger ya ƙi wannan ma'amala. Wannan na iya kasancewa saboda slippage, cunkoson hanyar sadarwa, ko ƙarewar wa'adin.",
+      "tryAgain": "Gwada Sake",
+      "returnToDashboard": "Koma ga Dashboard"
+    },
+    "walletDisconnected": {
+      "title": "An yanke Wallet",
+      "message": "An yanke haɗin ku zuwa hanyar sadarwar Stellar. Da fatan za a sake haɗa wallet ɗinku don ci gaba da hasashe.",
+      "reconnect": "Sake haɗa Wallet",
+      "returnToDashboard": "Koma ga Dashboard"
+    },
+    "marketPaused": {
+      "title": "An Tsayar da Kasuwa",
+      "message": "An kunna karɓen wannan kasuwa. Ciniki an dakatar da shi na ɗan lokaci yayin da injiniyoyinmu ke sake daidaita ma'auni.",
+      "returnToDashboard": "Koma ga Dashboard",
+      "checkNetworkStatus": "Duba Yanayin Hanyar sadarwa"
+    }
+  },
+  "discovery": {
+    "hot": "Yana Zafi",
+    "endsToday": "Yana ƙarewa yau",
+    "daysLeft": "{{count}}d ya rage",
+    "categoryAlt": "Hoton ɓangare {{category}}"
+  },
+  "market": {
+    "linkCopied": "An kwafi hanyar haɗin kasuwa zuwa clipboard!",
+    "shareMarket": "Raba kasuwa",
+    "resolved": "An warware",
+    "ended": "Ya ƙare",
+    "live": "Aiki",
+    "pool": "Akwati:",
+    "ends": "Ƙarshe:",
+    "amountPlaceholder": "Adadin (XLM)",
+    "placing": "Ana saka...",
+    "bet": "Caca",
+    "addToSlip": "Ƙara zuwa takarda ta caca",
+    "addSlip": "+ Takarda",
+    "slippage": "Slippage",
+    "clearForm": "Share fom",
+    "queueFull": "Takarda ta caca cike take (tafi {{max}} cace-cace). Cire ɗaya don ƙara ƙari."
+  },
+  "language": {
+    "selectLanguage": "Zaɓi Harshe",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Swahili"
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "nav": {
+    "brand": "Stella Polymarket",
+    "toggleTheme": "Toggle Theme",
+    "helpDocs": "Help & Documentation",
+    "connectWallet": "Connect Wallet",
+    "connecting": "Connecting...",
+    "disconnect": "Disconnect",
+    "connect": "Connect"
+  },
+  "hero": {
+    "headline": "Predict. Stake. Earn.",
+    "subheading": "Decentralized prediction markets on Stellar. Fast, cheap, and transparent."
+  },
+  "stats": {
+    "activeMarkets": "Active Markets",
+    "totalStaked": "Total Staked",
+    "markets": "Markets"
+  },
+  "markets": {
+    "openMarkets": "Open Markets",
+    "noMarkets": "No markets yet.",
+    "recentActivity": "Recent Activity"
+  },
+  "bettingSlip": {
+    "title": "Betting Slip",
+    "betsQueued": "{{count}} / {{max}} bets queued",
+    "noBets": "No bets queued yet. Add bets from any market to batch them together.",
+    "outcome": "Outcome",
+    "amount": "Amount",
+    "totalStake": "Total stake:",
+    "connectWalletPrompt": "Connect your wallet to submit bets",
+    "submitting": "Submitting...",
+    "placeBet": "Place {{count}} Bet",
+    "placeBets": "Place {{count}} Bets",
+    "close": "Close betting slip",
+    "removeBet": "Remove bet on {{market}}"
+  },
+  "tabs": {
+    "home": "Home",
+    "search": "Search",
+    "portfolio": "Portfolio",
+    "profile": "Profile"
+  },
+  "notifications": {
+    "title": "Push Notifications",
+    "description": "Get alerts for markets you've bet on (Proposed/Resolved).",
+    "enableAlerts": "Enable Alerts",
+    "active": "Active",
+    "connectWalletFirst": "Please connect your wallet first."
+  },
+  "errors": {
+    "insufficientGas": {
+      "title": "Insufficient Gas",
+      "message": "You don't have enough XLM to cover the transaction gas fees. The Stellar network requires a small amount of XLM for every operation.",
+      "depositXlm": "Deposit XLM",
+      "close": "Close"
+    },
+    "transactionFailed": {
+      "title": "Transaction Failed",
+      "message": "The Ledger rejected this transaction. This could be due to slippage, network congestion, or an expired deadline.",
+      "tryAgain": "Try Again",
+      "returnToDashboard": "Return to Dashboard"
+    },
+    "walletDisconnected": {
+      "title": "Wallet Disconnected",
+      "message": "Your connection to the Stellar network has been interrupted. Please reconnect your wallet to continue predicting.",
+      "reconnect": "Reconnect Wallet",
+      "returnToDashboard": "Return to Dashboard"
+    },
+    "marketPaused": {
+      "title": "Market Paused",
+      "message": "This Market's circuit breaker has been triggered. Trading is temporarily suspended while our engineers recalibrate the sensors.",
+      "returnToDashboard": "Return to Dashboard",
+      "checkNetworkStatus": "Check Network Status"
+    }
+  },
+  "discovery": {
+    "hot": "Hot",
+    "endsToday": "Ends today",
+    "daysLeft": "{{count}}d left",
+    "categoryAlt": "{{category}} category illustration"
+  },
+  "market": {
+    "linkCopied": "Market link copied to clipboard!",
+    "shareMarket": "Share market",
+    "resolved": "Resolved",
+    "ended": "Ended",
+    "live": "Live",
+    "pool": "Pool:",
+    "ends": "Ends:",
+    "amountPlaceholder": "Amount (XLM)",
+    "placing": "Placing...",
+    "bet": "Bet",
+    "addToSlip": "Add to betting slip",
+    "addSlip": "+ Slip",
+    "slippage": "Slippage",
+    "clearForm": "Clear form",
+    "queueFull": "Betting slip is full (max {{max}} bets). Remove one to add more."
+  },
+  "language": {
+    "selectLanguage": "Select Language",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Swahili"
+  }
+}

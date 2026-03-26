@@ -1,0 +1,109 @@
+{
+  "nav": {
+    "brand": "Stella Polymarket",
+    "toggleTheme": "Geuza mandhari",
+    "helpDocs": "Msaada na Nyaraka",
+    "connectWallet": "Unganisha mkoba",
+    "connecting": "Inaunganisha...",
+    "disconnect": "Tenganisha",
+    "connect": "Unganisha"
+  },
+  "hero": {
+    "headline": "Tabiri. Weka dau. Pata faida.",
+    "subheading": "Masoko ya utabiri ya kugawanyishwa kwenye Stellar. Haraka, bei nafuu, na uwazi."
+  },
+  "stats": {
+    "activeMarkets": "Masoko Yanayofanya Kazi",
+    "totalStaked": "Jumla Iliyowekwa",
+    "markets": "Masoko"
+  },
+  "markets": {
+    "openMarkets": "Masoko Wazi",
+    "noMarkets": "Hakuna masoko bado.",
+    "recentActivity": "Shughuli za Hivi Karibuni"
+  },
+  "bettingSlip": {
+    "title": "Karatasi ya Dau",
+    "betsQueued": "Madau {{count}} / {{max}} yanangoja",
+    "noBets": "Hakuna madau yanayongoja. Ongeza madau kutoka soko lolote ili kuyakusanya pamoja.",
+    "outcome": "Matokeo",
+    "amount": "Kiasi",
+    "totalStake": "Jumla ya kuweka dau:",
+    "connectWalletPrompt": "Unganisha mkoba wako ili kuwasilisha madau",
+    "submitting": "Inawasilisha...",
+    "placeBet": "Weka dau {{count}}",
+    "placeBets": "Weka madau {{count}}",
+    "close": "Funga karatasi ya dau",
+    "removeBet": "Ondoa dau kwenye {{market}}"
+  },
+  "tabs": {
+    "home": "Nyumbani",
+    "search": "Tafuta",
+    "portfolio": "Mkoba",
+    "profile": "Wasifu"
+  },
+  "notifications": {
+    "title": "Arifa za Push",
+    "description": "Pata arifa kwa masoko ambayo umeweka dau (Iliyopendekezwa/Iliyotatuliwa).",
+    "enableAlerts": "Wezesha Arifa",
+    "active": "Inafanya Kazi",
+    "connectWalletFirst": "Tafadhali unganisha mkoba wako kwanza."
+  },
+  "errors": {
+    "insufficientGas": {
+      "title": "Gesi Haitoshi",
+      "message": "Huna XLM ya kutosha kufunika ada za gesi za muamala. Mtandao wa Stellar unahitaji kiasi kidogo cha XLM kwa kila operesheni.",
+      "depositXlm": "Weka XLM",
+      "close": "Funga"
+    },
+    "transactionFailed": {
+      "title": "Muamala Umeshindwa",
+      "message": "Ledger ilikataa muamala huu. Hii inaweza kutokana na mteremko, msongamano wa mtandao, au muda ulioisha.",
+      "tryAgain": "Jaribu Tena",
+      "returnToDashboard": "Rudi kwenye Dashibodi"
+    },
+    "walletDisconnected": {
+      "title": "Mkoba Umetenganishwa",
+      "message": "Muunganisho wako na mtandao wa Stellar umekatizwa. Tafadhali unganisha mkoba wako tena ili kuendelea kutabiri.",
+      "reconnect": "Unganisha Mkoba Tena",
+      "returnToDashboard": "Rudi kwenye Dashibodi"
+    },
+    "marketPaused": {
+      "title": "Soko Limesimamishwa",
+      "message": "Kizuizi cha mzunguko wa soko hili kimewezeshwa. Biashara imesimamishwa kwa muda wakati wahandisi wetu wanasanidi upya vitambuzi.",
+      "returnToDashboard": "Rudi kwenye Dashibodi",
+      "checkNetworkStatus": "Angalia Hali ya Mtandao"
+    }
+  },
+  "discovery": {
+    "hot": "Moto",
+    "endsToday": "Inaisha leo",
+    "daysLeft": "{{count}}d zimebaki",
+    "categoryAlt": "Mchoro wa kategoria {{category}}"
+  },
+  "market": {
+    "linkCopied": "Kiungo cha soko kimenakiliwa kwenye ubao wa kunakili!",
+    "shareMarket": "Shiriki soko",
+    "resolved": "Imetatuliwa",
+    "ended": "Imeisha",
+    "live": "Hai",
+    "pool": "Bwawa:",
+    "ends": "Inaisha:",
+    "amountPlaceholder": "Kiasi (XLM)",
+    "placing": "Inaweka...",
+    "bet": "Weka dau",
+    "addToSlip": "Ongeza kwenye karatasi ya dau",
+    "addSlip": "+ Karatasi",
+    "slippage": "Mteremko",
+    "clearForm": "Futa fomu",
+    "queueFull": "Karatasi ya dau imejaa (madau {{max}} ya juu). Ondoa moja ili kuongeza zaidi."
+  },
+  "language": {
+    "selectLanguage": "Chagua Lugha",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Swahili"
+  }
+}

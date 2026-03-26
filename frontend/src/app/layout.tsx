@@ -4,6 +4,7 @@ import { BettingSlipProvider } from "../context/BettingSlipContext";
 import { WalletProvider } from "../context/WalletContext";
 import BettingSlipWrapper from "../components/BettingSlipWrapper";
 import ReduxProvider from "../components/ReduxProvider";
+import I18nProvider from "../components/I18nProvider";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
@@ -15,14 +16,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <ReduxProvider>
-          {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
-          <WalletProvider>
-            <BettingSlipProvider>
-              {children}
-              {/* BettingSlip mounted globally — persists across all pages */}
-              <BettingSlipWrapper />
-            </BettingSlipProvider>
-          </WalletProvider>
+          {/* I18nProvider initialises i18next on the client and supplies the
+              instance to all useTranslation() hooks in the tree. */}
+          <I18nProvider>
+            {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
+            <WalletProvider>
+              <BettingSlipProvider>
+                {children}
+                {/* BettingSlip mounted globally — persists across all pages */}
+                <BettingSlipWrapper />
+              </BettingSlipProvider>
+            </WalletProvider>
+          </I18nProvider>
         </ReduxProvider>
       </body>
     </html>

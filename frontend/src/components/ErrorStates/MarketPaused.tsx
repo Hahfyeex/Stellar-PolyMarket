@@ -1,20 +1,23 @@
 "use client";
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import ErrorLayout from './ErrorLayout';
 
 export default function MarketPaused() {
+  const { t } = useTranslation();
+
   return (
     <div className="bg-gray-950/50 backdrop-blur-sm rounded-3xl p-8 border border-yellow-500/20">
       <ErrorLayout
         illustration="/illustrations/rocket-maintenance.png"
-        title="Market Paused"
-        message="This Market's circuit breaker has been triggered. Trading is temporarily suspended while our engineers recalibrate the sensors."
+        title={t("errors.marketPaused.title")}
+        message={t("errors.marketPaused.message")}
         primaryAction={{
-          label: "Return to Dashboard",
+          label: t("errors.marketPaused.returnToDashboard"),
           href: "/"
         }}
         secondaryAction={{
-          label: "Check Network Status",
+          label: t("errors.marketPaused.checkNetworkStatus"),
           onClick: () => window.open('https://stellar.org/status', '_blank')
         }}
       />

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
 import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
@@ -10,6 +11,7 @@ import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
 import ContractErrorBoundary from "../components/ContractErrorBoundary";
+import LanguageSelector from "../components/LanguageSelector";
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
@@ -28,6 +30,7 @@ interface Market {
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const { theme, toggleTheme } = useTheme();
+  const { t } = useTranslation();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
@@ -71,18 +74,18 @@ export default function Home() {
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
       <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-800">
         <div className="flex items-center gap-4">
-          <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+          <span className="text-xl font-bold text-blue-400">{t("nav.brand")}</span>
           <button
             onClick={toggleTheme}
             className="text-gray-400 hover:text-white transition-colors text-xl"
-            title="Toggle Theme"
+            title={t("nav.toggleTheme")}
           >
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
           <button
             onClick={handleHelpClick}
             className="text-gray-400 hover:text-white transition-colors"
-            title="Help & Documentation"
+            title={t("nav.helpDocs")}
           >
             <svg
               viewBox="0 0 24 24"
@@ -96,6 +99,8 @@ export default function Home() {
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
           </button>
+          {/* Language selector — allows switching between the 5 supported locales */}
+          <LanguageSelector />
         </div>
         {publicKey ? (
           <div className="flex items-center gap-3">
@@ -106,7 +111,7 @@ export default function Home() {
               onClick={disconnect}
               className="text-sm border border-gray-600 px-3 py-1.5 rounded-lg hover:border-gray-400"
             >
-              Disconnect
+              {t("nav.disconnect")}
             </button>
           </div>
         ) : (
@@ -115,15 +120,16 @@ export default function Home() {
             disabled={connecting}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
           >
-            {connecting ? "Connecting..." : "Connect Wallet"}
+            {connecting ? t("nav.connecting") : t("nav.connectWallet")}
           </button>
         )}
       </nav>
 
       {/* Mobile top bar */}
       <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-gray-800">
-        <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
+        <span className="text-lg font-bold text-blue-400">{t("nav.brand")}</span>
         <div className="flex items-center gap-3">
+          <LanguageSelector />
           <button
             onClick={toggleTheme}
             className="text-gray-400 hover:text-white transition-colors text-lg"
@@ -143,7 +149,7 @@ export default function Home() {
               disabled={connecting}
               className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
             >
-              {connecting ? "..." : "Connect"}
+              {connecting ? "..." : t("nav.connect")}
             </button>
           )}
         </div>
@@ -159,9 +165,9 @@ export default function Home() {
 
       {/* Hero */}
       <section className="flex flex-col items-center justify-center py-10 md:py-16 px-4 text-center">
-        <h1 className="text-3xl md:text-5xl font-bold mb-3">Predict. Stake. Earn.</h1>
+        <h1 className="text-3xl md:text-5xl font-bold mb-3">{t("hero.headline")}</h1>
         <p className="text-base md:text-xl text-gray-400 max-w-xl">
-          Decentralized prediction markets on Stellar. Fast, cheap, and transparent.
+          {t("hero.subheading")}
         </p>
         <div className="max-w-md mx-auto w-full mt-4">
           <NotificationManager walletAddress={publicKey} />
@@ -171,12 +177,12 @@ export default function Home() {
       {/* Stats */}
       <section className="grid grid-cols-3 gap-3 max-w-2xl mx-auto px-4 pb-8 text-center">
         {[
-          { label: "Active Markets", value: markets.filter((m) => !m.resolved).length },
+          { label: t("stats.activeMarkets"), value: markets.filter((m) => !m.resolved).length },
           {
-            label: "Total Staked",
+            label: t("stats.totalStaked"),
             value: `${markets.reduce((s, m) => s + parseFloat(m.total_pool || "0"), 0).toFixed(0)} XLM`,
           },
-          { label: "Markets", value: markets.length },
+          { label: t("stats.markets"), value: markets.length },
         ].map((stat) => (
           <div key={stat.label} className="bg-gray-900 rounded-xl p-4">
             <p className="text-2xl md:text-3xl font-bold text-blue-400">{stat.value}</p>
@@ -196,7 +202,7 @@ export default function Home() {
             />
           </div>
 
-          <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
+          <h2 className="text-xl md:text-2xl font-semibold mb-4">{t("markets.openMarkets")}</h2>
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[1, 2, 3, 4].map((i) => (
@@ -204,7 +210,7 @@ export default function Home() {
               ))}
             </div>
           ) : markets.length === 0 ? (
-            <p className="text-gray-400">No markets yet.</p>
+            <p className="text-gray-400">{t("markets.noMarkets")}</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {markets.map((market) => (
@@ -229,7 +235,7 @@ export default function Home() {
 
         {/* Live Activity Feed — hidden on mobile to save space */}
         <div className="hidden lg:block w-80 shrink-0">
-          <h2 className="text-2xl font-semibold mb-6">Recent Activity</h2>
+          <h2 className="text-2xl font-semibold mb-6">{t("markets.recentActivity")}</h2>
           <LiveActivityFeed apiUrl={process.env.NEXT_PUBLIC_API_URL} />
         </div>
       </section>

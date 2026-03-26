@@ -27,6 +27,9 @@ module.exports = {
         "**/components/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
       ],
+      // i18n mock is injected before every component test so that components
+      // using useTranslation() work without a real i18next instance.
+      setupFilesAfterEnv: ["<rootDir>/jest-i18n-setup.ts"],
       globals: {
         "ts-jest": {
           tsconfig: {
@@ -49,6 +52,8 @@ module.exports = {
         "src/utils/poolOwnership.ts",
         "src/utils/trustline.ts",
         "src/utils/marketDiscovery.ts",
+        // i18n locale detection and persistence utilities
+        "src/utils/i18nUtils.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

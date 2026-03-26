@@ -14,11 +14,13 @@ const ALL_TABS: NavTab[] = ["home", "search", "portfolio", "profile"];
 
 describe("BottomNavBar", () => {
   it("renders all 4 tabs with correct labels", () => {
+    // With the i18n mock, t('tabs.home') returns the key 'tabs.home' — confirm
+    // each tab renders a label derived from its translation key.
     render(<BottomNavBar activeTab="home" onTabChange={() => {}} />);
-    expect(screen.getByText("Home")).toBeInTheDocument();
-    expect(screen.getByText("Search")).toBeInTheDocument();
-    expect(screen.getByText("Portfolio")).toBeInTheDocument();
-    expect(screen.getByText("Profile")).toBeInTheDocument();
+    expect(screen.getByText("tabs.home")).toBeInTheDocument();
+    expect(screen.getByText("tabs.search")).toBeInTheDocument();
+    expect(screen.getByText("tabs.portfolio")).toBeInTheDocument();
+    expect(screen.getByText("tabs.profile")).toBeInTheDocument();
   });
 
   it("applies aria-current=page only to the active tab", () => {

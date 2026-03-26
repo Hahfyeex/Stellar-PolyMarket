@@ -297,3 +297,70 @@ The Stella Polymarket frontend features a CSS variable-based dynamic dark/light 
 
 ### useTheme hook
 We provide a `useTheme` hook (`src/hooks/useTheme.ts`) that will respect the user's system preferences `window.matchMedia('(prefers-color-scheme: dark)')` on the first load and save user override configurations into `localStorage` under the `stella_theme` key.
+
+---
+
+## Internationalisation (i18n)
+
+Stella Polymarket supports **5 languages** out of the box: English, French, Yorùbá, Hausa, and Swahili.
+
+### Stack
+
+| Package | Role |
+|---|---|
+| `i18next` | Core translation engine |
+| `react-i18next` | React hooks & provider |
+| `i18next-http-backend` | Dynamically loads only the active locale JSON |
+| `i18next-browser-languagedetector` | Auto-detects browser locale on first visit |
+
+### File structure
+
+```
+frontend/
+└── public/
+    └── locales/
+        ├── en/common.json   ← English (default)
+        ├── fr/common.json   ← French
+        ├── yo/common.json   ← Yorùbá
+        ├── ha/common.json   ← Hausa
+        └── sw/common.json   ← Swahili
+```
+
+Each locale has a single namespace (`common`) that holds all UI strings.
+
+### How language selection works
+
+1. **First visit** — `i18next-browser-languagedetector` reads `navigator.language` and maps it to the nearest supported locale (e.g. `fr-FR` → `fr`).
+2. **User selection** — the `LanguageSelector` dropdown in the navbar calls `i18n.changeLanguage(lang)`.
+3. **Persistence** — the selected language is stored in `localStorage` under the key `stella_lang` and restored on the next visit.
+
+### Using translations in a component
+
+```tsx
+import { useTranslation } from 'react-i18next';
+
+export default function MyComponent() {
+  const { t } = useTranslation();
+  return <h1>{t('hero.headline')}</h1>;
+}
+```
+
+### Adding a new language
+
+1. Create `frontend/public/locales/<code>/common.json` (copy `en/common.json` as a template).
+2. Translate every value. Do **not** translate the keys.
+3. Add the code to `SUPPORTED_LANGUAGES` in `src/utils/i18nUtils.ts`.
+4. Add the human-readable name to `LANGUAGE_NAMES` in the same file.
+5. The language will automatically appear in the `LanguageSelector` dropdown.
+
+### Adding a new translation key
+
+1. Add the key + English value to `public/locales/en/common.json`.
+2. Add the equivalent translation to every other locale file.
+3. Use `t('your.new.key')` in the component.
+
+### Contributing translations
+
+- All locale files live under `public/locales/` — no build step required; they are plain JSON.
+- Run `npm test` to verify the i18n utility coverage stays above 90 %.
+- Open a PR with the updated locale files and a description of what was translated.
