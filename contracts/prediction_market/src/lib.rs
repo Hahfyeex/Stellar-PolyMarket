@@ -3,6 +3,8 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, Env, Map, String, Vec,
 };
 
+pub mod position_token;
+
 /// Maximum winners processed per batch_distribute call.
 /// Keeps CPU instruction count well below Soroban's per-tx ceiling (~100M instructions).
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
@@ -168,6 +170,9 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &(shares + amount));
+
+        // Mint a position token representing this user's stake
+        position_token::mint(&env, market_id, option_index, &bettor, amount);
     }
 
     /// Pause or unpause a market (admin only).
@@ -295,6 +300,8 @@ impl PredictionMarket {
         for i in cursor..end {
             let (bettor, amount) = winners.get(i).unwrap();
             let payout = (amount * payout_pool) / winning_stake;
+            // Burn position token on claim
+            position_token::burn(&env, market_id, market.winning_outcome, &bettor);
             token_client.transfer(&env.current_contract_address(), &bettor, &payout);
             paid += 1;
         }
@@ -343,6 +350,16 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::IsPaused(market_id))
             .unwrap_or(false)
+    }
+
+    /// Return the position-token balance for `owner` on a specific market outcome.
+    pub fn position_token_balance(
+        env: Env,
+        market_id: u64,
+        outcome_index: u32,
+        owner: Address,
+    ) -> i128 {
+        position_token::balance_of(&env, market_id, outcome_index, &owner)
     }
 }
 
@@ -939,5 +956,114 @@ mod tests {
             &token,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
+    }
+
+    // ── Position token: mint ──────────────────────────────────────────────────
+
+    /// Placing a bet mints position tokens equal to the staked amount.
+    #[test]
+    fn test_place_bet_mints_position_tokens() {
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &200i128);
+        assert_eq!(client.position_token_balance(&1u64, &0u32, &bettor), 200i128);
+    }
+
+    /// Two bets on the same outcome accumulate tokens.
+    #[test]
+    fn test_two_bets_accumulate_position_tokens() {
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &100i128);
+        client.place_bet(&1u64, &0u32, &bettor, &50i128);
+        assert_eq!(client.position_token_balance(&1u64, &0u32, &bettor), 150i128);
+    }
+
+    /// Tokens are per-outcome: a bet on outcome 0 does not affect outcome 1 balance.
+    #[test]
+    fn test_position_tokens_are_per_outcome() {
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &100i128);
+        assert_eq!(client.position_token_balance(&1u64, &1u32, &bettor), 0i128);
+    }
+
+    /// An address that never bet has a zero balance.
+    #[test]
+    fn test_position_token_balance_zero_for_non_bettor() {
+        let (env, client, _, _, _) = setup();
+        let stranger = Address::generate(&env);
+        assert_eq!(client.position_token_balance(&1u64, &0u32, &stranger), 0i128);
+    }
+
+    // ── Position token: burn on claim ─────────────────────────────────────────
+
+    /// batch_distribute burns the winner's position tokens.
+    #[test]
+    fn test_batch_distribute_burns_position_tokens() {
+        let (env, client, winners) = setup_market_with_winners(3);
+        // All winners hold 100 tokens on outcome 0 before settlement
+        for w in winners.iter() {
+            assert_eq!(client.position_token_balance(&1u64, &0u32, &w), 100i128);
+        }
+        client.batch_distribute(&1u64, &3u32);
+        // After settlement tokens are burned
+        for w in winners.iter() {
+            assert_eq!(client.position_token_balance(&1u64, &0u32, &w), 0i128);
+        }
+        let _ = env;
+    }
+
+    /// Losers' position tokens are NOT burned by batch_distribute (only winners are paid).
+    #[test]
+    fn test_loser_position_tokens_not_burned_by_distribute() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let winner = Address::generate(&env);
+        let loser = Address::generate(&env);
+
+        let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        sac_client.mint(&winner, &1000i128);
+        sac_client.mint(&loser, &1000i128);
+
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        client.create_market(
+            &1u64,
+            &String::from_str(&env, "Q"),
+            &options,
+            &(env.ledger().timestamp() + 86400),
+            &sac.address(),
+        );
+        client.place_bet(&1u64, &0u32, &winner, &100i128);
+        client.place_bet(&1u64, &1u32, &loser, &100i128);
+        client.resolve_market(&1u64, &0u32);
+        client.batch_distribute(&1u64, &5u32);
+
+        // Loser's outcome-1 tokens remain (no burn triggered for losers)
+        assert_eq!(client.position_token_balance(&1u64, &1u32, &loser), 100i128);
+    }
+
+    /// Partial batch: tokens burned only for the settled slice.
+    #[test]
+    fn test_partial_batch_burns_only_settled_winners() {
+        let (env, client, winners) = setup_market_with_winners(4);
+        client.batch_distribute(&1u64, &2u32); // settle first 2
+        // First 2 winners burned
+        assert_eq!(client.position_token_balance(&1u64, &0u32, &winners.get(0).unwrap()), 0i128);
+        assert_eq!(client.position_token_balance(&1u64, &0u32, &winners.get(1).unwrap()), 0i128);
+        // Last 2 still hold tokens
+        assert_eq!(client.position_token_balance(&1u64, &0u32, &winners.get(2).unwrap()), 100i128);
+        assert_eq!(client.position_token_balance(&1u64, &0u32, &winners.get(3).unwrap()), 100i128);
+        let _ = env;
     }
 }
