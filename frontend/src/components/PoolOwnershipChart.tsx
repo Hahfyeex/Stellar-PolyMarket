@@ -8,6 +8,8 @@
  * Props:
  *   marketId — the market to visualise
  */
+// Named imports — webpack tree-shakes unused recharts components via the
+// package's sideEffects:false declaration, keeping the bundle lean.
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { usePoolOwnership } from "../hooks/usePoolOwnership";
 import { OwnershipSlice } from "../utils/poolOwnership";
