@@ -1,7 +1,16 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, Map,
 };
+mod access;
+use crate::access::{
+    check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
+    AccessRole,
+};
+
+// Internal ZK scalar normalization utility — must be declared before use
+mod math;
+use math::normalize_scalar;
 
 mod lmsr;
 use lmsr::{lmsr_cost, lmsr_price};
@@ -20,11 +29,37 @@ pub enum FeeMode {
 /// Keeps CPU instruction count well below Soroban's per-tx ceiling (~100M instructions).
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
 pub const MAX_BATCH_SIZE: u32 = 25;
+/// Liveness window: 1 hour in seconds. Resolution can only be finalised after this delay.
+pub const LIVENESS_WINDOW: u64 = 3_600;
+
+/// Calculates dynamic platform fee in Basis Points (BPS).
+/// Pure function: O(1) time complexity, O(1) space complexity.
+/// Logic: Fee = Max(0.5%, 2% - (Volume / Threshold))
+pub fn calculate_dynamic_fee(volume: i128) -> u32 {
+    let base_fee_bps: i128 = 200;      // 2.0%
+    let floor_fee_bps: i128 = 50;       // 0.5%
+    let total_reduction_bps: i128 = 150; // Difference (2.0% - 0.5%)
+    let threshold: i128 = 100_000 * 10_000_000; // 100k XLM = 1,000,000,000,000 stroops
+
+    if volume <= 0 {
+        return base_fee_bps as u32;
+    }
+
+    // Linear scaling: reduction = (Volume / Threshold) * total_reduction
+    let reduction = (volume * total_reduction_bps) / threshold;
+    let fee = base_fee_bps - reduction;
+
+    if fee < floor_fee_bps {
+        floor_fee_bps as u32
+    } else {
+        fee as u32
+    }
+}
+
 
 #[contracttype]
 pub enum DataKey {
     Initialized,
-    Admin,
     OracleAddress,
     Market(u64),
     /// Cold: per-user positions — Persistent storage
@@ -35,10 +70,7 @@ pub enum DataKey {
     IsPaused(u64),
     /// Hot: settlement cursor (index into winners vec) — Instance storage
     SettlementCursor(u64),
-    /// Hot: global platform status — Instance storage.
-    /// true = active (default), false = graceful shutdown.
-    /// Only blocks create_market; existing markets resolve and pay out normally.
-    GlobalStatus,
+
     /// Vault balance: total funds swept from unclaimed payouts — Instance storage
     VaultBalance,
     /// Claim deadline: timestamp when market was resolved — Persistent storage per market
@@ -65,6 +97,10 @@ pub enum DataKey {
     LmsrB(u64),
     /// Per-outcome cumulative share quantities for LMSR — Instance storage.
     OutcomeShares(u64),
+    /// Dispute voting data — Persistent storage per market.
+    Dispute(u64),
+    /// Refund-claimed flag per bettor per market — Persistent storage.
+    RefundClaimed(u64),
 }
 
 #[contracttype]
@@ -75,24 +111,7 @@ pub enum MarketStatus {
     Disputed,
     ReReview, // threshold crossed, paused for final admin review
     Resolved,
-}
-
-#[contracttype]
-#[derive(Clone, PartialEq)]
-pub enum MarketStatus1 {
-    Open,
-    Locked,
-    Proposed,
-    Resolved,
-}
-
-#[contracttype]
-#[derive(Clone, PartialEq)]
-pub enum MarketStatus2 {
-    Open,
-    Locked,
-    Proposed,
-    Resolved,
+    Voided,   // condition not met — full refunds enabled
 }
 
 #[contracttype]
@@ -117,6 +136,10 @@ pub struct Market {
     pub token: Address,
     pub proposed_outcome: Option<u32>,
     pub proposal_timestamp: u64,
+    /// If set, this market only resolves if the referenced market resolved to `condition_outcome`.
+    /// Otherwise the market is Voided and all stakes are refunded.
+    pub condition_market_id: Option<u64>,
+    pub condition_outcome: Option<u32>,
 }
 
 #[contract]
@@ -131,17 +154,6 @@ fn check_initialized(env: &Env) {
     assert!(!is_init, "Contract already initialized");
 }
 
-/// Reads IsPaused from persistent storage (defaults false). Panics with "ContractPaused" if set.
-fn panic_if_paused(env: &Env) {
-    let paused: bool = env
-        .storage()
-        .persistent()
-        .get(&DataKey::IsPaused)
-        .unwrap_or(false);
-    if paused {
-        panic!("ContractPaused");
-    }
-}
 
 #[contractimpl]
 impl PredictionMarket {
@@ -150,9 +162,9 @@ impl PredictionMarket {
         check_initialized(&env);
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
-        env.storage().instance().set(&DataKey::Admin, &admin);
+        set_role(&env, AccessRole::Admin, &admin);
         // Platform starts active by default
-        env.storage().instance().set(&DataKey::GlobalStatus, &true);
+        set_platform_status(&env, AccessPlatformStatus::Active);
     }
 
     /// Create a new prediction market.
@@ -181,6 +193,8 @@ impl PredictionMarket {
         deadline: u64,
         token: Address,
         lmsr_b: i128,
+        condition_market_id: Option<u64>,
+        condition_outcome: Option<u32>,
     ) {
         creator.require_auth();
         check_role(&env, Role::Admin);
@@ -256,6 +270,8 @@ impl PredictionMarket {
             token,
             proposed_outcome: None,
             proposal_timestamp: 0,
+            condition_market_id,
+            condition_outcome,
         };
 
         // Cold: market metadata + user positions vec → Persistent
@@ -286,7 +302,7 @@ impl PredictionMarket {
     /// Linear scan to find existing bet is cheaper than Map hashing for small datasets.
     /// Typical markets have <100 bettors, making Vec O(n) faster than Map O(1) with hashing overhead.
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
-        panic_if_paused(&env);
+        check_platform_active(&env);
         bettor.require_auth();
         assert!(amount > 0, "Amount must be positive");
 
@@ -400,7 +416,6 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &(shares + cost_delta));
-            .set(&DataKey::TotalShares(market_id), &(shares + amount));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
         env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), cost_delta, option_index));
@@ -409,31 +424,32 @@ impl PredictionMarket {
     /// Pause or unpause a market (admin only).
     /// Writes to Instance storage — single cheap write.
     pub fn set_paused(env: Env, market_id: u64, paused: bool) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
         env.storage()
             .instance()
             .set(&DataKey::IsPaused(market_id), &paused);
     }
 
     /// Graceful shutdown / re-activation (admin only).
-    /// active=false → new markets blocked; existing markets resolve and pay out normally.
-    /// active=true  → platform re-opened.
-    /// Single Instance write — cheapest possible admin action.
+    /// active=false → shutdown; active=true → active.
     pub fn set_global_status(env: Env, active: bool) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::GlobalStatus, &active);
+        check_role(&env, AccessRole::Admin);
+        let status = if active {
+            AccessPlatformStatus::Active
+        } else {
+            AccessPlatformStatus::Shutdown
+        };
+        set_platform_status(&env, status);
     }
 
     /// Read the current global platform status.
     pub fn get_global_status(env: Env) -> bool {
-        env.storage()
+        let status: AccessPlatformStatus = env
+            .storage()
             .instance()
-            .get(&DataKey::GlobalStatus)
-            .unwrap_or(true)
+            .get(&crate::access::AccessKey::PlatformStatus)
+            .unwrap_or(AccessPlatformStatus::Active);
+        status == AccessPlatformStatus::Active
     }
 
     /// Update the market creation fee configuration (admin only).
@@ -519,8 +535,7 @@ impl PredictionMarket {
 
     /// Propose market resolution — only admin (oracle-triggered).
     pub fn propose_resolution(env: Env, market_id: u64, winning_outcome: u32) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
 
         let mut market: Market = env
             .storage()
@@ -573,8 +588,7 @@ impl PredictionMarket {
 
     /// Resolve market finally after potential dispute.
     pub fn resolve_market(env: Env, market_id: u64, winning_outcome: u32) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
 
         let mut market: Market = env
             .storage()
@@ -591,18 +605,49 @@ impl PredictionMarket {
             env.ledger().timestamp() >= market.proposal_timestamp + LIVENESS_WINDOW,
             "Liveness window has not elapsed"
         );
+        assert!(
+            winning_outcome < market.options.len(),
+            "Invalid outcome index"
+        );
 
         market.status = MarketStatus::Resolved;
         market.winning_outcome = winning_outcome;
+
+        // ── Conditional market check ─────────────────────────────────────────
+        // If this market has a condition, verify the referenced market resolved
+        // to the expected outcome. If not, void the market instead.
+        if let Some(cond_id) = market.condition_market_id {
+            let cond_market: Market = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Market(cond_id))
+                .expect("condition market not found");
+            assert!(
+                cond_market.status == MarketStatus::Resolved,
+                "condition market not yet resolved"
+            );
+            let expected = market.condition_outcome.unwrap_or(0);
+            if cond_market.winning_outcome != expected {
+                market.status = MarketStatus::Voided;
+                env.storage().persistent().set(&DataKey::Market(market_id), &market);
+                env.storage().persistent().extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
+                env.events().publish((symbol_short!("Voided"), market_id), cond_market.winning_outcome);
+                return;
+            }
+        }
+        // ── end conditional check ─────────────────────────────────────────────
+
         env.storage()
             .persistent()
             .set(&DataKey::Market(market_id), &market);
+        env.storage().persistent().extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
 
         // Record resolution timestamp for 30-day claim deadline tracking
         let resolution_time = env.ledger().timestamp();
         env.storage()
             .persistent()
             .set(&DataKey::ClaimDeadline(market_id), &resolution_time);
+        env.storage().persistent().extend_ttl(&DataKey::ClaimDeadline(market_id), 100, 1_000_000);
     }
 
     /// Opens a dispute voting window for 24 hours. Callable by any token holder within 24h of resolution.
@@ -731,8 +776,7 @@ impl PredictionMarket {
     /// 
     /// Returns the amount swept into the vault.
     pub fn sweep_unclaimed(env: Env, market_id: u64) -> i128 {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
 
         // Check if market has already been swept
         let already_swept: bool = env
@@ -764,7 +808,7 @@ impl PredictionMarket {
         );
 
         // Get positions and calculate payouts
-        let positions: Map<Address, (u32, i128)> = env
+        let positions: Vec<(Address, u32, i128)> = env
             .storage()
             .persistent()
             .get(&DataKey::UserPosition(market_id))
@@ -779,7 +823,8 @@ impl PredictionMarket {
         // Calculate winning stake and build winners list
         let mut winners: Vec<(Address, i128)> = Vec::new(&env);
         let mut winning_stake: i128 = 0;
-        for (addr, (outcome, amount)) in positions.iter() {
+        for i in 0..positions.len() {
+            let (addr, outcome, amount) = positions.get(i).unwrap();
             if outcome == market.winning_outcome {
                 winners.push_back((addr, amount));
                 winning_stake += amount;
@@ -793,7 +838,8 @@ impl PredictionMarket {
             return 0;
         }
 
-        let payout_pool = total_pool * 97 / 100;
+        let fee_bps = calculate_dynamic_fee(total_pool);
+        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
 
         // Calculate and store original payouts for each winner
         let mut original_payouts: Map<Address, i128> = Map::new(&env);
@@ -859,8 +905,7 @@ impl PredictionMarket {
     /// 
     /// Returns the amount invested.
     pub fn invest_vault(env: Env) -> i128 {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
 
         let vault_balance: i128 = env
             .storage()
@@ -917,7 +962,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
 
         // Get original payouts map
         let original_payouts: Map<Address, i128> = env
@@ -1071,7 +1116,8 @@ impl PredictionMarket {
             return 0;
         }
 
-        let payout_pool = total_pool * 97 / 100;
+        let fee_bps = calculate_dynamic_fee(total_pool);
+        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
         let token_client = token::Client::new(&env, &market.token);
 
         // Hot read: cursor from Instance
@@ -1164,6 +1210,36 @@ impl PredictionMarket {
         // 3. Bump Instance storage (TotalShares, IsPaused, etc. are grouped here)
         env.storage().instance().extend_ttl(threshold, extend_to);
     }
+
+    /// Verify a ZK proof scalar against an expected value.
+    ///
+    /// Both `proof_scalar` and `expected` are normalized to [0, r) before
+    /// comparison, preventing scalar-bypass attacks where a prover supplies
+    /// s + k*r instead of s.
+    ///
+    /// # Auth
+    /// Caller must be the contract admin (oracle-triggered verification).
+    ///
+    /// # Returns
+    /// `true` if the normalized scalars are equal.
+    pub fn verify_proof(
+        env: Env,
+        caller: Address,
+        proof_scalar: soroban_sdk::BytesN<32>,
+        expected: soroban_sdk::BytesN<32>,
+    ) -> bool {
+        // Only admin may trigger proof verification
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        caller.require_auth();
+        assert_eq!(caller, admin, "unauthorized");
+
+        // Normalize both scalars to canonical range [0, r) before comparison.
+        // This prevents a prover from bypassing equality by supplying s + k*r.
+        let norm_proof = normalize_scalar(proof_scalar.to_array());
+        let norm_expected = normalize_scalar(expected.to_array());
+
+        norm_proof == norm_expected
+    }
 }
 
 #[cfg(test)]
@@ -1173,16 +1249,7 @@ mod tests {
 
     // ── shared helpers ────────────────────────────────────────────────────────
 
-    /// Register a real SAC token and mint `amount` to each address in `recipients`.
-    fn setup_token(env: &Env, recipients: &[(&Address, i128)]) -> Address {
-        let admin = Address::generate(env);
-        let token = env.register_stellar_asset_contract_v2(admin.clone());
-        let token_client = token::StellarAssetClient::new(env, &token.address());
-        for (addr, amount) in recipients {
-            token_client.mint(addr, amount);
-        }
-        token.address()
-    }
+
 
     fn setup() -> (Env, PredictionMarketClient<'static>, Address, Address, u64) {
         let env = Env::default();
@@ -1201,7 +1268,7 @@ mod tests {
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
-        client.create_market(&creator, &1u64, &question, &options, &deadline, &token, &100_000_000i128);
+        client.create_market(&creator, &1u64, &question, &options, &deadline, &token, &100_000_000i128, &None, &None);
         (env, client, admin, token, deadline)
     }
 
@@ -1253,13 +1320,20 @@ mod tests {
             &deadline,
             &sac.address(),
             &100_000_000i128,
+            &None,
+            &None,
         );
 
         for bettor in bettors.iter() {
             client.place_bet(&1u64, &0u32, &bettor, &100i128);
         }
         client.place_bet(&1u64, &1u32, &loser, &100i128);
+        
         client.propose_resolution(&1u64, &0u32);
+        
+        // Advance ledger past liveness window
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        
         client.resolve_market(&1u64, &0u32);
 
         (env, client, bettors)
@@ -1305,10 +1379,7 @@ mod tests {
         env.mock_all_auths();
         let contract_id = env.register_contract(None, PredictionMarket);
         let client = PredictionMarketClient::new(&env, &contract_id);
-
         let admin = Address::generate(&env);
-        let token_addr = Address::generate(&env);
-        client.initialize(&admin);
 
         let creator = Address::generate(&env);
         let deadline = env.ledger().timestamp() + 86400;
@@ -1325,24 +1396,19 @@ mod tests {
             &deadline,
             &token_addr,
             &100_000_000i128,
+            &None,
+            &None,
         );
 
-        // Register a mock token contract so transfers succeed
-        let token_contract = env.register_stellar_asset_contract_v2(token_addr.clone());
-        let token_admin = soroban_sdk::testutils::MockAuth {
-            address: &token_addr,
-            invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                contract: &token_contract.address(),
-                fn_name: "transfer",
-                args: soroban_sdk::vec![&env].into(),
-                sub_invokes: &[],
-            },
-        };
-        let _ = token_admin; // suppress unused warning — mock_all_auths covers this
+        client.initialize(&admin);
+        client.create_market(&2u64, &question, &options, &deadline, &token_addr);
 
         let bettor1 = Address::generate(&env);
         let bettor2 = Address::generate(&env);
-
+        let sac = token::StellarAssetClient::new(&env, &token_addr);
+        sac.mint(&bettor1, &1000i128);
+        sac.mint(&bettor2, &1000i128);
+        
         client.place_bet(&2u64, &0u32, &bettor1, &100i128);
         client.place_bet(&2u64, &1u32, &bettor2, &200i128);
 
@@ -1404,6 +1470,8 @@ mod tests {
             &deadline,
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
     }
 
@@ -1432,6 +1500,8 @@ mod tests {
             &0u64,
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
     }
 
@@ -1455,6 +1525,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
     }
 
@@ -1462,8 +1534,10 @@ mod tests {
 
     #[test]
     fn test_resolve_market_flow() {
-        let (_, client, _, _, _) = setup();
+        let (env, client, _, _, _) = setup();
         client.propose_resolution(&1u64, &0u32);
+        // Advance ledger past liveness window
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &0u32);
         let market = client.get_market(&1u64);
         assert_eq!(market.status, MarketStatus::Resolved);
@@ -1471,9 +1545,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Already resolved")]
+    #[should_panic(expected = "Market must be proposed or disputed to resolve")]
     fn test_double_resolve_panics() {
-        let (_, client, _, _, _) = setup();
+        let (env, client, _, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &0u32);
         client.resolve_market(&1u64, &0u32);
     }
@@ -1481,7 +1557,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "Invalid outcome index")]
     fn test_invalid_outcome_panics() {
-        let (_, client, _, _, _) = setup();
+        let (env, client, _, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &99u32);
     }
 
@@ -1494,7 +1572,9 @@ mod tests {
 
     #[test]
     fn test_distribute_no_winners_is_noop() {
-        let (_, client, _, _, _) = setup();
+        let (env, client, _, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &0u32);
         // No bets placed — winning_stake == 0, should return without panic
         client.distribute_rewards(&1u64);
@@ -1545,6 +1625,8 @@ mod tests {
             &deadline,
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
         // Advance ledger past deadline
         env.ledger().with_mut(|l| l.timestamp += 10);
@@ -1567,8 +1649,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "Market not active")]
     fn test_bet_on_proposed_market_panics() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         client.propose_resolution(&1u64, &0u32);
+        let disputer = Address::generate(&env);
+        // Mint bond to disputer
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&disputer, &1000i128);
+        
+        client.dispute(&1u64, &disputer, &100i128);
+        let market = client.get_market(&1u64);
+        assert_eq!(market.status, MarketStatus::Disputed);
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
     }
@@ -1690,6 +1780,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
         client.batch_distribute(&1u64, &1u32);
     }
@@ -1697,7 +1789,9 @@ mod tests {
     /// No winners → batch_distribute returns 0 without panic.
     #[test]
     fn test_batch_distribute_no_winners_is_noop() {
-        let (_, client, _, _, _) = setup();
+        let (env, client, _, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &0u32);
         let paid = client.batch_distribute(&1u64, &5u32);
         assert_eq!(paid, 0u32);
@@ -1732,20 +1826,20 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
     }
 
-    /// place_bet on an existing market still works during shutdown.
+    /// place_bet on an existing market is BLOCKED during shutdown.
     #[test]
-    fn test_place_bet_allowed_during_shutdown() {
+    #[should_panic(expected = "Platform is shut down")]
+    fn test_place_bet_blocked_when_shutdown() {
         let (env, client, _, _, _) = setup();
         client.set_global_status(&false);
-        // market 1 was created before shutdown — betting must still work
+        // market 1 was created before shutdown — betting must still be blocked
         let bettor = Address::generate(&env);
-        // mock_all_auths covers token transfer; no panic expected
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
-        // total_shares reflects LMSR cost delta, which is > 0
-        assert!(client.get_total_shares(&1u64) > 0);
     }
 
     /// batch_distribute still works during shutdown.
@@ -1760,11 +1854,14 @@ mod tests {
     /// resolve_market still works during shutdown.
     #[test]
     fn test_resolve_market_allowed_during_shutdown() {
-        let (_, client, _, _, _) = setup();
+        let (env, client, _, _, _) = setup();
         client.set_global_status(&false);
         client.propose_resolution(&1u64, &0u32);
+        // Advance ledger past liveness window
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &0u32);
-        assert_eq!(client.get_market(&1u64).status, MarketStatus::Resolved);
+        let market = client.get_market(&1u64);
+        assert_eq!(market.status, MarketStatus::Resolved);
     }
 
     /// Re-activating the platform allows create_market again.
@@ -1790,6 +1887,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
     }
@@ -1798,7 +1897,7 @@ mod tests {
 
     #[test]
     fn test_dispute_false_proposal() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         let disputer = Address::generate(&env);
         
         // 1. Propose something
@@ -1807,6 +1906,8 @@ mod tests {
 
         // 2. Dispute it
         // Note: mock_all_auths handles the token transfer of the bond
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&disputer, &1000i128);
         client.dispute(&1u64, &disputer, &100i128);
         
         let market = client.get_market(&1u64);
@@ -1820,9 +1921,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "Market not resolved yet")]
     fn test_payout_frozen_when_disputed() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         client.propose_resolution(&1u64, &0u32);
-        client.dispute(&1u64, &Address::generate(&env), &100i128);
+        let disputer = Address::generate(&env);
+        // Mint bond to disputer
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&disputer, &1000i128);
+
+        client.dispute(&1u64, &disputer, &100i128);
         client.batch_distribute(&1u64, &5u32);
     }
 
@@ -1852,6 +1958,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
         // Fee config should still be (0, None, Treasury)
@@ -1893,6 +2001,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &sac.address(),
             &100_000_000i128,
+            &None,
+            &None,
         );
 
         // Creator paid 100, fee_dest received 100
@@ -1931,6 +2041,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &sac.address(),
             &100_000_000i128,
+            &None,
+            &None,
         );
 
         let fee_token = token::Client::new(&env, &sac.address());
@@ -1967,6 +2079,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &sac.address(),
             &100_000_000i128,
+            &None,
+            &None,
         );
     }
 
@@ -2020,6 +2134,8 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &token,
             &100_000_000i128,
+            &None,
+            &None,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
     }
@@ -2162,7 +2278,164 @@ mod tests {
             &(env.ledger().timestamp() + 100),
             &token,
             &0i128,
+            &None,
+            &None,
         );
+    }
+
+    // ── Conditional market resolution ─────────────────────────────────────────
+
+    /// Helper: create and fully resolve market `id` with `winning_outcome`.
+    fn resolve_market_helper(
+        client: &PredictionMarketClient,
+        env: &Env,
+        token: &Address,
+        id: u64,
+        winning_outcome: u32,
+        condition_market_id: Option<u64>,
+        condition_outcome: Option<u32>,
+    ) {
+        let creator = Address::generate(env);
+        let options = vec![env, String::from_str(env, "Yes"), String::from_str(env, "No")];
+        client.create_market(
+            &creator,
+            &id,
+            &String::from_str(env, "Q"),
+            &options,
+            &(env.ledger().timestamp() + 100),
+            token,
+            &100_000_000i128,
+            &condition_market_id,
+            &condition_outcome,
+        );
+        client.propose_resolution(&id, &winning_outcome);
+        client.resolve_market(&id, &winning_outcome);
+    }
+
+    #[test]
+    fn test_conditional_market_resolves_when_condition_met() {
+        let (env, client, _, token, _) = setup();
+        // Market 1 (condition): resolve outcome 0
+        client.propose_resolution(&1u64, &0u32);
+        client.resolve_market(&1u64, &0u32);
+
+        // Market 2 depends on market 1 resolving to outcome 0
+        resolve_market_helper(&client, &env, &token, 2, 0, Some(1), Some(0));
+        assert_eq!(client.get_market(&2u64).status, MarketStatus::Resolved);
+    }
+
+    #[test]
+    fn test_conditional_market_voided_when_condition_not_met() {
+        let (env, client, _, token, _) = setup();
+        // Market 1 resolves to outcome 1 (not 0)
+        client.propose_resolution(&1u64, &1u32);
+        client.resolve_market(&1u64, &1u32);
+
+        // Market 2 expects condition market to resolve to 0 — should be voided
+        resolve_market_helper(&client, &env, &token, 2, 0, Some(1), Some(0));
+        assert_eq!(client.get_market(&2u64).status, MarketStatus::Voided);
+    }
+
+    #[test]
+    #[should_panic(expected = "condition market not yet resolved")]
+    fn test_conditional_market_panics_if_condition_unresolved() {
+        let (env, client, _, token, _) = setup();
+        // Market 1 is still Active — not resolved
+        resolve_market_helper(&client, &env, &token, 2, 0, Some(1), Some(0));
+    }
+
+    #[test]
+    fn test_claim_refund_on_voided_market() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Real SAC token so transfers execute
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        let bettor = Address::generate(&env);
+        sac_client.mint(&bettor, &500_000_000i128);
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+
+        // Condition market (id=1): resolve to outcome 1
+        client.create_market(
+            &creator, &1u64, &String::from_str(&env, "Cond"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None,
+        );
+        client.propose_resolution(&1u64, &1u32);
+        client.resolve_market(&1u64, &1u32);
+
+        // Dependent market (id=2): condition expects outcome 0 → will be voided
+        client.create_market(
+            &creator, &2u64, &String::from_str(&env, "Dep"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &Some(1u64), &Some(0u32),
+        );
+        // Bettor places a bet on market 2
+        client.place_bet(&2u64, &0u32, &bettor, &10_000_000i128);
+        let shares_bought = 10_000_000i128;
+
+        // Resolve market 2 — condition not met → Voided
+        client.propose_resolution(&2u64, &0u32);
+        client.resolve_market(&2u64, &0u32);
+        assert_eq!(client.get_market(&2u64).status, MarketStatus::Voided);
+
+        // Bettor claims refund
+        let balance_before = token::Client::new(&env, &sac.address()).balance(&bettor);
+        let refunded = client.claim_refund(&2u64, &bettor);
+        let balance_after = token::Client::new(&env, &sac.address()).balance(&bettor);
+
+        assert_eq!(refunded, shares_bought);
+        assert_eq!(balance_after - balance_before, shares_bought);
+    }
+
+    #[test]
+    #[should_panic(expected = "Market is not voided")]
+    fn test_claim_refund_on_active_market_panics() {
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        client.claim_refund(&1u64, &bettor);
+    }
+
+    #[test]
+    #[should_panic(expected = "Already refunded")]
+    fn test_claim_refund_double_claim_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        let bettor = Address::generate(&env);
+        sac_client.mint(&bettor, &500_000_000i128);
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+
+        // Condition market resolves to 1
+        client.create_market(&creator, &1u64, &String::from_str(&env, "C"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None);
+        client.propose_resolution(&1u64, &1u32);
+        client.resolve_market(&1u64, &1u32);
+
+        // Dependent market voided
+        client.create_market(&creator, &2u64, &String::from_str(&env, "D"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &Some(1u64), &Some(0u32));
+        client.place_bet(&2u64, &0u32, &bettor, &10_000_000i128);
+        client.propose_resolution(&2u64, &0u32);
+        client.resolve_market(&2u64, &0u32);
+
+        client.claim_refund(&2u64, &bettor);
+        client.claim_refund(&2u64, &bettor); // should panic
     }
 }
 
