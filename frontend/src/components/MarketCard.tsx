@@ -5,6 +5,8 @@ import { useBettingSlip } from "../context/BettingSlipContext";
 import Toast from "./Toast";
 import PoolOwnershipChart from "./PoolOwnershipChart";
 import { useFormPersistence } from "../hooks/useFormPersistence";
+import { useTrustline } from "../hooks/useTrustline";
+import TrustlineModal from "./TrustlineModal";
 
 interface Market {
   id: number;
@@ -14,7 +16,8 @@ interface Market {
   resolved: boolean;
   winning_outcome: number | null;
   total_pool: string;
-  pool_depth?: Record<string, number>;
+  /** Optional custom asset required to bet on this market */
+  asset?: { code: string; issuer: string };
 }
 
 import LiquidityHeatmap from "./LiquidityHeatmap";
@@ -41,6 +44,8 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const [showQueueFullToast, setShowQueueFullToast] = useState(false);
 
   const { addBet } = useBettingSlip();
+  const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
+          checkAndRun, confirmTrustline, dismiss: dismissTrustline, retry: retryTrustline } = useTrustline();
   const isExpired = new Date(market.end_date) <= new Date();
 
   const handleShareMarket = async () => {
@@ -79,6 +84,19 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress) return;
+
+    // If this market uses a custom asset, run the trustline check first.
+    // checkAndRun will call the inner function directly if trustline exists,
+    // or show the modal and resume after the user sets it up.
+    if (market.asset) {
+      await checkAndRun(market.asset, walletAddress, submitBet);
+    } else {
+      await submitBet();
+    }
+  }
+
+  async function submitBet() {
+    if (selectedOutcome === null || !amount || !walletAddress) return;
     setLoading(true);
     setMessage("");
     try {
@@ -95,7 +113,6 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setMessage("Bet placed successfully!");
-      // Clear persisted form state after successful submission
       clearForm();
       onBetPlaced?.();
     } catch (err: any) {
@@ -107,6 +124,15 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
   return (
     <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800">
+      {/* Trustline modal — rendered at card level, portal-like via fixed positioning */}
+      <TrustlineModal
+        state={trustlineState}
+        asset={pendingAsset}
+        errorMessage={trustlineError}
+        onConfirm={confirmTrustline}
+        onDismiss={dismissTrustline}
+        onRetry={retryTrustline}
+      />
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
         <div className="flex items-center gap-2">

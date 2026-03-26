@@ -8,7 +8,11 @@ import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
+import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
+import ContractErrorBoundary from "../components/ContractErrorBoundary";
+import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
+import { useTheme } from "../hooks/useTheme";
 
 interface Market {
   id: number;
@@ -23,6 +27,7 @@ interface Market {
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
+  const { theme, toggleTheme } = useTheme();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
@@ -68,6 +73,13 @@ export default function Home() {
         <div className="flex items-center gap-4">
           <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
           <button
+            onClick={toggleTheme}
+            className="text-gray-400 hover:text-white transition-colors text-xl"
+            title="Toggle Theme"
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+          <button
             onClick={handleHelpClick}
             className="text-gray-400 hover:text-white transition-colors"
             title="Help & Documentation"
@@ -111,22 +123,30 @@ export default function Home() {
       {/* Mobile top bar */}
       <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-gray-800">
         <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
-        {publicKey ? (
+        <div className="flex items-center gap-3">
           <button
-            onClick={disconnect}
-            className="text-xs border border-gray-600 px-3 py-1.5 rounded-lg"
+            onClick={toggleTheme}
+            className="text-gray-400 hover:text-white transition-colors text-lg"
           >
-            {publicKey.slice(0, 4)}...{publicKey.slice(-3)}
+            {theme === "dark" ? "☀️" : "🌙"}
           </button>
-        ) : (
-          <button
-            onClick={connect}
-            disabled={connecting}
-            className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
-          >
-            {connecting ? "..." : "Connect"}
-          </button>
-        )}
+          {publicKey ? (
+            <button
+              onClick={disconnect}
+              className="text-xs border border-gray-600 px-3 py-1.5 rounded-lg"
+            >
+              {publicKey.slice(0, 4)}...{publicKey.slice(-3)}
+            </button>
+          ) : (
+            <button
+              onClick={connect}
+              disabled={connecting}
+              className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            >
+              {connecting ? "..." : "Connect"}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -169,6 +189,13 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-4 pb-6 flex flex-col lg:flex-row gap-6">
         {/* Markets */}
         <div className="flex-1">
+          {/* Discovery cards — personalised / trending top 6 */}
+          <div className="mb-8">
+            <MarketDiscoveryGrid
+              onCardClick={(m) => setActiveMarket(markets.find((mk) => mk.id === m.id) ?? null)}
+            />
+          </div>
+
           <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -188,12 +215,13 @@ export default function Home() {
                     activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
                   }`}
                 >
-                  <MarketCard
-                    market={market}
-                    walletAddress={publicKey}
-                    onBetPlaced={fetchMarkets}
-                  />
-                </div>
+                  <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
+                    <MarketCard
+                      market={market}
+                      walletAddress={publicKey}
+                      onBetPlaced={fetchMarkets}
+                    />
+                  </ContractErrorBoundary>
               ))}
             </div>
           )}
