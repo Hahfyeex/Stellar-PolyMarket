@@ -850,6 +850,8 @@ impl PredictionMarket {
         for i in cursor..end {
             let (bettor, amount) = winners.get(i).unwrap();
             let payout = (amount * payout_pool) / winning_stake;
+            // Burn position token on claim
+            position_token::burn(&env, market_id, market.winning_outcome, &bettor);
             token_client.transfer(&env.current_contract_address(), &bettor, &payout);
             paid += 1;
         }
