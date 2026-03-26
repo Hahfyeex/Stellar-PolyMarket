@@ -115,6 +115,10 @@ pub enum DataKey {
     MaxBetAmount,
     /// Minimum bet amount in stroops — Instance storage. Default: 1_000_000 (0.1 XLM).
     MinBetAmount,
+    /// LP contributions per market: Map<Address, i128> — Persistent storage.
+    LpContribution(u64),
+    /// Total LP fee pool for a market (3% of total pool) — Persistent storage.
+    LpFeePool(u64),
     /// LMSR liquidity parameter b for a market — Instance storage.
     LmsrB(u64),
     /// Per-outcome cumulative share quantities for LMSR — Instance storage.
@@ -498,6 +502,126 @@ impl PredictionMarket {
         env.storage().instance().extend_ttl(100, 1_000_000);
 
         env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), cost_delta, option_index));
+    }
+
+    /// Seed a market's liquidity pool. Transfers `amount` from `provider` into the contract
+    /// and records the contribution in Persistent storage for proportional fee distribution.
+    pub fn provide_liquidity(env: Env, market_id: u64, provider: Address, amount: i128) {
+        provider.require_auth();
+        assert!(amount > 0, "Amount must be positive");
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        assert!(market.status == MarketStatus::Active, "Market not active");
+
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&provider, &env.current_contract_address(), &amount);
+
+        let mut contributions: soroban_sdk::Map<Address, i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LpContribution(market_id))
+            .unwrap_or(soroban_sdk::Map::new(&env));
+
+        let existing = contributions.get(provider.clone()).unwrap_or(0);
+        contributions.set(provider.clone(), existing + amount);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::LpContribution(market_id), &contributions);
+        env.storage().persistent().extend_ttl(
+            &DataKey::LpContribution(market_id),
+            100,
+            1_000_000,
+        );
+
+        // LP liquidity counts toward total pool shares
+        let shares: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalShares(market_id), &(shares + amount));
+        env.storage().instance().extend_ttl(100, 1_000_000);
+
+        env.events().publish(
+            (symbol_short!("LpSeed"), market_id),
+            (provider, amount),
+        );
+    }
+
+    /// Claim proportional share of the fee pool for a liquidity provider.
+    /// Can only be called after the market is resolved.
+    pub fn claim_lp_reward(env: Env, market_id: u64, lp: Address) -> i128 {
+        lp.require_auth();
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+
+        let fee_pool: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LpFeePool(market_id))
+            .unwrap_or(0);
+        assert!(fee_pool > 0, "No fee pool for this market");
+
+        let mut contributions: soroban_sdk::Map<Address, i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LpContribution(market_id))
+            .unwrap_or(soroban_sdk::Map::new(&env));
+
+        let lp_amount = contributions.get(lp.clone()).unwrap_or(0);
+        assert!(lp_amount > 0, "No LP contribution found");
+
+        // Sum total LP contributions
+        let mut total_lp: i128 = 0;
+        for (_, v) in contributions.iter() {
+            total_lp += v;
+        }
+
+        let reward = (lp_amount * fee_pool) / total_lp;
+        assert!(reward > 0, "Reward rounds to zero");
+
+        // Zero out this LP's contribution to prevent double-claim
+        contributions.set(lp.clone(), 0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LpContribution(market_id), &contributions);
+        env.storage().persistent().extend_ttl(
+            &DataKey::LpContribution(market_id),
+            100,
+            1_000_000,
+        );
+
+        // Deduct from fee pool
+        env.storage()
+            .persistent()
+            .set(&DataKey::LpFeePool(market_id), &(fee_pool - reward));
+        env.storage().persistent().extend_ttl(
+            &DataKey::LpFeePool(market_id),
+            100,
+            1_000_000,
+        );
+
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&env.current_contract_address(), &lp, &reward);
+
+        env.events().publish(
+            (symbol_short!("LpClaim"), market_id),
+            (lp, reward),
+        );
+
+        reward
     }
 
     /// Pause or unpause a market (admin only).
@@ -916,6 +1040,27 @@ impl PredictionMarket {
         env.storage()
             .persistent()
             .set(&DataKey::ClaimDeadline(market_id), &resolution_time);
+
+        // Capture 3% platform fee into LP fee pool (only if LPs exist for this market)
+        let has_lps = env.storage().persistent().has(&DataKey::LpContribution(market_id));
+        if has_lps {
+            let total_pool: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalShares(market_id))
+                .unwrap_or(0);
+            let fee_pool = total_pool * 3 / 100;
+            if fee_pool > 0 {
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::LpFeePool(market_id), &fee_pool);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::LpFeePool(market_id),
+                    100,
+                    1_000_000,
+                );
+            }
+        }
         env.storage().persistent().extend_ttl(&DataKey::ClaimDeadline(market_id), 100, 1_000_000);
     }
 
@@ -1484,6 +1629,22 @@ impl PredictionMarket {
 
         // 3. Bump Instance storage (TotalShares, IsPaused, etc. are grouped here)
         env.storage().instance().extend_ttl(threshold, extend_to);
+
+        // 4. Bump LP tracking keys if they exist
+        if env.storage().persistent().has(&DataKey::LpContribution(market_id)) {
+            env.storage().persistent().extend_ttl(
+                &DataKey::LpContribution(market_id),
+                threshold,
+                extend_to,
+            );
+        }
+        if env.storage().persistent().has(&DataKey::LpFeePool(market_id)) {
+            env.storage().persistent().extend_ttl(
+                &DataKey::LpFeePool(market_id),
+                threshold,
+                extend_to,
+            );
+        }
     }
 
     /// Verify a ZK proof scalar against an expected value.
