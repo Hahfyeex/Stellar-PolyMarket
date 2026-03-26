@@ -26,6 +26,7 @@ module.exports = {
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
+        "**/hooks/__tests__/useBatchTransaction.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -34,6 +35,13 @@ module.exports = {
             esModuleInterop: true,
           },
         },
+      },
+      collectCoverageFrom: [
+        "src/hooks/useBatchTransaction.ts",
+        "src/components/VirtualizedOrderBook.tsx",
+      ],
+      coverageThreshold: {
+        global: { lines: 90, functions: 90, branches: 90 },
       },
     },
     {
@@ -49,6 +57,7 @@ module.exports = {
         "src/utils/poolOwnership.ts",
         "src/utils/trustline.ts",
         "src/utils/marketDiscovery.ts",
+        "src/utils/slippageCalc.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

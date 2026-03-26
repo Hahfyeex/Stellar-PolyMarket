@@ -1,5 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+// Named imports — webpack tree-shakes unused recharts components via the
+// package's sideEffects:false declaration, keeping the bundle lean.
 import {
   BarChart,
   Bar,
@@ -152,7 +154,7 @@ export default function WhatIfSimulator({ poolForOutcome, totalPool, maxStake }:
                 <Tooltip
                   contentStyle={{ background: "#1f2937", border: "none", borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: "#e5e7eb" }}
-                  formatter={(v: number) => [`${v.toFixed(2)} XLM`]}
+                  formatter={(v) => [`${Number(v ?? 0).toFixed(2)} XLM`] as [string]}
                 />
                 <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                   {chartData.map((entry, i) => (
