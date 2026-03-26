@@ -1,12 +1,28 @@
 use soroban_sdk::{contracttype, contracterror, Address, Env};
 
-/// Persistent storage keys for role assignments.
+/// Persistent storage keys for role assignments and platform status.
 #[contracttype]
-#[derive(Clone)]
-pub enum Role {
+#[derive(Clone, PartialEq, Eq)]
+pub enum AccessKey {
+    Role(AccessRole),
+    PlatformStatus,
+    WhitelistedToken(Address),
+}
+
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AccessRole {
     Admin,
     Oracle,
     Resolver,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AccessPlatformStatus {
+    Active,
+    Paused,
+    Shutdown,
 }
 
 /// Contract-level errors surfaced via Soroban's error system.
@@ -15,25 +31,64 @@ pub enum Role {
 pub enum ContractError {
     AccessDenied = 1,
     RoleNotSet = 2,
+    PlatformPaused = 3,
+    PlatformShutdown = 4,
 }
 
-/// Fetch the address assigned to a role from persistent storage.
-pub fn get_role(env: &Env, role: Role) -> Option<Address> {
-    env.storage().persistent().get(&role)
-}
-
-/// Set the address for a role in persistent storage.
-pub fn set_role(env: &Env, role: Role, address: &Address) {
-    env.storage().persistent().set(&role, address);
+/// Set the address for a role in instance storage.
+pub fn set_role(env: &Env, role: AccessRole, address: &Address) {
+    env.storage().instance().set(&AccessKey::Role(role), address);
 }
 
 /// Require that the address assigned to `role` has authorized this invocation.
-/// Panics with `ContractError::AccessDenied` if the role is unset or auth fails.
-pub fn check_role(env: &Env, role: Role) {
+pub fn check_role(env: &Env, role: AccessRole) {
     let address: Address = env
         .storage()
-        .persistent()
-        .get(&role)
+        .instance()
+        .get(&AccessKey::Role(role))
         .unwrap_or_else(|| panic!("{}", ContractError::AccessDenied as u32));
     address.require_auth();
+}
+
+/// Helper to set the platform status (Active, Paused, or Shutdown).
+pub fn set_platform_status(env: &Env, status: AccessPlatformStatus) {
+    env.storage().instance().set(&AccessKey::PlatformStatus, &status);
+}
+
+/// Helper to check if the platform is active.
+pub fn check_platform_active(env: &Env) {
+    let status: AccessPlatformStatus = env
+        .storage()
+        .instance()
+        .get(&AccessKey::PlatformStatus)
+        .unwrap_or(AccessPlatformStatus::Active);
+
+    match status {
+        AccessPlatformStatus::Active => {}
+        AccessPlatformStatus::Paused => panic!("Platform is paused"),
+        AccessPlatformStatus::Shutdown => panic!("Platform is shut down"),
+    }
+}
+
+/// Helper to set a token's whitelist status.
+pub fn set_whitelisted_token(env: &Env, token: &Address, status: bool) {
+    if status {
+        env.storage().persistent().set(&AccessKey::WhitelistedToken(token.clone()), &true);
+        // Extend TTL to ensure persistent record does not easily expire (100 ledgers min padding, 1,000,000 max lifetime)
+        env.storage().persistent().extend_ttl(&AccessKey::WhitelistedToken(token.clone()), 100, 1_000_000);
+    } else {
+        env.storage().persistent().remove(&AccessKey::WhitelistedToken(token.clone()));
+    }
+}
+
+/// Helper to check if a token is whitelisted.
+pub fn is_whitelisted_token(env: &Env, token: &Address) -> bool {
+    env.storage().persistent().has(&AccessKey::WhitelistedToken(token.clone()))
+}
+
+/// Require that a token is whitelisted.
+pub fn check_whitelisted_token(env: &Env, token: &Address) {
+    if !is_whitelisted_token(env, token) {
+        panic!("Token not whitelisted");
+    }
 }

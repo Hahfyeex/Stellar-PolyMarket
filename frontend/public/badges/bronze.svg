@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" aria-label="Bronze badge — 10+ markets participated">
+  <!-- Shield background -->
+  <path d="M48 6 L82 20 L82 50 C82 68 66 82 48 90 C30 82 14 68 14 50 L14 20 Z" fill="#3d1f0a" stroke="#8b4513" stroke-width="2"/>
+  <!-- Shield shine -->
+  <path d="M48 10 L78 22 L78 50 C78 66 63 79 48 86" fill="none" stroke="#cd7f32" stroke-width="1" opacity="0.4"/>
+  <!-- Medal inner circle -->
+  <circle cx="48" cy="48" r="22" fill="#5c2e0a" stroke="#cd7f32" stroke-width="2"/>
+  <circle cx="48" cy="48" r="18" fill="none" stroke="#e8952a" stroke-width="1" opacity="0.5"/>
+  <!-- "B" letterform -->
+  <text x="48" y="56" text-anchor="middle" font-family="Georgia, serif" font-size="22" font-weight="bold" fill="#cd7f32" letter-spacing="-1">B</text>
+  <!-- Top star accent -->
+  <path d="M48 16 L49.5 21 L54 21 L50.5 23.5 L52 28 L48 25.5 L44 28 L45.5 23.5 L42 21 L46.5 21 Z" fill="#cd7f32" opacity="0.8"/>
+</svg>
