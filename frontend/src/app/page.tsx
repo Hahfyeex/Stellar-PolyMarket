@@ -1,12 +1,29 @@
 "use client";
 import { useEffect, useState } from "react";
+<<<<<<< feat/150-search-filter-engine
+import { useSearchParams } from "next/navigation";
+=======
 import dynamic from "next/dynamic";
+>>>>>>> Default
 import { useWalletContext } from "../context/WalletContext";
 import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+<<<<<<< feat/150-search-filter-engine
+import MarketFilters from "../components/MarketFilters";
+import NotificationManager from "../components/NotificationManager";
+import LiveActivityFeed from "../components/LiveActivityFeed";
+import MobileShell from "../components/mobile/MobileShell";
+import PullToRefresh from "../components/mobile/PullToRefresh";
+import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
+import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
+import ContractErrorBoundary from "../components/ContractErrorBoundary";
+=======
+>>>>>>> Default
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+<<<<<<< feat/150-search-filter-engine
+=======
 
 // Route-level code splitting: these components are large and not needed for
 // the initial paint — lazy-load them so the first JS bundle stays small.
@@ -54,6 +71,7 @@ const ContractErrorBoundary = dynamic(
   () => import("../components/ContractErrorBoundary"),
   { ssr: false }
 );
+>>>>>>> Default
 
 interface Market {
   id: number;
