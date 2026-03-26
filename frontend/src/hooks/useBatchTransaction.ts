@@ -17,6 +17,8 @@
  *             The error is parsed to identify which operation caused the failure.
  */
 import { useState, useCallback } from "react";
+// Named imports for tree-shaking — stellar-sdk is large (~500KB); only pull
+// what is used so webpack can eliminate the rest.
 import {
   TransactionBuilder,
   Networks,

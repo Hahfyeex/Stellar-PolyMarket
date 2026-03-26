@@ -1,10 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
 import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+import MarketFilters from "../components/MarketFilters";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
+import SocialTicker from "../components/SocialTicker";
+import NotificationInbox from "../components/NotificationInbox";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
@@ -13,6 +17,7 @@ import ContractErrorBoundary from "../components/ContractErrorBoundary";
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
 
 interface Market {
   id: number;
@@ -28,10 +33,21 @@ interface Market {
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const { theme, toggleTheme } = useTheme();
+  const searchParams = useSearchParams();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+
+  // Restore filter state from URL params on mount
+  const [filters, setFilters] = useState<SearchFilters>(() => ({
+    query: searchParams.get("q") ?? "",
+    category: searchParams.get("category") ?? "",
+    status: searchParams.get("status") ?? "",
+    sort: (searchParams.get("sort") as SortKey) ?? "newest",
+  }));
+
+  const filteredMarkets = useMarketSearch(markets, filters);
 
   const handleHelpClick = () => {
     trackEvent("help_doc_read", {
@@ -99,6 +115,7 @@ export default function Home() {
         </div>
         {publicKey ? (
           <div className="flex items-center gap-3">
+            <NotificationInbox walletAddress={publicKey} apiUrl={process.env.NEXT_PUBLIC_API_URL} />
             <span className="text-sm text-gray-400">
               {publicKey.slice(0, 6)}...{publicKey.slice(-4)}
             </span>
@@ -131,12 +148,18 @@ export default function Home() {
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
           {publicKey ? (
-            <button
-              onClick={disconnect}
-              className="text-xs border border-gray-600 px-3 py-1.5 rounded-lg"
-            >
-              {publicKey.slice(0, 4)}...{publicKey.slice(-3)}
-            </button>
+            <>
+              <NotificationInbox
+                walletAddress={publicKey}
+                apiUrl={process.env.NEXT_PUBLIC_API_URL}
+              />
+              <button
+                onClick={disconnect}
+                className="text-xs border border-gray-600 px-3 py-1.5 rounded-lg"
+              >
+                {publicKey.slice(0, 4)}...{publicKey.slice(-3)}
+              </button>
+            </>
           ) : (
             <button
               onClick={connect}
@@ -154,6 +177,9 @@ export default function Home() {
           <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{error}</p>
         </div>
       )}
+
+      {/* Social proof ticker — real-time recent bets strip */}
+      <SocialTicker apiUrl={process.env.NEXT_PUBLIC_API_URL} />
 
       <InsufficientGasModal isOpen={isGasModalOpen} onClose={() => setIsGasModalOpen(false)} />
 
@@ -197,17 +223,18 @@ export default function Home() {
           </div>
 
           <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
+          <MarketFilters filters={filters} onChange={setFilters} />
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[1, 2, 3, 4].map((i) => (
                 <MarketCardSkeleton key={i} />
               ))}
             </div>
-          ) : markets.length === 0 ? (
-            <p className="text-gray-400">No markets yet.</p>
+          ) : filteredMarkets.length === 0 ? (
+            <p className="text-gray-400">No markets found.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {markets.map((market) => (
+              {filteredMarkets.map((market) => (
                 <div
                   key={market.id}
                   onClick={() => setActiveMarket(market)}
@@ -222,6 +249,7 @@ export default function Home() {
                       onBetPlaced={fetchMarkets}
                     />
                   </ContractErrorBoundary>
+                </div>
               ))}
             </div>
           )}

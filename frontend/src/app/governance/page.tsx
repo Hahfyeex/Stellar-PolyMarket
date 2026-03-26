@@ -14,7 +14,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { useWalletContext } from "../../context/WalletContext";
 import { useCouncilMember } from "../../hooks/useCouncilMember";
-import VotingCard, { Dispute } from "../../components/governance/VotingCard";
+import dynamic from "next/dynamic";
+import type { Dispute } from "../../components/governance/VotingCard";
+
+// Lazy-load VotingCard — it is only rendered for council members (rare path)
+// and contains heavy governance logic not needed on initial paint.
+const VotingCard = dynamic(
+  () => import("../../components/governance/VotingCard"),
+  { ssr: false }
+);
 
 // ── Mock data — replace with real API calls ──────────────────────────────────
 const MOCK_DISPUTES: Dispute[] = [

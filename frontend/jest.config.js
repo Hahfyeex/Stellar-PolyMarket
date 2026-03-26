@@ -7,6 +7,8 @@ module.exports = {
       testEnvironment: "node",
       testMatch: [
         "**/hooks/__tests__/**/*.test.ts",
+        "**/store/__tests__/**/*.test.ts",
+        "!**/hooks/__tests__/useMarketSearch.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -14,6 +16,7 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
+        "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
@@ -26,6 +29,7 @@ module.exports = {
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
+        "**/hooks/__tests__/useMarketSearch.test.ts",
         "**/hooks/__tests__/useBatchTransaction.test.ts",
       ],
       globals: {
@@ -36,7 +40,11 @@ module.exports = {
           },
         },
       },
-      collectCoverageFrom: ["src/hooks/useBatchTransaction.ts"],
+      collectCoverageFrom: [
+        "src/hooks/useMarketSearch.ts",
+        "src/hooks/useBatchTransaction.ts",
+        "src/components/VirtualizedOrderBook.tsx",
+      ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
       },
@@ -54,6 +62,7 @@ module.exports = {
         "src/utils/poolOwnership.ts",
         "src/utils/trustline.ts",
         "src/utils/marketDiscovery.ts",
+        "src/utils/slippageCalc.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
