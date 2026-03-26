@@ -19,78 +19,81 @@ pub const SCALE: i128 = 10_000_000; // 1.0 in fixed-point
 /// Coefficients (scaled): a1≈1, a2≈-0.5, a3≈0.3333
 pub fn ln_fp(x: i128) -> i128 {
     assert!(x > 0, "ln undefined for x <= 0");
-
-    // LN2 = ln(2) * SCALE
-    const LN2: i128 = 6_931_472; // 0.6931472 * 1e7
-
-    // Normalise x into [SCALE/2, SCALE) by tracking power-of-2 shifts.
-    let mut val = x;
-    let mut k: i128 = 0;
-
-    // Scale up if val < SCALE/2
-    while val < SCALE / 2 {
-        val *= 2;
-        k -= 1;
-    }
-    // Scale down if val >= SCALE
-    while val >= SCALE {
-        val /= 2;
-        k += 1;
-    }
-
-    // Now val ∈ [SCALE/2, SCALE), i.e. m ∈ [0.5, 1.0)
-    // Let t = val - SCALE  (t ∈ [-SCALE/2, 0])
-    // ln(1 + t/SCALE) ≈ t/SCALE - (t/SCALE)^2/2 + (t/SCALE)^3/3
-    // Multiply through by SCALE to stay in fixed-point.
-    let t = val - SCALE; // negative, in [-SCALE/2, 0]
-
-    // term1 = t  (already scaled)
-    let term1 = t;
-    // term2 = -t^2 / (2 * SCALE)
-    let term2 = -(t * t / SCALE) / 2;
-    // term3 = t^3 / (3 * SCALE^2)
-    let term3 = (t / SCALE) * (t / SCALE) * t / (3 * SCALE);
-
-    let ln_m = term1 + term2 + term3;
-
-    k * LN2 + ln_m
-}
-
-/// Fixed-point natural exponential approximation.
-/// Input `x` is in SCALE units (can be negative).
-/// Returns exp(x) in SCALE units.
-///
-/// Uses identity: exp(x) = exp(k*ln2 + r) = 2^k * exp(r), r ∈ [0, ln2).
-/// exp(r) approximated by Taylor series: 1 + r + r^2/2! + r^3/3! + r^4/4!
-/// Accurate to ~1e-6 relative error for |x| < 20*SCALE.
-pub fn exp_fp(x: i128) -> i128 {
-    // Clamp to avoid overflow: exp(88) > i128::MAX at SCALE precision
-    const MAX_X: i128 = 88 * SCALE;
-    const MIN_X: i128 = -88 * SCALE;
-    if x >= MAX_X {
-        return i128::MAX / SCALE; // saturate
-    }
-    if x <= MIN_X {
-        return 1; // underflow → ~0
+    if x == SCALE {
+        return 0;
     }
 
     const LN2: i128 = 6_931_472;
 
-    // Decompose x = k*ln2 + r, r ∈ [0, ln2)
-    let k = x / LN2;
-    let r = x - k * LN2; // r ∈ [0, LN2)
+    let mut val = x;
+    let mut k: i128 = 0;
 
-    // Taylor: exp(r) = 1 + r + r^2/2 + r^3/6 + r^4/24  (r in SCALE units)
+    // Normalize val into [0.707 * SCALE, 1.414 * SCALE]
+    // 0.707 * 10^7 = 7,071,068
+    // 1.414 * 10^7 = 14,142,136
+    while val < 7_071_068 {
+        val <<= 1;
+        k -= 1;
+    }
+    while val > 14_142_136 {
+        val >>= 1;
+        k += 1;
+    }
+
+    // ln(x) = k*ln(2) + ln(val/SCALE)
+    // Let m = val/SCALE. m is in [0.707, 1.414].
+    // Let t = m - 1 = (val - SCALE) / SCALE. t is in [-0.293, 0.414].
+    // ln(1 + t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8
+    let t = val - SCALE;
+    if t == 0 {
+        return k * LN2;
+    }
+
+    let t2 = t * t / SCALE;
+    let t3 = t2 * t / SCALE;
+    let t4 = t3 * t / SCALE;
+    let t5 = t4 * t / SCALE;
+    let t6 = t5 * t / SCALE;
+    let t7 = t6 * t / SCALE;
+    let t8 = t7 * t / SCALE;
+
+    let ln_m = t - t2 / 2 + t3 / 3 - t4 / 4 + t5 / 5 - t6 / 6 + t7 / 7 - t8 / 8;
+
+    k * LN2 + ln_m
+}
+
+pub fn exp_fp(x: i128) -> i128 {
+    if x == 0 {
+        return SCALE;
+    }
+    const MAX_X: i128 = 88 * SCALE;
+    const MIN_X: i128 = -88 * SCALE;
+    if x >= MAX_X { return i128::MAX / SCALE; }
+    if x <= MIN_X { return 0; }
+
+    const LN2: i128 = 6_931_472;
+
+    // Decompose x = k*ln2 + r, r ∈ [0, ln2)
+    let mut k = x / LN2;
+    let mut r = x % LN2;
+    if r < 0 {
+        r += LN2;
+        k -= 1;
+    }
+
+    // Taylor: exp(r) = 1 + r + r^2/2 + r^3/6 + r^4/24 + r^5/120
     let r2 = r * r / SCALE;
     let r3 = r2 * r / SCALE;
     let r4 = r3 * r / SCALE;
+    let r5 = r4 * r / SCALE;
 
-    let exp_r = SCALE + r + r2 / 2 + r3 / 6 + r4 / 24;
+    let exp_r = SCALE + r + r2 / 2 + r3 / 6 + r4 / 24 + r5 / 120;
 
-    // Multiply or divide by 2^k
     if k >= 0 {
+        if k > 60 { return i128::MAX / SCALE; }
         exp_r << k
     } else {
+        if k < -60 { return 0; }
         exp_r >> (-k)
     }
 }
@@ -102,16 +105,21 @@ pub fn exp_fp(x: i128) -> i128 {
 pub fn lmsr_cost(q: &[i128], b: i128) -> i128 {
     assert!(b > 0, "b must be positive");
 
-    // Compute exp(q_i / b) for each outcome.
-    // q_i / b is dimensionless; convert to SCALE units: (q_i * SCALE) / b
+    let mut q_max = q[0];
+    for &qi in q {
+        if qi > q_max {
+            q_max = qi;
+        }
+    }
+
+    // C = q_max + b * ln( Σ exp((q_i - q_max) / b) )
     let mut sum_exp: i128 = 0;
     for &qi in q {
-        let arg = qi * SCALE / b; // fixed-point dimensionless
+        let arg = (qi - q_max) * SCALE / b; 
         sum_exp += exp_fp(arg);
     }
 
-    // C = b * ln(sum_exp) / SCALE  (ln_fp returns SCALE-units, b is stroops)
-    b * ln_fp(sum_exp) / SCALE
+    q_max + (b * ln_fp(sum_exp) / SCALE)
 }
 
 /// Price of outcome `i`: p_i = exp(q_i/b) / Σ exp(q_j/b)
