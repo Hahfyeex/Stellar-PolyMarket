@@ -7,6 +7,9 @@ use crate::access::{
     check_platform_active, check_role, panic_if_paused, set_platform_status, set_role,
     AccessPlatformStatus, AccessRole,
 };
+mod lmsr;
+mod position_token;
+use crate::lmsr::{lmsr_cost, lmsr_price};
 
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
@@ -46,6 +49,7 @@ pub struct FeeConfig {
 /// Keeps CPU instruction count well below Soroban's per-tx ceiling (~100M instructions).
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
 pub const MAX_BATCH_SIZE: u32 = 25;
+pub const EXIT_FEE_BPS: i128 = 50;
 /// Liveness window: 1 hour in seconds. Resolution can only be finalised after this delay.
 pub const LIVENESS_WINDOW: u64 = 3_600;
 
@@ -188,6 +192,82 @@ fn check_initialized(env: &Env) {
         .get(&DataKey::Initialized)
         .unwrap_or(false);
     assert!(!is_init, "Contract already initialized");
+}
+
+fn load_market(env: &Env, market_id: u64) -> Market {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Market(market_id))
+        .unwrap()
+}
+
+fn load_outcome_shares(env: &Env, market_id: u64) -> Vec<i128> {
+    env.storage()
+        .instance()
+        .get(&DataKey::OutcomeShares(market_id))
+        .unwrap()
+}
+
+fn build_share_arrays(outcome_shares: &Vec<i128>) -> ([i128; 8], usize) {
+    let n = outcome_shares.len() as usize;
+    let mut q = [0i128; 8];
+    for j in 0..n {
+        q[j] = outcome_shares.get(j as u32).unwrap();
+    }
+    (q, n)
+}
+
+fn get_user_position_amount(env: &Env, market_id: u64, bettor: &Address, outcome: u32) -> i128 {
+    let positions: Vec<(Address, u32, i128)> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::UserPosition(market_id))
+        .unwrap_or(Vec::new(env));
+
+    for i in 0..positions.len() {
+        let (addr, position_outcome, amount) = positions.get(i).unwrap();
+        if addr == *bettor && position_outcome == outcome {
+            return amount;
+        }
+    }
+
+    0
+}
+
+fn upsert_user_position(
+    env: &Env,
+    market_id: u64,
+    bettor: &Address,
+    outcome: u32,
+    amount_delta: i128,
+) {
+    let mut positions: Vec<(Address, u32, i128)> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::UserPosition(market_id))
+        .unwrap();
+
+    let mut found = false;
+    for i in 0..positions.len() {
+        let (addr, position_outcome, prev_amount) = positions.get(i).unwrap();
+        if addr == *bettor && position_outcome == outcome {
+            let new_amount = prev_amount + amount_delta;
+            assert!(new_amount >= 0, "Insufficient position balance");
+            positions.set(i, (bettor.clone(), outcome, new_amount));
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        assert!(amount_delta >= 0, "Insufficient position balance");
+        positions.push_back((bettor.clone(), outcome, amount_delta));
+    }
+
+    env.storage().persistent().set(&DataKey::UserPosition(market_id), &positions);
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::UserPosition(market_id), 100, 1_000_000);
 }
 
 
@@ -413,11 +493,7 @@ impl PredictionMarket {
         assert!(!paused, "Market is paused");
 
         // Cold read: market metadata from Persistent
-        let market: Market = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap();
+        let market: Market = load_market(&env, market_id);
 
         assert!(market.status == MarketStatus::Active, "Market not active");
         assert!(
@@ -434,19 +510,13 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::LmsrB(market_id))
             .unwrap();
-        let outcome_shares: Vec<i128> = env
-            .storage()
-            .instance()
-            .get(&DataKey::OutcomeShares(market_id))
-            .unwrap();
+        let outcome_shares: Vec<i128> = load_outcome_shares(&env, market_id);
 
         // Build q_before and q_after as plain slices via a fixed-size stack array.
         // Max 5 outcomes (enforced at market creation: options.len() <= 5 implied by Vec).
-        let n = outcome_shares.len() as usize;
-        let mut q_before = [0i128; 8];
+        let (q_before, n) = build_share_arrays(&outcome_shares);
         let mut q_after = [0i128; 8];
         for j in 0..n {
-            q_before[j] = outcome_shares.get(j as u32).unwrap();
             q_after[j] = q_before[j];
         }
         q_after[option_index as usize] += amount;
@@ -467,28 +537,11 @@ impl PredictionMarket {
         // ── end LMSR ─────────────────────────────────────────────────────────
 
         // Cold write: user position → Persistent
-        let mut positions: Vec<(Address, u32, i128)> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserPosition(market_id))
-            .unwrap();
-
-        let mut found = false;
-        for i in 0..positions.len() {
-            let (addr, _, prev_amount) = positions.get(i).unwrap();
-            if addr == bettor {
-                positions.set(i, (bettor.clone(), option_index, prev_amount + amount));
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            positions.push_back((bettor.clone(), option_index, amount));
-        }
-
+        upsert_user_position(&env, market_id, &bettor, option_index, amount);
+        position_token::mint(&env, market_id, option_index, &bettor, amount);
         env.storage()
             .persistent()
-            .set(&DataKey::UserPosition(market_id), &positions);
+            .extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
 
         // Hot write: total_shares → Instance
         let shares: i128 = env
@@ -1862,6 +1915,42 @@ mod tests {
         (env, client, bettors)
     }
 
+    fn setup_market_with_token() -> (Env, PredictionMarketClient<'static>, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let fee_dest = Address::generate(&env);
+        client.update_fee(&0i128, &fee_dest, &FeeMode::Treasury);
+
+        let token_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin);
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        client.create_market(
+            &creator,
+            &1u64,
+            &String::from_str(&env, "Partial exit market"),
+            &options,
+            &deadline,
+            &sac.address(),
+            &100_000_000i128,
+            &None,
+            &None,
+        );
+
+        (env, client, sac.address(), fee_dest)
+    }
+
     // ── Initialization ────────────────────────────────────────────────────────
 
     #[test]
@@ -2633,6 +2722,74 @@ mod tests {
             &None,
             &None,
         );
+    }
+
+    #[test]
+    fn test_exit_position_reduces_position_and_pays_user() {
+        let (env, client, token, _fee_dest) = setup_market_with_token();
+        let bettor = Address::generate(&env);
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&bettor, &500_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &100_000_000i128);
+
+        let token_client = token::Client::new(&env, &token);
+        let balance_before = token_client.balance(&bettor);
+        let position_before = client.get_user_position(&1u64, &bettor, &0u32);
+
+        client.exit_position(&1u64, &0u32, &bettor, &40_000_000i128);
+
+        let balance_after = token_client.balance(&bettor);
+        let position_after = client.get_user_position(&1u64, &bettor, &0u32);
+
+        assert!(balance_after > balance_before);
+        assert_eq!(position_before - position_after, 40_000_000i128);
+    }
+
+    #[test]
+    fn test_exit_position_routes_fee_to_treasury() {
+        let (env, client, token, fee_dest) = setup_market_with_token();
+        let bettor = Address::generate(&env);
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&bettor, &500_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &100_000_000i128);
+
+        let token_client = token::Client::new(&env, &token);
+        let treasury_before = token_client.balance(&fee_dest);
+
+        client.exit_position(&1u64, &0u32, &bettor, &20_000_000i128);
+
+        let treasury_after = token_client.balance(&fee_dest);
+        assert!(treasury_after > treasury_before);
+    }
+
+    #[test]
+    #[should_panic(expected = "Insufficient position balance")]
+    fn test_exit_position_rejects_excess_amount() {
+        let (env, client, token, _fee_dest) = setup_market_with_token();
+        let bettor = Address::generate(&env);
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&bettor, &500_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &10_000_000i128);
+        client.exit_position(&1u64, &0u32, &bettor, &20_000_000i128);
+    }
+
+    #[test]
+    fn test_exit_position_reduces_total_shares() {
+        let (env, client, token, _fee_dest) = setup_market_with_token();
+        let bettor = Address::generate(&env);
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&bettor, &500_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &100_000_000i128);
+        let total_before = client.get_total_shares(&1u64);
+
+        client.exit_position(&1u64, &0u32, &bettor, &25_000_000i128);
+
+        let total_after = client.get_total_shares(&1u64);
+        assert!(total_after < total_before);
     }
 
     /// Max fee (i128::MAX) is accepted by update_fee without panic.
