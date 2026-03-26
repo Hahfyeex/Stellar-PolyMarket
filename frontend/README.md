@@ -254,3 +254,46 @@ Object.keys(localStorage)
   .filter(k => k.startsWith("stella_bet_form_"))
   .forEach(k => localStorage.removeItem(k));
 ```
+
+---
+
+## Dynamic Theming Engine (Issue #149)
+
+The Stella Polymarket frontend features a CSS variable-based dynamic dark/light theme engine, which ensures zero hardcoded color values and immediate theme application.
+
+### Adding New Theme Tokens
+
+1. **Open `src/app/globals.css`**
+   Add your new token to both the `:root` and `[data-theme='light']` blocks:
+   ```css
+   :root {
+     ...
+     --color-brand-new: #123456;
+   }
+   
+   [data-theme='light'] {
+     ...
+     --color-brand-new: #abcdef;
+   }
+   ```
+
+2. **Open `tailwind.config.js`**
+   Update the Tailwind configuration to map the standard classes to your token:
+   ```js
+   theme: {
+     extend: {
+       colors: {
+         ...
+         brand: {
+           new: 'var(--color-brand-new)',
+         }
+       }
+     }
+   }
+   ```
+   
+3. **Use the new Token in React Components**
+   You can now use `bg-brand-new`, `text-brand-new`, `border-brand-new`, etc., anywhere in the `.tsx` files.
+
+### useTheme hook
+We provide a `useTheme` hook (`src/hooks/useTheme.ts`) that will respect the user's system preferences `window.matchMedia('(prefers-color-scheme: dark)')` on the first load and save user override configurations into `localStorage` under the `stella_theme` key.
