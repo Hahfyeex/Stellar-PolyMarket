@@ -36,6 +36,8 @@ pub enum DataKey {
     TotalShares(u64),
     /// Hot: pause flag per market — Instance storage
     IsPaused(u64),
+    /// Global pause flag — Instance storage
+    IsPausedGlobal,
     /// Hot: settlement cursor (index into winners vec) — Instance storage
     SettlementCursor(u64),
     /// Hot: global platform status — Instance storage.
@@ -72,6 +74,8 @@ pub enum DataKey {
     Dispute(u64),
     /// Refund-claimed flag per bettor per market — Persistent storage.
     RefundClaimed(u64),
+    /// Replay protection: per-user nonce for off-chain signatures — Persistent storage
+    Nonce(Address),
 }
 
 #[contracttype]
@@ -148,7 +152,7 @@ fn panic_if_paused(env: &Env) {
     let paused: bool = env
         .storage()
         .persistent()
-        .get(&DataKey::IsPaused)
+        .get(&DataKey::IsPausedGlobal)
         .unwrap_or(false);
     if paused {
         panic!("ContractPaused");
@@ -304,6 +308,53 @@ impl PredictionMarket {
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         panic_if_paused(&env);
         bettor.require_auth();
+        Self::internal_place_bet(env, market_id, option_index, bettor, amount);
+    }
+
+    /// Gasless bet placement using an off-chain signature and a manual nonce for replay protection.
+    /// 
+    /// # Replay Protection
+    /// 1. Manual Nonce: Each signature includes a nonce that must match the stored nonce for the address.
+    /// 2. Soroban Auth: require_auth_for_args ensures the signature is valid for the provided arguments.
+    /// 3. Nonce Increment: The stored nonce is incremented after every successful bet.
+    pub fn place_bet_with_sig(
+        env: Env,
+        market_id: u64,
+        option_index: u32,
+        bettor: Address,
+        amount: i128,
+        nonce: u64,
+        signature: soroban_sdk::BytesN<64>,
+    ) {
+        panic_if_paused(&env);
+
+        // 1. Verify manual nonce (Replay Protection Requirement #209)
+        let stored_nonce: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Nonce(bettor.clone()))
+            .unwrap_or(0);
+        assert!(nonce == stored_nonce, "Invalid signature nonce");
+
+        // 2. Verify signature via Soroban auth
+        // We include the nonce and signature in the args to ensure they are signed.
+        bettor.require_auth_for_args((market_id, option_index, amount, nonce, signature.clone()).into_val(&env));
+
+        // 3. Update nonce state
+        env.storage()
+            .persistent()
+            .set(&DataKey::Nonce(bettor.clone()), &(stored_nonce + 1));
+        // Extend TTL for nonce storage to manage rent
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Nonce(bettor.clone()), 100, 1_000_000);
+
+        // 4. Execute bet logic
+        Self::internal_place_bet(env, market_id, option_index, bettor, amount);
+    }
+
+    /// Internal logic for placing a bet, shared by place_bet and place_bet_with_sig.
+    fn internal_place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         assert!(amount > 0, "Amount must be positive");
 
         // Enforce configurable min/max bet caps
@@ -1883,6 +1934,34 @@ mod tests {
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
         // total_shares reflects LMSR cost delta, which is > 0
         assert!(client.get_total_shares(&1u64) > 0);
+    }
+
+    #[test]
+    fn test_place_bet_with_sig_replay_protection() {
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        let market_id = 1u64;
+        let option_index = 0u32;
+        let amount = 50_000_000i128; // 5.0 XLM
+        let nonce = 0u64;
+        let signature = soroban_sdk::BytesN::from_array(&env, &[0u8; 64]);
+
+        // Mock all auths to bypass signature verification in the mock environment
+        env.mock_all_auths();
+
+        // 1. First bet should succeed
+        client.place_bet_with_sig(&market_id, &option_index, &bettor, &amount, &nonce, &signature);
+        assert!(client.get_total_shares(&market_id) > 0);
+
+        // 2. Replaying the SAME nonce should panic
+        let res = env.as_contract(&client.address, || {
+            client.try_place_bet_with_sig(&market_id, &option_index, &bettor, &amount, &nonce, &signature)
+        });
+        assert!(res.is_err(), "Replay with same nonce should fail");
+
+        // 3. Using the NEXT nonce should succeed
+        let next_nonce = 1u64;
+        client.place_bet_with_sig(&market_id, &option_index, &bettor, &amount, &next_nonce, &signature);
     }
 
     /// batch_distribute still works during shutdown.
