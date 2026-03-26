@@ -3,6 +3,10 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
 };
 
+// Internal ZK scalar normalization utility — must be declared before use
+mod math;
+use math::normalize_scalar;
+
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
 #[derive(Clone, PartialEq)]
@@ -1090,6 +1094,36 @@ impl PredictionMarket {
 
         // 3. Bump Instance storage (TotalShares, IsPaused, etc. are grouped here)
         env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
+    /// Verify a ZK proof scalar against an expected value.
+    ///
+    /// Both `proof_scalar` and `expected` are normalized to [0, r) before
+    /// comparison, preventing scalar-bypass attacks where a prover supplies
+    /// s + k*r instead of s.
+    ///
+    /// # Auth
+    /// Caller must be the contract admin (oracle-triggered verification).
+    ///
+    /// # Returns
+    /// `true` if the normalized scalars are equal.
+    pub fn verify_proof(
+        env: Env,
+        caller: Address,
+        proof_scalar: soroban_sdk::BytesN<32>,
+        expected: soroban_sdk::BytesN<32>,
+    ) -> bool {
+        // Only admin may trigger proof verification
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        caller.require_auth();
+        assert_eq!(caller, admin, "unauthorized");
+
+        // Normalize both scalars to canonical range [0, r) before comparison.
+        // This prevents a prover from bypassing equality by supplying s + k*r.
+        let norm_proof = normalize_scalar(proof_scalar.to_array());
+        let norm_expected = normalize_scalar(expected.to_array());
+
+        norm_proof == norm_expected
     }
 }
 
