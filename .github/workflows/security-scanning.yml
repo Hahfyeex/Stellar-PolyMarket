@@ -143,7 +143,7 @@ jobs:
           cache: true
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --version 0.21.1 --locked
 
       - name: Run cargo audit
         working-directory: ./contracts/prediction_market
