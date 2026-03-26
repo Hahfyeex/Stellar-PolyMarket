@@ -54,6 +54,10 @@ pub enum DataKey {
     FeeDestination,
     /// Fee routing mode: Burn or Treasury — Instance storage.
     FeeModeConfig,
+    /// Maximum bet amount in stroops — Instance storage.
+    MaxBetAmount,
+    /// Minimum bet amount in stroops — Instance storage. Default: 1_000_000 (0.1 XLM).
+    MinBetAmount,
 }
 
 #[contracttype]
@@ -62,12 +66,13 @@ pub enum MarketStatus {
     Active,
     Proposed,
     Disputed,
+    ReReview, // threshold crossed, paused for final admin review
     Resolved,
 }
 
 #[contracttype]
 #[derive(Clone, PartialEq)]
-pub enum MarketStatus {
+pub enum MarketStatus1 {
     Open,
     Locked,
     Proposed,
@@ -76,11 +81,21 @@ pub enum MarketStatus {
 
 #[contracttype]
 #[derive(Clone, PartialEq)]
-pub enum MarketStatus {
+pub enum MarketStatus2 {
     Open,
     Locked,
     Proposed,
     Resolved,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct DisputeData {
+    pub active: bool,
+    pub votes: soroban_sdk::Map<Address, i128>,
+    pub total_votes: i128,
+    pub support_votes: i128,
+    pub deadline: u64,
 }
 
 #[contracttype]
@@ -257,6 +272,21 @@ impl PredictionMarket {
         bettor.require_auth();
         assert!(amount > 0, "Amount must be positive");
 
+        // Enforce configurable min/max bet caps
+        let min_bet: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinBetAmount)
+            .unwrap_or(1_000_000i128); // default 0.1 XLM in stroops
+        assert!(amount >= min_bet, "bet below minimum");
+
+        let max_bet: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxBetAmount)
+            .unwrap_or(i128::MAX);
+        assert!(amount <= max_bet, "bet exceeds cap");
+
         // Hot read: is_paused from Instance
         let paused: bool = env
             .storage()
@@ -320,6 +350,7 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &(shares + amount));
+        env.storage().instance().extend_ttl(100, 1_000_000);
 
         // Emit Bet event
         // Topics: ("Bet", market_id)
@@ -389,6 +420,28 @@ impl PredictionMarket {
             .get(&DataKey::FeeModeConfig)
             .unwrap_or(FeeMode::Treasury);
         (fee, dest, mode)
+    }
+
+    /// Update the min/max bet caps (admin / FeeSetter role).
+    /// `min_amount` — minimum bet in stroops (must be >= 1).
+    /// `max_amount` — maximum bet in stroops (must be >= min_amount).
+    /// Pass 0 for `max_amount` to remove the cap (sets to i128::MAX internally).
+    pub fn update_bet_limits(env: Env, min_amount: i128, max_amount: i128) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        assert!(min_amount >= 1, "min must be >= 1");
+        let effective_max = if max_amount == 0 { i128::MAX } else { max_amount };
+        assert!(effective_max >= min_amount, "max must be >= min");
+        env.storage().instance().set(&DataKey::MinBetAmount, &min_amount);
+        env.storage().instance().set(&DataKey::MaxBetAmount, &effective_max);
+        env.storage().instance().extend_ttl(100, 1_000_000);
+    }
+
+    /// Get current bet limits. Returns (min_amount, max_amount).
+    pub fn get_bet_limits(env: Env) -> (i128, i128) {
+        let min: i128 = env.storage().instance().get(&DataKey::MinBetAmount).unwrap_or(1_000_000);
+        let max: i128 = env.storage().instance().get(&DataKey::MaxBetAmount).unwrap_or(i128::MAX);
+        (min, max)
     }
 
     /// Propose market resolution — only admin (oracle-triggered).
@@ -477,6 +530,116 @@ impl PredictionMarket {
         env.storage()
             .persistent()
             .set(&DataKey::ClaimDeadline(market_id), &resolution_time);
+    }
+
+    /// Opens a dispute voting window for 24 hours. Callable by any token holder within 24h of resolution.
+    /// Requires that the caller has a token balance > 0 in the market token (STELLA).
+    pub fn open_dispute(env: Env, market_id: u64, caller: Address) {
+        caller.require_auth();
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+
+        assert!(market.status == MarketStatus::Resolved, "Market must be resolved to open a dispute");
+
+        // Must be within 24h of resolution
+        let resolution_time: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClaimDeadline(market_id))
+            .unwrap_or(0);
+        let current_time = env.ledger().timestamp();
+        assert!(current_time <= resolution_time + 86400, "Dispute window closed");
+
+        // Verify token holding
+        let token_client = token::Client::new(&env, &market.token);
+        assert!(token_client.balance(&caller) > 0, "Only token holders can open a dispute");
+
+        // Ensure no active dispute exists
+        let has_dispute = env.storage().persistent().has(&DataKey::Dispute(market_id));
+        assert!(!has_dispute, "Dispute already opened");
+
+        let dispute = DisputeData {
+            active: true,
+            votes: soroban_sdk::Map::new(&env),
+            total_votes: 0,
+            support_votes: 0,
+            deadline: current_time + 86400, // 24 hours from now
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(market_id), &dispute);
+
+        env.events().publish((soroban_sdk::Symbol::new(&env, "DisputeOpened"), market_id), caller);
+    }
+
+    /// Cast a weighted vote in an active dispute using STELLA token balance (market.token).
+    /// Weight is mathematically correct (1:1 with token balance).
+    pub fn cast_vote(env: Env, market_id: u64, voter: Address, support: bool) {
+        voter.require_auth();
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+
+        let mut dispute: DisputeData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(market_id))
+            .expect("No dispute found");
+
+        assert!(dispute.active, "Dispute is not active");
+        let current_time = env.ledger().timestamp();
+        assert!(current_time <= dispute.deadline, "Voting deadline passed");
+        assert!(!dispute.votes.contains_key(voter.clone()), "Already voted");
+
+        let token_client = token::Client::new(&env, &market.token);
+        let balance = token_client.balance(&voter);
+        assert!(balance > 0, "No voting weight");
+
+        dispute.votes.set(voter.clone(), balance);
+        dispute.total_votes += balance;
+        if support {
+            dispute.support_votes += balance;
+        }
+
+        // Check threshold: more than 60% support (support_votes / total_votes > 0.6)
+        // Equivalent to: support_votes * 10 > total_votes * 6
+        if dispute.support_votes * 10 > dispute.total_votes * 6 {
+            let mut updated_market = market;
+            updated_market.status = MarketStatus::ReReview;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Market(market_id), &updated_market);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(market_id), &dispute);
+    }
+
+    /// Closes an active dispute after the deadline.
+    pub fn close_dispute(env: Env, market_id: u64) {
+        let mut dispute: DisputeData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(market_id))
+            .expect("No dispute found");
+
+        assert!(dispute.active, "Dispute already closed");
+        let current_time = env.ledger().timestamp();
+        assert!(current_time > dispute.deadline, "Voting still in progress");
+
+        dispute.active = false;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(market_id), &dispute);
     }
 
     /// Sweep unclaimed payouts from a resolved market into the vault.
@@ -800,6 +963,12 @@ impl PredictionMarket {
             .unwrap();
         assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
 
+        // Check if there's an active dispute
+        let dispute_opt: Option<DisputeData> = env.storage().persistent().get(&DataKey::Dispute(market_id));
+        if let Some(dispute) = dispute_opt {
+            assert!(!dispute.active, "Payouts paused during an active dispute");
+        }
+
         // Gas optimization: Vec instead of Map for positions
         let positions: Vec<(Address, u32, i128)> = env
             .storage()
@@ -850,6 +1019,8 @@ impl PredictionMarket {
         for i in cursor..end {
             let (bettor, amount) = winners.get(i).unwrap();
             let payout = (amount * payout_pool) / winning_stake;
+            // Burn position token on claim
+            position_token::burn(&env, market_id, market.winning_outcome, &bettor);
             token_client.transfer(&env.current_contract_address(), &bettor, &payout);
             paid += 1;
         }
@@ -1762,6 +1933,80 @@ mod tests {
             &token,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
+    }
+
+    // ── Bet caps ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_bet_limits_defaults() {
+        let (_, client, _, _, _) = setup();
+        let (min, max) = client.get_bet_limits();
+        assert_eq!(min, 1_000_000i128);
+        assert_eq!(max, i128::MAX);
+    }
+
+    #[test]
+    fn test_update_bet_limits_and_get() {
+        let (_, client, _, _, _) = setup();
+        client.update_bet_limits(&5_000_000i128, &100_000_000i128);
+        let (min, max) = client.get_bet_limits();
+        assert_eq!(min, 5_000_000i128);
+        assert_eq!(max, 100_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "bet exceeds cap")]
+    fn test_bet_above_max_panics() {
+        let (env, client, _, _, _) = setup();
+        client.update_bet_limits(&1_000_000i128, &10_000_000i128);
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &10_000_001i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "bet below minimum")]
+    fn test_bet_below_min_panics() {
+        let (env, client, _, _, _) = setup();
+        client.update_bet_limits(&5_000_000i128, &100_000_000i128);
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
+    }
+
+    #[test]
+    fn test_bet_at_exact_limits_succeeds() {
+        let (env, client, _, _, _) = setup();
+        client.update_bet_limits(&1_000_000i128, &50_000_000i128);
+        let bettor1 = Address::generate(&env);
+        let bettor2 = Address::generate(&env);
+        // Exactly at min
+        client.place_bet(&1u64, &0u32, &bettor1, &1_000_000i128);
+        // Exactly at max
+        client.place_bet(&1u64, &1u32, &bettor2, &50_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "max must be >= min")]
+    fn test_update_bet_limits_max_less_than_min_panics() {
+        let (_, client, _, _, _) = setup();
+        client.update_bet_limits(&10_000_000i128, &5_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "min must be >= 1")]
+    fn test_update_bet_limits_zero_min_panics() {
+        let (_, client, _, _, _) = setup();
+        client.update_bet_limits(&0i128, &10_000_000i128);
+    }
+
+    #[test]
+    fn test_update_bet_limits_zero_max_removes_cap() {
+        let (_, client, _, _, _) = setup();
+        // First set a cap
+        client.update_bet_limits(&1_000_000i128, &10_000_000i128);
+        // Pass 0 to remove cap
+        client.update_bet_limits(&1_000_000i128, &0i128);
+        let (_, max) = client.get_bet_limits();
+        assert_eq!(max, i128::MAX);
     }
 }
 

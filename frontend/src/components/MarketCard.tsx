@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
@@ -8,6 +8,9 @@ import PoolOwnershipChart from "./PoolOwnershipChart";
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useTrustline } from "../hooks/useTrustline";
 import TrustlineModal from "./TrustlineModal";
+import SlippageSettings from "./SlippageSettings";
+import SlippageWarningModal from "./SlippageWarningModal";
+import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { MAX_BETS } from "../context/BettingSlipContext";
 
 interface Market {
@@ -42,12 +45,33 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [showQueueFullToast, setShowQueueFullToast] = useState(false);
+  const [slippageWarning, setSlippageWarning] = useState<{
+    expectedPayout: number;
+    currentPayout: number;
+  } | null>(null);
   const { t } = useTranslation();
 
   const { addBet } = useBettingSlip();
-  const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
-          checkAndRun, confirmTrustline, dismiss: dismissTrustline, retry: retryTrustline } = useTrustline();
+  const {
+    state: trustlineState,
+    pendingAsset,
+    errorMessage: trustlineError,
+    checkAndRun,
+    confirmTrustline,
+    dismiss: dismissTrustline,
+    retry: retryTrustline,
+  } = useTrustline();
+  const { snapshotOdds, checkSlippage } = useSlippageGuard();
   const isExpired = new Date(market.end_date) <= new Date();
+
+  // Snapshot odds whenever the user selects an outcome or changes amount
+  const outcomePool = parseFloat(market.total_pool) / market.outcomes.length;
+  const totalPool = parseFloat(market.total_pool);
+  useEffect(() => {
+    if (selectedOutcome !== null && amount) {
+      snapshotOdds(parseFloat(amount) || 0, outcomePool, totalPool);
+    }
+  }, [selectedOutcome, amount, outcomePool, totalPool, snapshotOdds]);
 
   const handleShareMarket = async () => {
     const shareData = {
@@ -59,26 +83,28 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     try {
       if (navigator.share) {
         await navigator.share(shareData);
-        trackEvent('share_market', {
+        trackEvent("share_market", {
           market_id: market.id,
-          share_method: 'native_share_api',
+          share_method: "native_share_api",
           market_question: market.question.substring(0, 50), // Truncate for privacy
         });
       } else {
         // Fallback: copy to clipboard
-        await navigator.clipboard.writeText(`${shareData.title}\n${shareData.text}\n${shareData.url}`);
-        trackEvent('share_market', {
+        await navigator.clipboard.writeText(
+          `${shareData.title}\n${shareData.text}\n${shareData.url}`
+        );
+        trackEvent("share_market", {
           market_id: market.id,
-          share_method: 'clipboard',
+          share_method: "clipboard",
           market_question: market.question.substring(0, 50), // Truncate for privacy
         });
         setMessage(t("market.linkCopied"));
         setTimeout(() => setMessage(""), 3000);
       }
     } catch (err) {
-      trackEvent('share_error', {
+      trackEvent("share_error", {
         market_id: market.id,
-        error_message: err instanceof Error ? err.message.substring(0, 100) : 'Unknown error',
+        error_message: err instanceof Error ? err.message.substring(0, 100) : "Unknown error",
       });
     }
   };
@@ -86,9 +112,17 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress) return;
 
+    // Check slippage against current pool state before submitting
+    const check = checkSlippage(parseFloat(amount), outcomePool, totalPool, slippageTolerance);
+    if (check.exceeded) {
+      setSlippageWarning({
+        expectedPayout: check.expectedPayout,
+        currentPayout: check.currentPayout,
+      });
+      return;
+    }
+
     // If this market uses a custom asset, run the trustline check first.
-    // checkAndRun will call the inner function directly if trustline exists,
-    // or show the modal and resume after the user sets it up.
     if (market.asset) {
       await checkAndRun(market.asset, walletAddress, submitBet);
     } else {
@@ -134,6 +168,25 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         onDismiss={dismissTrustline}
         onRetry={retryTrustline}
       />
+
+      {/* Slippage warning modal — shown when drift exceeds tolerance */}
+      {slippageWarning && (
+        <SlippageWarningModal
+          expectedPayout={slippageWarning.expectedPayout}
+          currentPayout={slippageWarning.currentPayout}
+          tolerancePct={slippageTolerance}
+          onProceed={async () => {
+            setSlippageWarning(null);
+            // User chose to proceed despite slippage — submit directly
+            if (market.asset) {
+              await checkAndRun(market.asset, walletAddress!, submitBet);
+            } else {
+              await submitBet();
+            }
+          }}
+          onCancel={() => setSlippageWarning(null)}
+        />
+      )}
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
         <div className="flex items-center gap-2">
@@ -142,22 +195,37 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
             title={t("market.shareMarket")}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
-              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="w-4 h-4 text-gray-400"
+            >
+              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
             </svg>
           </button>
           {market.resolved ? (
-            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">{t("market.resolved")}</span>
+            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">
+              {t("market.resolved")}
+            </span>
           ) : isExpired ? (
-            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">{t("market.ended")}</span>
+            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">
+              {t("market.ended")}
+            </span>
           ) : (
-            <span className="text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded-full">{t("market.live")}</span>
+            <span className="text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded-full">
+              {t("market.live")}
+            </span>
           )}
         </div>
       </div>
 
       <p className="text-gray-400 text-sm">
-        {t("market.pool")} <span className="text-white font-medium">{parseFloat(market.total_pool).toFixed(2)} XLM</span>
+        {t("market.pool")}{" "}
+        <span className="text-white font-medium">
+          {parseFloat(market.total_pool).toFixed(2)} XLM
+        </span>
         &nbsp;·&nbsp;{t("market.ends")} {new Date(market.end_date).toLocaleDateString()}
       </p>
 
@@ -172,11 +240,12 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             onClick={() => setSelectedOutcome(i)}
             disabled={market.resolved || isExpired}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-              ${market.resolved && market.winning_outcome === i
-                ? "bg-green-600 text-white"
-                : selectedOutcome === i
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              ${
+                market.resolved && market.winning_outcome === i
+                  ? "bg-green-600 text-white"
+                  : selectedOutcome === i
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-800 text-gray-300 hover:bg-gray-700"
               }`}
           >
             {outcome}
@@ -228,6 +297,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
           {/* Slippage tolerance + clear form row */}
           <div className="flex items-center justify-between gap-3">
+            <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
             <label className="flex items-center gap-2 text-xs text-gray-400">
               {t("market.slippage")}
               <select
@@ -244,7 +314,10 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             </label>
             <button
               data-testid="clear-form"
-              onClick={() => { clearForm(); setMessage(""); }}
+              onClick={() => {
+                clearForm();
+                setMessage("");
+              }}
               className="text-xs text-gray-500 hover:text-red-400 transition-colors"
             >
               {t("market.clearForm")}

@@ -1,9 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "next/navigation";
 import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
 import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+import MarketFilters from "../components/MarketFilters";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
@@ -15,6 +17,7 @@ import LanguageSelector from "../components/LanguageSelector";
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
 
 interface Market {
   id: number;
@@ -31,10 +34,21 @@ export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation();
+  const searchParams = useSearchParams();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+
+  // Restore filter state from URL params on mount
+  const [filters, setFilters] = useState<SearchFilters>(() => ({
+    query: searchParams.get("q") ?? "",
+    category: searchParams.get("category") ?? "",
+    status: searchParams.get("status") ?? "",
+    sort: (searchParams.get("sort") as SortKey) ?? "newest",
+  }));
+
+  const filteredMarkets = useMarketSearch(markets, filters);
 
   const handleHelpClick = () => {
     trackEvent("help_doc_read", {
@@ -166,9 +180,7 @@ export default function Home() {
       {/* Hero */}
       <section className="flex flex-col items-center justify-center py-10 md:py-16 px-4 text-center">
         <h1 className="text-3xl md:text-5xl font-bold mb-3">{t("hero.headline")}</h1>
-        <p className="text-base md:text-xl text-gray-400 max-w-xl">
-          {t("hero.subheading")}
-        </p>
+        <p className="text-base md:text-xl text-gray-400 max-w-xl">{t("hero.subheading")}</p>
         <div className="max-w-md mx-auto w-full mt-4">
           <NotificationManager walletAddress={publicKey} />
         </div>
@@ -203,17 +215,20 @@ export default function Home() {
           </div>
 
           <h2 className="text-xl md:text-2xl font-semibold mb-4">{t("markets.openMarkets")}</h2>
+          <MarketFilters filters={filters} onChange={setFilters} />
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[1, 2, 3, 4].map((i) => (
                 <MarketCardSkeleton key={i} />
               ))}
             </div>
+          ) : filteredMarkets.length === 0 ? (
+            <p className="text-gray-400">No markets found.</p>
           ) : markets.length === 0 ? (
             <p className="text-gray-400">{t("markets.noMarkets")}</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {markets.map((market) => (
+              {filteredMarkets.map((market) => (
                 <div
                   key={market.id}
                   onClick={() => setActiveMarket(market)}
@@ -228,6 +243,7 @@ export default function Home() {
                       onBetPlaced={fetchMarkets}
                     />
                   </ContractErrorBoundary>
+                </div>
               ))}
             </div>
           )}
