@@ -23,6 +23,8 @@ interface Market {
   asset?: { code: string; issuer: string };
 }
 
+import LiquidityHeatmap from "./LiquidityHeatmap";
+
 interface Props {
   market: Market;
   walletAddress: string | null;
@@ -210,20 +212,26 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       {/* Outcomes */}
       <div className="flex gap-2 flex-wrap">
         {market.outcomes.map((outcome, i) => (
-          <button
-            key={i}
-            onClick={() => setSelectedOutcome(i)}
-            disabled={market.resolved || isExpired}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-              ${market.resolved && market.winning_outcome === i
-                ? "bg-green-600 text-white"
-                : selectedOutcome === i
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-300 hover:bg-gray-700"
-              }`}
-          >
-            {outcome}
-          </button>
+          <div key={i} className="relative">
+            <button
+              onClick={() => setSelectedOutcome(i)}
+              disabled={market.resolved || isExpired}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors relative z-10
+                ${market.resolved && market.winning_outcome === i
+                  ? "bg-green-600 text-white"
+                  : selectedOutcome === i
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                }`}
+            >
+              {outcome}
+            </button>
+            <LiquidityHeatmap 
+              poolDepth={market.pool_depth || {}} 
+              totalPool={parseFloat(market.total_pool || "0")} 
+              outcomeIndex={i} 
+            />
+          </div>
         ))}
       </div>
 

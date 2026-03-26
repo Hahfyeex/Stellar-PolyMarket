@@ -117,6 +117,32 @@ Response → UI Dashboard
 
 ---
 
+## 📊 API Data Format (Pool Depth)
+
+The backend returns a `pool_depth` object representing liquidity concentration per outcome. This powers the **Liquidity Heatmap** UI.
+
+Example response from `/api/markets`:
+```json
+{
+  "markets": [
+    {
+      "id": 1,
+      "question": "Will Bitcoin reach $100k before 2027?",
+      "end_date": "2026-12-31T00:00:00.000Z",
+      "outcomes": ["Yes", "No"],
+      "total_pool": "4200",
+      "pool_depth": {
+        "0": 1000,
+        "1": 3200
+      }
+    }
+  ]
+}
+```
+*Note: `pool_depth` maps outcome indices to their respective pool liquidity.*
+
+---
+
 ## 💡 Key Features
 
 - 📊 **Prediction Markets** — Binary (Yes/No) and multiple choice

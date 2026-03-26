@@ -91,7 +91,7 @@ fix:
 # Install development dependencies
 install-deps:
     @echo "📦 Installing development dependencies..."
-    cargo install cargo-audit
+    cargo install cargo-audit@0.21.1
     cargo install cargo-tarpaulin
     cargo install just
     @echo "✅ Dependencies installed"

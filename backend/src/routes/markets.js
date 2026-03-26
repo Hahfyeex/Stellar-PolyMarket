@@ -15,10 +15,20 @@ const eventBus = require("../bots/eventBus");
 router.get("/", async (req, res) => {
   try {
     const result = await db.query(
-      "SELECT * FROM markets ORDER BY created_at DESC"
+      `SELECT m.*, 
+        (SELECT jsonb_object_agg(outcome_index, depth) 
+         FROM (SELECT outcome_index, SUM(amount) as depth 
+               FROM bets b WHERE b.market_id = m.id GROUP BY outcome_index) sub
+        ) AS pool_depth 
+       FROM markets m ORDER BY created_at DESC`
     );
     logger.debug({ market_count: result.rows.length }, "Markets fetched");
-    res.json({ markets: result.rows });
+    // Ensure pool_depth is an object even if null in DB
+    const markets = result.rows.map(m => ({
+      ...m,
+      pool_depth: m.pool_depth || {}
+    }));
+    res.json({ markets });
   } catch (err) {
     logger.error({ err }, "Failed to fetch markets");
     res.status(500).json({ error: err.message });
@@ -93,7 +103,13 @@ const { calculateConfidenceScore } = require("../utils/analytics");
 // GET /api/markets/:id
 router.get("/:id", async (req, res) => {
   try {
-    const market = await db.query("SELECT * FROM markets WHERE id = $1", [req.params.id]);
+    const market = await db.query(`
+      SELECT m.*, 
+        (SELECT jsonb_object_agg(outcome_index, depth) 
+         FROM (SELECT outcome_index, SUM(amount) as depth 
+               FROM bets b WHERE b.market_id = m.id GROUP BY outcome_index) sub
+        ) AS pool_depth 
+      FROM markets m WHERE id = $1`, [req.params.id]);
     if (!market.rows.length) {
       logger.warn({ market_id: req.params.id }, "Market not found");
       return res.status(404).json({ error: "Market not found" });

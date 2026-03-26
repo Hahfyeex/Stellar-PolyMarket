@@ -254,7 +254,7 @@ jobs:
           cache: true
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit@0.21.1 --locked
 
       - name: Run Security Audit
         working-directory: ./contracts/prediction_market
