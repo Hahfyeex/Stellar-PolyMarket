@@ -7,6 +7,7 @@ mod access;
 use crate::access::{
     check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
     AccessRole, check_whitelisted_token, set_whitelisted_token,
+    Role, require_role, assign_role, revoke_role, bootstrap_super_admin, get_role_address,
 };
 mod checked_math;
 use crate::checked_math::{cadd, csub, cmul, cdiv, cmuldiv};
@@ -26,6 +27,9 @@ use math::normalize_scalar;
 
 #[cfg(test)]
 mod fuzz_arithmetic;
+
+#[cfg(test)]
+mod tests;
 
 mod position_token;
 mod lmsr;
@@ -286,15 +290,35 @@ impl PredictionMarket {
         check_initialized(&env);
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
+        // Bootstrap SuperAdmin in Persistent storage (new role system)
+        bootstrap_super_admin(&env, &admin);
+        // Legacy Instance write for backward-compat shim
         set_role(&env, AccessRole::Admin, &admin);
-        // Platform starts active by default
         set_platform_status(&env, AccessPlatformStatus::Active);
         emit_contract_initialized(&env, &admin);
     }
 
+    /// Assign a role to an address. Only SuperAdmin may call this.
+    pub fn assign_role(env: Env, caller: Address, role: Role, address: Address) {
+        assign_role(&env, &caller, role, &address);
+        env.storage().instance().extend_ttl(100, 1_000_000);
+    }
+
+    /// Revoke a role (remove its mapping). Only SuperAdmin may call this.
+    /// SuperAdmin cannot revoke their own role.
+    pub fn revoke_role(env: Env, caller: Address, role: Role) {
+        revoke_role(&env, &caller, role);
+    }
+
+    /// Read the address currently assigned to a role (returns None if unset).
+    pub fn get_role(env: Env, role: Role) -> Option<Address> {
+        get_role_address(&env, role)
+    }
+
     /// Update the whitelist status of a token (admin only).
-    pub fn set_token_whitelist(env: Env, token: Address, is_whitelisted: bool) {
-        check_role(&env, AccessRole::Admin);
+    /// Update the whitelist status of a token (FeeSetter only).
+    pub fn set_token_whitelist(env: Env, caller: Address, token: Address, is_whitelisted: bool) {
+        require_role(&env, &caller, Role::FeeSetter);
         set_whitelisted_token(&env, &token, is_whitelisted);
     }
 
@@ -328,7 +352,7 @@ impl PredictionMarket {
         condition_outcome: Option<u32>,
     ) {
         creator.require_auth();
-        check_role(&env, AccessRole::Admin);
+        require_role(&env, &creator, Role::Pauser);
         check_platform_active(&env);
         assert!(lmsr_b > 0, "lmsr_b must be positive");
 
@@ -716,20 +740,18 @@ impl PredictionMarket {
         reward
     }
 
-    /// Pause or unpause a market (admin only).
-    /// Writes to Instance storage — single cheap write.
-    pub fn set_paused(env: Env, market_id: u64, paused: bool) {
-        check_role(&env, AccessRole::Admin);
+    /// Pause or unpause a market (Pauser only).
+    pub fn set_paused(env: Env, caller: Address, market_id: u64, paused: bool) {
+        require_role(&env, &caller, Role::Pauser);
         env.storage()
             .instance()
             .set(&DataKey::IsPaused(market_id), &paused);
         emit_market_paused(&env, market_id, paused);
     }
 
-    /// Graceful shutdown / re-activation (admin only).
-    /// active=false → shutdown; active=true → active.
-    pub fn set_global_status(env: Env, active: bool) {
-        check_role(&env, AccessRole::Admin);
+    /// Graceful shutdown / re-activation (SuperAdmin only).
+    pub fn set_global_status(env: Env, caller: Address, active: bool) {
+        require_role(&env, &caller, Role::SuperAdmin);
         let status = if active {
             AccessPlatformStatus::Active
         } else {
@@ -760,8 +782,8 @@ impl PredictionMarket {
     /// # Auth
     /// Requires admin authorization. No redeployment needed — config is stored in
     /// Instance storage and takes effect on the next create_market call.
-    pub fn update_fee(env: Env, new_fee: i128, new_destination: Address, new_mode: FeeMode) {
-        check_role(&env, AccessRole::Admin);
+    pub fn update_fee(env: Env, caller: Address, new_fee: i128, new_destination: Address, new_mode: FeeMode) {
+        require_role(&env, &caller, Role::FeeSetter);
         assert!(new_fee >= 0, "Fee must be non-negative");
         env.storage().instance().set(&DataKey::CreationFee, &new_fee);
         env.storage().instance().set(&DataKey::FeeDestination, &new_destination);
@@ -785,8 +807,8 @@ impl PredictionMarket {
     /// `min_amount` — minimum bet in stroops (must be >= 1).
     /// `max_amount` — maximum bet in stroops (must be >= min_amount).
     /// Pass 0 for `max_amount` to remove the cap (sets to i128::MAX internally).
-    pub fn update_bet_limits(env: Env, min_amount: i128, max_amount: i128) {
-        check_role(&env, AccessRole::Admin);
+    pub fn update_bet_limits(env: Env, caller: Address, min_amount: i128, max_amount: i128) {
+        require_role(&env, &caller, Role::FeeSetter);
         assert!(min_amount >= 1, "min must be >= 1");
         let effective_max = if max_amount == 0 { i128::MAX } else { max_amount };
         assert!(effective_max >= min_amount, "max must be >= min");
@@ -822,6 +844,7 @@ impl PredictionMarket {
     /// Writes to Instance storage with TTL extension for rent management.
     pub fn configure_fee_split(
         env: Env,
+        caller: Address,
         treasury_bps: u32,
         lp_bps: u32,
         burn_bps: u32,
@@ -829,18 +852,10 @@ impl PredictionMarket {
         lp_addr: Address,
         burn_addr: Address,
     ) {
-        check_role(&env, AccessRole::Admin);
-        
-        // Assert BPS split totals 100%
+        require_role(&env, &caller, Role::FeeSetter);
         let total_bps = treasury_bps + lp_bps + burn_bps;
         assert!(total_bps == 10000, "BPS split must total 10000 (100%)");
-        
-        let config = FeeConfig {
-            treasury_bps,
-            lp_bps,
-            burn_bps,
-        };
-        
+        let config = FeeConfig { treasury_bps, lp_bps, burn_bps };
         env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
         env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
         env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
@@ -848,39 +863,31 @@ impl PredictionMarket {
         env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
-    /// Update fee distribution configuration (admin only).
-    /// Validates that BPS split totals 100% before updating.
+    /// Update fee distribution split (FeeSetter only).
     pub fn update_fee_split(
         env: Env,
+        caller: Address,
         treasury_bps: u32,
         lp_bps: u32,
         burn_bps: u32,
     ) {
-        check_role(&env, AccessRole::Admin);
-        
-        // Assert BPS split totals 100%
+        require_role(&env, &caller, Role::FeeSetter);
         let total_bps = treasury_bps + lp_bps + burn_bps;
         assert!(total_bps == 10000, "BPS split must total 10000 (100%)");
-        
-        let config = FeeConfig {
-            treasury_bps,
-            lp_bps,
-            burn_bps,
-        };
-        
+        let config = FeeConfig { treasury_bps, lp_bps, burn_bps };
         env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
         env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
-    /// Update fee destination addresses (admin only).
+    /// Update fee destination addresses (FeeSetter only).
     pub fn update_fee_addresses(
         env: Env,
+        caller: Address,
         treasury_addr: Address,
         lp_addr: Address,
         burn_addr: Address,
     ) {
-        check_role(&env, AccessRole::Admin);
-        
+        require_role(&env, &caller, Role::FeeSetter);
         env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
         env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
         env.storage().instance().set(&DataKey::BurnAddress, &burn_addr);
@@ -1015,9 +1022,9 @@ impl PredictionMarket {
         env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
-    /// Propose market resolution — only admin (oracle-triggered).
-    pub fn propose_resolution(env: Env, market_id: u64, winning_outcome: u32) {
-        check_role(&env, AccessRole::Admin);
+    /// Propose market resolution — Resolver only.
+    pub fn propose_resolution(env: Env, resolver: Address, market_id: u64, winning_outcome: u32) {
+        require_role(&env, &resolver, Role::Resolver);
 
         let mut market: Market = env
             .storage()
@@ -1067,9 +1074,9 @@ impl PredictionMarket {
         emit_dispute_raised(&env, market_id, &disputer, bond_amount);
     }
 
-    /// Resolve market finally after potential dispute.
-    pub fn resolve_market(env: Env, market_id: u64, winning_outcome: u32) {
-        check_role(&env, AccessRole::Admin);
+    /// Resolve market finally after potential dispute. Resolver only.
+    pub fn resolve_market(env: Env, resolver: Address, market_id: u64, winning_outcome: u32) {
+        require_role(&env, &resolver, Role::Resolver);
 
         let mut market: Market = env
             .storage()
@@ -1285,8 +1292,8 @@ impl PredictionMarket {
     /// Even after sweep, claimants can call claim_original() to withdraw their exact amount.
     /// 
     /// Returns the amount swept into the vault.
-    pub fn sweep_unclaimed(env: Env, market_id: u64) -> i128 {
-        check_role(&env, AccessRole::Admin);
+    pub fn sweep_unclaimed(env: Env, caller: Address, market_id: u64) -> i128 {
+        require_role(&env, &caller, Role::Resolver);
 
         // Check if market has already been swept
         let already_swept: bool = env
@@ -1421,8 +1428,8 @@ impl PredictionMarket {
     /// - Vault must maintain sufficient liquidity for claims
     /// 
     /// Returns the amount invested.
-    pub fn invest_vault(env: Env) -> i128 {
-        check_role(&env, AccessRole::Admin);
+    pub fn invest_vault(env: Env, caller: Address) -> i128 {
+        require_role(&env, &caller, Role::SuperAdmin);
 
         let vault_balance: i128 = env
             .storage()
@@ -1756,7 +1763,7 @@ impl PredictionMarket {
         resolver: Address,
     ) -> u32 {
         resolver.require_auth();
-        check_role(&env, AccessRole::Admin);
+        require_role(&env, &resolver, Role::Resolver);
 
         // Acquire re-entrancy lock
         acquire_reentrancy_lock(&env);
@@ -2105,9 +2112,8 @@ impl PredictionMarket {
         proof_scalar: soroban_sdk::BytesN<32>,
         expected: soroban_sdk::BytesN<32>,
     ) -> bool {
-        // Only admin may trigger proof verification
-        check_role(&env, AccessRole::Admin);
-        caller.require_auth();
+        // Only SuperAdmin may trigger proof verification
+        require_role(&env, &caller, Role::SuperAdmin);
 
         // Normalize both scalars to canonical range [0, r) before comparison.
         // This prevents a prover from bypassing equality by supplying s + k*r.
