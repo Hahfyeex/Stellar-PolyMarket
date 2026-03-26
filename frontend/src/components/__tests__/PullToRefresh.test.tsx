@@ -3,7 +3,7 @@
  * Feature: mobile-navigation-shell
  */
 import React from "react";
-import { render, screen, fireEvent, act, waitFor, within, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor, cleanup } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import * as fc from "fast-check";
 import PullToRefresh, { TRIGGER_THRESHOLD } from "../mobile/PullToRefresh";
@@ -132,5 +132,91 @@ describe("PullToRefresh — Property 8: Refresh idempotence", () => {
     await act(async () => {
       resolveFirst();
     });
+  });
+});
+
+describe("PullToRefresh — Scroll position guard", () => {
+  /**
+   * Tests that pull-to-refresh only activates when scrolled to the top,
+   * allowing normal scroll behavior when content is scrolled down.
+   */
+  it("ignores pull gestures when not scrolled to the top", async () => {
+    const onRefresh = jest.fn().mockResolvedValue(undefined);
+    renderPTR(onRefresh);
+    const container = screen.getByTestId("pull-to-refresh");
+
+    // Simulate being scrolled down (scrollTop > 0)
+    Object.defineProperty(container, "scrollTop", {
+      writable: true,
+      value: 50,
+    });
+
+    simulatePull(container, SUFFICIENT_RAW_DELTA);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("allows pull-to-refresh when scrolled to the top", async () => {
+    const onRefresh = jest.fn().mockResolvedValue(undefined);
+    renderPTR(onRefresh);
+    const container = screen.getByTestId("pull-to-refresh");
+
+    // scrollTop defaults to 0, so pull should work
+    simulatePull(container, SUFFICIENT_RAW_DELTA);
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1), { timeout: 2000 });
+  });
+});
+
+describe("PullToRefresh — Upward gesture handling", () => {
+  /**
+   * Tests that upward swipes (negative delta) do not trigger pull-to-refresh.
+   */
+  it("ignores upward gestures (negative delta)", () => {
+    const onRefresh = jest.fn().mockResolvedValue(undefined);
+    renderPTR(onRefresh);
+    const container = screen.getByTestId("pull-to-refresh");
+
+    // Simulate upward swipe: start at 100, move back to 50
+    fireEvent.touchStart(container, { touches: [{ clientY: 100 }] });
+    fireEvent.touchMove(container, { touches: [{ clientY: 50 }] });
+    fireEvent.touchEnd(container);
+
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("PullToRefresh — Spinner visibility", () => {
+  /**
+   * Tests that the loading spinner appears and disappears correctly.
+   */
+  it("hides spinner after successful refresh", async () => {
+    const onRefresh = jest.fn().mockResolvedValue(undefined);
+    renderPTR(onRefresh);
+    const container = screen.getByTestId("pull-to-refresh");
+    const indicator = screen.getByTestId("pull-indicator");
+
+    simulatePull(container, SUFFICIENT_RAW_DELTA);
+
+    await waitFor(
+      () => {
+        expect(indicator.style.height).toBe("0px");
+      },
+      { timeout: 2000 }
+    );
+  });
+
+  it("dampens pull distance to prevent over-stretching", () => {
+    const onRefresh = jest.fn().mockResolvedValue(undefined);
+    renderPTR(onRefresh);
+    const container = screen.getByTestId("pull-to-refresh");
+    const indicator = screen.getByTestId("pull-indicator");
+
+    const largePull = 500;
+    fireEvent.touchStart(container, { touches: [{ clientY: 0 }] });
+    fireEvent.touchMove(container, { touches: [{ clientY: largePull }] });
+
+    // Damped value should be at most TRIGGER_THRESHOLD * 1.5
+    const heightValue = parseInt(indicator.style.height, 10);
+    expect(heightValue).toBeLessThanOrEqual(TRIGGER_THRESHOLD * 1.5);
   });
 });
