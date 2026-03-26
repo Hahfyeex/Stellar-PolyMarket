@@ -61,9 +61,13 @@ app.use("/api/status", require("./routes/status"));
 app.use("/api/images", require("./routes/images"));
 app.use("/api/v1/oracles", require("./routes/oracles"));
 app.use("/api/governance", require("./routes/governance"));
+app.use("/api/admin", require("./routes/admin"));
 
 // Initialise bot registry — subscribes all strategies to the event bus
 require("./bots/registry");
+
+// Start automated market resolver cron (every 5 minutes)
+require("./workers/resolver").start();
 
 // Global error handler
 app.use((err, req, res, next) => {
