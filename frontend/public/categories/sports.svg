@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" fill="none">
+  <!-- Soccer ball -->
+  <circle cx="40" cy="40" r="28" fill="#1e3a5f" stroke="#3b82f6" stroke-width="2"/>
+  <!-- Pentagon patches -->
+  <polygon points="40,18 48,24 45,33 35,33 32,24" fill="#2563eb" opacity="0.8"/>
+  <polygon points="58,30 65,38 61,47 52,45 50,36" fill="#2563eb" opacity="0.8"/>
+  <polygon points="54,56 46,62 38,58 38,49 47,45" fill="#2563eb" opacity="0.8"/>
+  <polygon points="26,56 18,50 20,41 29,38 34,46" fill="#2563eb" opacity="0.8"/>
+  <polygon points="22,30 30,24 38,28 36,37 27,39" fill="#2563eb" opacity="0.8"/>
+  <!-- Seam lines -->
+  <line x1="40" y1="18" x2="48" y2="24" stroke="#60a5fa" stroke-width="1" opacity="0.5"/>
+  <line x1="48" y1="24" x2="58" y2="30" stroke="#60a5fa" stroke-width="1" opacity="0.5"/>
+  <line x1="40" y1="18" x2="32" y2="24" stroke="#60a5fa" stroke-width="1" opacity="0.5"/>
+  <line x1="32" y1="24" x2="22" y2="30" stroke="#60a5fa" stroke-width="1" opacity="0.5"/>
+  <!-- Shine -->
+  <ellipse cx="32" cy="28" rx="6" ry="4" fill="white" opacity="0.12" transform="rotate(-30 32 28)"/>
+</svg>

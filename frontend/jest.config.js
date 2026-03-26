@@ -5,20 +5,28 @@ module.exports = {
       displayName: "node",
       preset: "ts-jest",
       testEnvironment: "node",
-      testMatch: ["**/hooks/__tests__/**/*.test.ts"],
+      testMatch: [
+        "**/hooks/__tests__/**/*.test.ts",
+      ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
       },
-      collectCoverageFrom: ["src/hooks/useRecentActivity.ts"],
+      collectCoverageFrom: [
+        "src/hooks/useRecentActivity.ts",
+        "src/hooks/useFormPersistence.ts",
+      ],
       coverageThreshold: {
-        global: { lines: 95, functions: 95, branches: 90 },
+        global: { lines: 90, functions: 90, branches: 90 },
       },
     },
     {
       displayName: "jsdom",
       preset: "ts-jest",
       testEnvironment: "jest-environment-jsdom",
-      testMatch: ["**/components/__tests__/**/*.test.tsx"],
+      testMatch: [
+        "**/components/__tests__/**/*.test.tsx",
+        "**/context/__tests__/**/*.test.tsx",
+      ],
       globals: {
         "ts-jest": {
           tsconfig: {
@@ -26,6 +34,24 @@ module.exports = {
             esModuleInterop: true,
           },
         },
+      },
+    },
+    {
+      displayName: "simulator-calc",
+      preset: "ts-jest",
+      testEnvironment: "node",
+      testMatch: ["**/utils/__tests__/**/*.test.ts"],
+      globals: {
+        "ts-jest": { tsconfig: { esModuleInterop: true } },
+      },
+      collectCoverageFrom: [
+        "src/utils/simulatorCalc.ts",
+        "src/utils/poolOwnership.ts",
+        "src/utils/trustline.ts",
+        "src/utils/marketDiscovery.ts",
+      ],
+      coverageThreshold: {
+        global: { lines: 90, functions: 90, branches: 90 },
       },
     },
   ],

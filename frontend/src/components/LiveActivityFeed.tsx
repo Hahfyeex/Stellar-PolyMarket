@@ -1,13 +1,59 @@
 "use client";
-import { useRecentActivity, formatWallet, formatRelativeTime, ActivityItem } from "../hooks/useRecentActivity";
+import {
+  useRecentActivity,
+  formatWallet,
+  formatRelativeTime,
+  ActivityItem,
+} from "../hooks/useRecentActivity";
+import ActivityFeedSkeleton from "./skeletons/ActivityFeedSkeleton";
 
 // Demo data shown when the API is offline
 const DEMO_ACTIVITY: ActivityItem[] = [
-  { id: 1, wallet_address: "GBXYZ1234ABCD", outcome_index: 0, amount: "150.00", created_at: new Date(Date.now() - 30000).toISOString(), question: "Will Bitcoin reach $100k before 2027?", outcomes: ["Yes", "No"] },
-  { id: 2, wallet_address: "GCDEF5678EFGH", outcome_index: 1, amount: "75.50", created_at: new Date(Date.now() - 90000).toISOString(), question: "Will Arsenal win the Premier League?", outcomes: ["Yes", "No"] },
-  { id: 3, wallet_address: "GABC9012IJKL", outcome_index: 0, amount: "200.00", created_at: new Date(Date.now() - 180000).toISOString(), question: "Will Nigeria inflation drop below 15%?", outcomes: ["Yes", "No"] },
-  { id: 4, wallet_address: "GHIJ3456MNOP", outcome_index: 1, amount: "50.25", created_at: new Date(Date.now() - 300000).toISOString(), question: "Will Bitcoin reach $100k before 2027?", outcomes: ["Yes", "No"] },
-  { id: 5, wallet_address: "GKLM7890QRST", outcome_index: 0, amount: "320.00", created_at: new Date(Date.now() - 600000).toISOString(), question: "Will Arsenal win the Premier League?", outcomes: ["Yes", "No"] },
+  {
+    id: 1,
+    wallet_address: "GBXYZ1234ABCD",
+    outcome_index: 0,
+    amount: "150.00",
+    created_at: new Date(Date.now() - 30000).toISOString(),
+    question: "Will Bitcoin reach $100k before 2027?",
+    outcomes: ["Yes", "No"],
+  },
+  {
+    id: 2,
+    wallet_address: "GCDEF5678EFGH",
+    outcome_index: 1,
+    amount: "75.50",
+    created_at: new Date(Date.now() - 90000).toISOString(),
+    question: "Will Arsenal win the Premier League?",
+    outcomes: ["Yes", "No"],
+  },
+  {
+    id: 3,
+    wallet_address: "GABC9012IJKL",
+    outcome_index: 0,
+    amount: "200.00",
+    created_at: new Date(Date.now() - 180000).toISOString(),
+    question: "Will Nigeria inflation drop below 15%?",
+    outcomes: ["Yes", "No"],
+  },
+  {
+    id: 4,
+    wallet_address: "GHIJ3456MNOP",
+    outcome_index: 1,
+    amount: "50.25",
+    created_at: new Date(Date.now() - 300000).toISOString(),
+    question: "Will Bitcoin reach $100k before 2027?",
+    outcomes: ["Yes", "No"],
+  },
+  {
+    id: 5,
+    wallet_address: "GKLM7890QRST",
+    outcome_index: 0,
+    amount: "320.00",
+    created_at: new Date(Date.now() - 600000).toISOString(),
+    question: "Will Arsenal win the Premier League?",
+    outcomes: ["Yes", "No"],
+  },
 ];
 
 interface Props {
@@ -17,6 +63,11 @@ interface Props {
 export default function LiveActivityFeed({ apiUrl }: Props) {
   const url = apiUrl ?? process.env.NEXT_PUBLIC_API_URL ?? "";
   const { items, newIds, error } = useRecentActivity(url);
+
+  // Show skeleton while data is loading (no items and no error yet)
+  if (items.length === 0 && !error) {
+    return <ActivityFeedSkeleton count={3} />;
+  }
 
   const display = error || items.length === 0 ? DEMO_ACTIVITY : items;
 
@@ -48,7 +99,9 @@ export default function LiveActivityFeed({ apiUrl }: Props) {
               <div className="min-w-0">
                 <p className="text-xs text-gray-400 truncate">{item.question}</p>
                 <p className="text-sm text-white mt-0.5">
-                  <span className="font-mono text-blue-400">{formatWallet(item.wallet_address)}</span>
+                  <span className="font-mono text-blue-400">
+                    {formatWallet(item.wallet_address)}
+                  </span>
                   {" bet "}
                   <span className="font-semibold text-white">{item.amount} XLM</span>
                   {" on "}

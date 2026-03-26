@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1774430540628" clover="3.2.0">
+  <project timestamp="1774430540628" name="All files">
+    <metrics statements="27" coveredstatements="26" conditionals="16" coveredconditionals="14" methods="4" coveredmethods="3" elements="47" coveredelements="43" complexity="0" loc="27" ncloc="27" packages="2" files="2" classes="2"/>
+    <package name="utils">
+      <metrics statements="6" coveredstatements="5" conditionals="6" coveredconditionals="4" methods="2" coveredmethods="1"/>
+      <file name="logger.js" path="/home/afolarinwa-soleye/Desktop/Stellar-PolyMarket/backend/src/utils/logger.js">
+        <metrics statements="6" coveredstatements="5" conditionals="6" coveredconditionals="4" methods="2" coveredmethods="1"/>
+        <line num="1" count="1" type="stmt"/>
+        <line num="15" count="1" type="stmt"/>
+        <line num="19" count="6" type="stmt"/>
+        <line num="44" count="0" type="stmt"/>
+        <line num="47" count="1" type="stmt"/>
+        <line num="48" count="1" type="stmt"/>
+      </file>
+    </package>
+    <package name="workers">
+      <metrics statements="21" coveredstatements="21" conditionals="10" coveredconditionals="10" methods="2" coveredmethods="2"/>
+      <file name="whale-watcher.js" path="/home/afolarinwa-soleye/Desktop/Stellar-PolyMarket/backend/src/workers/whale-watcher.js">
+        <metrics statements="21" coveredstatements="21" conditionals="10" coveredconditionals="10" methods="2" coveredmethods="2"/>
+        <line num="1" count="1" type="stmt"/>
+        <line num="2" count="1" type="stmt"/>
+        <line num="8" count="1" type="cond" truecount="4" falsecount="0"/>
+        <line num="17" count="4" type="stmt"/>
+        <line num="19" count="4" type="cond" truecount="2" falsecount="0"/>
+        <line num="20" count="1" type="stmt"/>
+        <line num="23" count="3" type="cond" truecount="2" falsecount="0"/>
+        <line num="24" count="2" type="stmt"/>
+        <line num="30" count="2" type="stmt"/>
+        <line num="31" count="2" type="stmt"/>
+        <line num="34" count="1" type="stmt"/>
+        <line num="41" count="3" type="stmt"/>
+        <line num="43" count="3" type="cond" truecount="2" falsecount="0"/>
+        <line num="44" count="1" type="stmt"/>
+        <line num="45" count="1" type="stmt"/>
+        <line num="48" count="2" type="stmt"/>
+        <line num="56" count="2" type="stmt"/>
+        <line num="57" count="2" type="stmt"/>
+        <line num="58" count="1" type="stmt"/>
+        <line num="60" count="1" type="stmt"/>
+        <line num="64" count="1" type="stmt"/>
+      </file>
+    </package>
+  </project>
+</coverage>
