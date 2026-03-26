@@ -1,13 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-<<<<<<< feat/150-search-filter-engine
 import { useSearchParams } from "next/navigation";
-=======
-import dynamic from "next/dynamic";
->>>>>>> Default
 import { useWalletContext } from "../context/WalletContext";
+import MarketCard from "../components/MarketCard";
 import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
-<<<<<<< feat/150-search-filter-engine
 import MarketFilters from "../components/MarketFilters";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
@@ -16,62 +12,10 @@ import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
 import ContractErrorBoundary from "../components/ContractErrorBoundary";
-=======
->>>>>>> Default
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
-<<<<<<< feat/150-search-filter-engine
-=======
-
-// Route-level code splitting: these components are large and not needed for
-// the initial paint — lazy-load them so the first JS bundle stays small.
-
-/** MarketCard pulls in recharts (PoolOwnershipChart) + stellar-sdk — defer it */
-const MarketCard = dynamic(() => import("../components/MarketCard"), {
-  loading: () => <MarketCardSkeleton />,
-});
-
-/** NotificationManager uses socket.io-client — not needed on first paint */
-const NotificationManager = dynamic(
-  () => import("../components/NotificationManager"),
-  { ssr: false }
-);
-
-/** LiveActivityFeed opens a WebSocket — defer until after hydration */
-const LiveActivityFeed = dynamic(
-  () => import("../components/LiveActivityFeed"),
-  { ssr: false }
-);
-
-/** MobileShell + PullToRefresh are mobile-only — skip on desktop SSR */
-const MobileShell = dynamic(() => import("../components/mobile/MobileShell"), {
-  ssr: false,
-});
-const PullToRefresh = dynamic(
-  () => import("../components/mobile/PullToRefresh"),
-  { ssr: false }
-);
-
-/** Error modals are rarely shown — no need to include in initial bundle */
-const InsufficientGasModal = dynamic(
-  () => import("../components/ErrorStates/InsufficientGasModal"),
-  { ssr: false }
-);
-
-/** MarketDiscoveryGrid uses firebase queries — defer */
-const MarketDiscoveryGrid = dynamic(
-  () => import("../components/MarketDiscoveryGrid"),
-  { ssr: false }
-);
-
-/** ContractErrorBoundary wraps Redux store — defer with it */
-const ContractErrorBoundary = dynamic(
-  () => import("../components/ContractErrorBoundary"),
-  { ssr: false }
-);
->>>>>>> Default
 
 interface Market {
   id: number;
