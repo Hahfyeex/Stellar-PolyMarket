@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
 import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+import MarketFilters from "../components/MarketFilters";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
 import MobileShell from "../components/mobile/MobileShell";
@@ -13,6 +15,7 @@ import ContractErrorBoundary from "../components/ContractErrorBoundary";
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
 
 interface Market {
   id: number;
@@ -28,10 +31,21 @@ interface Market {
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const { theme, toggleTheme } = useTheme();
+  const searchParams = useSearchParams();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+
+  // Restore filter state from URL params on mount
+  const [filters, setFilters] = useState<SearchFilters>(() => ({
+    query: searchParams.get("q") ?? "",
+    category: searchParams.get("category") ?? "",
+    status: searchParams.get("status") ?? "",
+    sort: (searchParams.get("sort") as SortKey) ?? "newest",
+  }));
+
+  const filteredMarkets = useMarketSearch(markets, filters);
 
   const handleHelpClick = () => {
     trackEvent("help_doc_read", {
@@ -197,17 +211,18 @@ export default function Home() {
           </div>
 
           <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
+          <MarketFilters filters={filters} onChange={setFilters} />
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[1, 2, 3, 4].map((i) => (
                 <MarketCardSkeleton key={i} />
               ))}
             </div>
-          ) : markets.length === 0 ? (
-            <p className="text-gray-400">No markets yet.</p>
+          ) : filteredMarkets.length === 0 ? (
+            <p className="text-gray-400">No markets found.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {markets.map((market) => (
+              {filteredMarkets.map((market) => (
                 <div
                   key={market.id}
                   onClick={() => setActiveMarket(market)}
