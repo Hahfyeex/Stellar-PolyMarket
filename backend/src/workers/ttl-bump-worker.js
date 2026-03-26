@@ -8,6 +8,7 @@ const {
 } = require("@stellar/stellar-sdk");
 const db = require("../db");
 const logger = require("../utils/logger");
+const { getOracleFee } = require("../utils/fee-manager");
 
 /**
  * Soroban TTL Extension Worker
@@ -50,9 +51,10 @@ async function bumpAllMarketTTLs() {
           xdr.ScVal.scvU32(100000)
       );
 
+      const { fee, congested } = await getOracleFee();
       const account = await server.getLatestLedger().then(l => server.getAccount(adminKeypair.publicKey()));
       const tx = new TransactionBuilder(account, {
-        fee: "100000",
+        fee,
         networkPassphrase: NETWORK_PASSPHRASE,
       })
         .addOperation(call)

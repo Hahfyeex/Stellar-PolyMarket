@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
 import { useBettingSlip } from "../context/BettingSlipContext";
@@ -7,6 +7,9 @@ import PoolOwnershipChart from "./PoolOwnershipChart";
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useTrustline } from "../hooks/useTrustline";
 import TrustlineModal from "./TrustlineModal";
+import SlippageSettings from "./SlippageSettings";
+import SlippageWarningModal from "./SlippageWarningModal";
+import { useSlippageGuard } from "../hooks/useSlippageGuard";
 
 interface Market {
   id: number;
@@ -40,11 +43,25 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [showQueueFullToast, setShowQueueFullToast] = useState(false);
+  const [slippageWarning, setSlippageWarning] = useState<{
+    expectedPayout: number;
+    currentPayout: number;
+  } | null>(null);
 
   const { addBet } = useBettingSlip();
   const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
           checkAndRun, confirmTrustline, dismiss: dismissTrustline, retry: retryTrustline } = useTrustline();
+  const { snapshotOdds, checkSlippage } = useSlippageGuard();
   const isExpired = new Date(market.end_date) <= new Date();
+
+  // Snapshot odds whenever the user selects an outcome or changes amount
+  const outcomePool = parseFloat(market.total_pool) / market.outcomes.length;
+  const totalPool = parseFloat(market.total_pool);
+  useEffect(() => {
+    if (selectedOutcome !== null && amount) {
+      snapshotOdds(parseFloat(amount) || 0, outcomePool, totalPool);
+    }
+  }, [selectedOutcome, amount, outcomePool, totalPool, snapshotOdds]);
 
   const handleShareMarket = async () => {
     const shareData = {
@@ -83,9 +100,19 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress) return;
 
+    // Check slippage against current pool state before submitting
+    const check = checkSlippage(
+      parseFloat(amount),
+      outcomePool,
+      totalPool,
+      slippageTolerance
+    );
+    if (check.exceeded) {
+      setSlippageWarning({ expectedPayout: check.expectedPayout, currentPayout: check.currentPayout });
+      return;
+    }
+
     // If this market uses a custom asset, run the trustline check first.
-    // checkAndRun will call the inner function directly if trustline exists,
-    // or show the modal and resume after the user sets it up.
     if (market.asset) {
       await checkAndRun(market.asset, walletAddress, submitBet);
     } else {
@@ -131,6 +158,25 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         onDismiss={dismissTrustline}
         onRetry={retryTrustline}
       />
+
+      {/* Slippage warning modal — shown when drift exceeds tolerance */}
+      {slippageWarning && (
+        <SlippageWarningModal
+          expectedPayout={slippageWarning.expectedPayout}
+          currentPayout={slippageWarning.currentPayout}
+          tolerancePct={slippageTolerance}
+          onProceed={async () => {
+            setSlippageWarning(null);
+            // User chose to proceed despite slippage — submit directly
+            if (market.asset) {
+              await checkAndRun(market.asset, walletAddress!, submitBet);
+            } else {
+              await submitBet();
+            }
+          }}
+          onCancel={() => setSlippageWarning(null)}
+        />
+      )}
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
         <div className="flex items-center gap-2">
@@ -225,20 +271,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
           {/* Slippage tolerance + clear form row */}
           <div className="flex items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-xs text-gray-400">
-              Slippage
-              <select
-                data-testid="slippage-select"
-                value={slippageTolerance}
-                onChange={(e) => setSlippageTolerance(parseFloat(e.target.value))}
-                className="bg-gray-800 text-white rounded px-2 py-1 text-xs border border-gray-700 outline-none"
-              >
-                <option value={0.1}>0.1%</option>
-                <option value={0.5}>0.5%</option>
-                <option value={1}>1%</option>
-                <option value={2}>2%</option>
-              </select>
-            </label>
+            <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
             <button
               data-testid="clear-form"
               onClick={() => { clearForm(); setMessage(""); }}
@@ -247,6 +280,17 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
               Clear form
             </button>
           </div>
+
+          {/* Payout tooltip — live Soroban simulation */}
+          <PayoutTooltip
+            contractId={process.env.NEXT_PUBLIC_CONTRACT_ID ?? null}
+            walletAddress={walletAddress}
+            marketId={market.id}
+            outcomeIndex={selectedOutcome}
+            stakeAmount={parseFloat(amount) || 0}
+            poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}
+            totalPool={parseFloat(market.total_pool)}
+          />
         </div>
       )}
 

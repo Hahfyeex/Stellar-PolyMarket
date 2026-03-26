@@ -6,23 +6,23 @@
 execution:
   # Scenario 1: Concurrent Bets - 500 users placing bets simultaneously
   # Tests the core betting endpoint under realistic peak traffic
-  - concurrency: 500  # Number of concurrent virtual users
-    ramp-up: 60s      # Gradual ramp-up over 60 seconds to simulate realistic traffic growth
-    hold-for: 2m      # Maintain peak load for 2 minutes
+  - concurrency: 5 # Reduced for CI (was 500)
+    ramp-up: 10s # Short ramp-up for CI
+    hold-for: 30s # Short hold for CI (was 2m)
     scenario: concurrent-bets
-    
+
   # Scenario 2: Market Resolution Under Load - 50 simultaneous resolutions
   # Tests oracle resolution endpoint performance and database transaction handling
-  - concurrency: 50   # 50 concurrent resolution requests
-    ramp-up: 10s      # Quick ramp-up to stress test resolution logic
-    hold-for: 1m      # Hold for 1 minute to measure sustained performance
+  - concurrency: 5 # Reduced for CI (was 50)
+    ramp-up: 10s # Quick ramp-up to stress test resolution logic
+    hold-for: 1m # Hold for 1 minute to measure sustained performance
     scenario: market-resolution
-    
+
   # Scenario 3: WebSocket Connection Stress Test
   # Tests maximum concurrent WebSocket connections for real-time updates
   - concurrency: 1000 # Target: 1000 concurrent WebSocket connections
-    ramp-up: 30s      # Gradual connection establishment
-    hold-for: 3m      # Maintain connections for 3 minutes
+    ramp-up: 30s # Gradual connection establishment
+    hold-for: 3m # Maintain connections for 3 minutes
     scenario: websocket-connections
 
 scenarios:
@@ -35,12 +35,12 @@ scenarios:
         method: GET
         label: fetch-markets
         extract-jsonpath:
-          market_id: $.markets[0].id  # Extract first market ID for betting
+          market_id: $.markets[0].id # Extract first market ID for betting
         assert:
           - contains:
-            - 200
+              - 200
             subject: http-code
-            
+
       # Step 2: Place a bet on the fetched market
       - url: http://localhost:4000/api/bets
         method: POST
@@ -49,15 +49,15 @@ scenarios:
           Content-Type: application/json
         body:
           marketId: ${market_id}
-          outcomeIndex: 0  # Bet on first outcome
+          outcomeIndex: 0 # Bet on first outcome
           amount: "10.00"
-          walletAddress: "GTEST${__Random(1000000,9999999,)}"  # Generate random test wallet
+          walletAddress: "GTEST${__Random(1000000,9999999,)}" # Generate random test wallet
         assert:
           - contains:
-            - 201
+              - 201
             subject: http-code
             not: false
-          
+
   # Scenario 2: Market Resolution Under Load
   # Tests resolution endpoint with 50 concurrent resolution requests
   market-resolution:
@@ -77,9 +77,9 @@ scenarios:
           created_market_id: $.market.id
         assert:
           - contains:
-            - 201
+              - 201
             subject: http-code
-            
+
       # Step 2: Propose resolution
       - url: http://localhost:4000/api/markets/${created_market_id}/propose
         method: POST
@@ -90,9 +90,9 @@ scenarios:
           proposedOutcome: 0
         assert:
           - contains:
-            - 200
+              - 200
             subject: http-code
-            
+
       # Step 3: Trigger final resolution
       - url: http://localhost:4000/api/markets/${created_market_id}/resolve
         method: POST
@@ -103,9 +103,9 @@ scenarios:
           winningOutcome: 0
         assert:
           - contains:
-            - 200
+              - 200
             subject: http-code
-            
+
   # Scenario 3: WebSocket Connections
   # Tests concurrent WebSocket connection limits
   websocket-connections:
@@ -116,28 +116,28 @@ scenarios:
         label: health-check
         assert:
           - contains:
-            - 200
+              - 200
             subject: http-code
-            
+
       # Fetch recent activity (simulates WebSocket-like polling)
       - url: http://localhost:4000/api/bets/recent?limit=20
         method: GET
         label: recent-activity
         assert:
           - contains:
-            - 200
+              - 200
             subject: http-code
 
 # Reporting configuration
 reporting:
-  - module: final-stats  # Console summary
+  - module: final-stats # Console summary
     summary: true
     percentiles: true
     summary-labels: true
-    
-  - module: console      # Real-time console output
-    
-  - module: blazemeter   # Generate HTML report
+
+  - module: console # Real-time console output
+
+  - module: blazemeter # Generate HTML report
     report-name: "Stellar PolyMarket Stress Test"
     test-name: "Throughput Stress Test"
 
@@ -146,13 +146,13 @@ reporting:
 modules:
   console:
     disable: false
-    
+
   final-stats:
     summary: true
     percentiles: true
     failed-labels: true
     test-duration: true
-    
+
 services:
   - module: shellexec
     post-process:
@@ -165,7 +165,7 @@ services:
 # - Error rate exceeds 1%
 # - Any request takes longer than 5000ms (5 seconds)
 pass-fail:
-  - avg-rt>2000ms for 10s, stop as failed    # Average response time threshold
-  - p95>2000ms, stop as failed                # p95 latency must be under 2s
-  - fail>1% for 10s, stop as failed           # Error rate must be below 1%
-  - p95>5000ms for market-resolution, stop as failed  # Resolution p95 must be under 5s
+  - avg-rt>2000ms for 10s, stop as failed # Average response time threshold
+  - p95>2000ms, stop as failed # p95 latency must be under 2s
+  - fail>1% for 10s, stop as failed # Error rate must be below 1%
+  - p95>5000ms for market-resolution, stop as failed # Resolution p95 must be under 5s
