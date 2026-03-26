@@ -60,7 +60,7 @@ jobs:
 
       - name: Install Soroban CLI (for optimization)
         run: |
-          cargo install cargo-binstall --locked
+          cargo install cargo-binstall@1.11.0 --locked
           cargo binstall soroban-cli --secure --locked -y
 
       - name: Optimize WASM with soroban contract optimize

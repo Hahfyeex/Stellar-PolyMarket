@@ -58,7 +58,7 @@ jobs:
       - name: Install Soroban CLI
         # Using cargo-binstall is 10x faster than compiling from source
         run: |
-          cargo install cargo-binstall
+          cargo install cargo-binstall@1.11.0
           cargo binstall soroban-cli --secure --locked -y
 
       - name: Build Smart Contract
