@@ -8,6 +8,12 @@ use crate::access::{
     check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
     AccessRole, check_whitelisted_token, set_whitelisted_token,
 };
+mod events;
+use crate::events::{
+    emit_bet_placed, emit_contract_initialized, emit_dispute_raised, emit_fee_collected,
+    emit_lp_reward_claimed, emit_liquidity_provided, emit_market_created, emit_market_paused,
+    emit_market_resolved, emit_market_voided, emit_payout_claimed,
+};
 mod lmsr;
 mod position_token;
 use crate::lmsr::{lmsr_cost, lmsr_price};
@@ -279,6 +285,7 @@ impl PredictionMarket {
         set_role(&env, AccessRole::Admin, &admin);
         // Platform starts active by default
         set_platform_status(&env, AccessPlatformStatus::Active);
+        emit_contract_initialized(&env, &admin);
     }
 
     /// Update the whitelist status of a token (admin only).
@@ -359,17 +366,12 @@ impl PredictionMarket {
             }
 
             // Emit FeeCollected event for off-chain indexing.
-            // Topics: ("FeeCollected", creator)
-            // Data: (fee_destination, creation_fee, fee_mode)
             let fee_mode: FeeMode = env
                 .storage()
                 .instance()
                 .get(&DataKey::FeeModeConfig)
                 .unwrap_or(FeeMode::Treasury);
-            env.events().publish(
-                (symbol_short!("FeeColl"), creator.clone()),
-                (fee_destination, creation_fee, fee_mode),
-            );
+            emit_fee_collected(&env, id, &creator, &fee_destination, creation_fee);
         }
         // --- End fee collection ---
 
@@ -418,6 +420,18 @@ impl PredictionMarket {
             .extend_ttl(&DataKey::OutcomePoolBalances(id), 100, 1_000_000);
         
         env.storage().instance().extend_ttl(100, 1_000_000);
+
+        emit_market_created(
+            &env,
+            id,
+            &creator,
+            &market.question,
+            market.options.len(),
+            deadline,
+            &market.token,
+            lmsr_b,
+            creation_fee,
+        );
     }
 
     /// Place a bet on an option.
@@ -567,7 +581,7 @@ impl PredictionMarket {
             .set(&DataKey::TotalShares(market_id), &(shares + cost_delta));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
-        env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), cost_delta, option_index));
+        emit_bet_placed(&env, market_id, &bettor, option_index, cost_delta, amount);
     }
 
     /// Seed a market's liquidity pool. Transfers `amount` from `provider` into the contract
@@ -625,6 +639,7 @@ impl PredictionMarket {
             (symbol_short!("LpSeed"), market_id),
             (provider, amount),
         );
+        emit_liquidity_provided(&env, market_id, &provider, amount);
     }
 
     /// Claim proportional share of the fee pool for a liquidity provider.
@@ -692,6 +707,7 @@ impl PredictionMarket {
             (symbol_short!("LpClaim"), market_id),
             (lp, reward),
         );
+        emit_lp_reward_claimed(&env, market_id, &lp, reward);
 
         reward
     }
@@ -703,6 +719,7 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::IsPaused(market_id), &paused);
+        emit_market_paused(&env, market_id, paused);
     }
 
     /// Graceful shutdown / re-activation (admin only).
@@ -1044,11 +1061,8 @@ impl PredictionMarket {
             .persistent()
             .set(&DataKey::Market(market_id), &market);
 
-        // Emit DisputeBondEscrowed for visual validation / indexing
-        env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "DisputeBondEscrowed"), market_id, disputer),
-            bond_amount
-        );
+        // Emit DisputeRaised for visual validation / indexing
+        emit_dispute_raised(&env, market_id, &disputer, bond_amount);
     }
 
     /// Resolve market finally after potential dispute.
@@ -1096,7 +1110,7 @@ impl PredictionMarket {
                 market.status = MarketStatus::Voided;
                 env.storage().persistent().set(&DataKey::Market(market_id), &market);
                 env.storage().persistent().extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
-                env.events().publish((symbol_short!("Voided"), market_id), cond_market.winning_outcome);
+                emit_market_voided(&env, market_id, cond_id, cond_market.winning_outcome);
                 return;
             }
         }
@@ -1134,6 +1148,14 @@ impl PredictionMarket {
             }
         }
         env.storage().persistent().extend_ttl(&DataKey::ClaimDeadline(market_id), 100, 1_000_000);
+
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+        let fee_bps = calculate_dynamic_fee(total_pool);
+        emit_market_resolved(&env, market_id, winning_outcome, total_pool, fee_bps);
     }
 
     /// Opens a dispute voting window for 24 hours. Callable by any token holder within 24h of resolution.
@@ -1178,7 +1200,7 @@ impl PredictionMarket {
             .persistent()
             .set(&DataKey::Dispute(market_id), &dispute);
 
-        env.events().publish((soroban_sdk::Symbol::new(&env, "DisputeOpened"), market_id), caller);
+        env.events().publish((soroban_sdk::Symbol::new(&env, "DisputeOpened"), market_id), caller.clone());
     }
 
     /// Cast a weighted vote in an active dispute using STELLA token balance (market.token).
@@ -1683,6 +1705,15 @@ impl PredictionMarket {
             .instance()
             .set(&DataKey::SettlementCursor(market_id), &end);
 
+        // Emit typed PayoutClaimed event with cursor position for downstream tracking
+        let total_distributed: i128 = winners
+            .iter()
+            .skip(cursor as usize)
+            .take((end - cursor) as usize)
+            .map(|(_, amount)| (amount * payout_pool) / winning_stake)
+            .sum();
+        emit_payout_claimed(env, market_id, paid, total_distributed, end);
+
         paid
     }
 
@@ -1851,11 +1882,8 @@ impl PredictionMarket {
             total_distributed += payout;
         }
 
-        // Emit BatchPayoutProcessed event for off-chain indexing
-        env.events().publish(
-            (symbol_short!("BatchPay"), market_id),
-            (paid_count, total_distributed),
-        );
+        // Emit PayoutClaimed event for off-chain indexing
+        emit_payout_claimed(&env, market_id, paid_count, total_distributed, 0);
 
         paid_count
     }
