@@ -54,6 +54,10 @@ pub enum DataKey {
     FeeDestination,
     /// Fee routing mode: Burn or Treasury — Instance storage.
     FeeModeConfig,
+    /// Maximum bet amount in stroops — Instance storage.
+    MaxBetAmount,
+    /// Minimum bet amount in stroops — Instance storage. Default: 1_000_000 (0.1 XLM).
+    MinBetAmount,
 }
 
 #[contracttype]
@@ -268,6 +272,21 @@ impl PredictionMarket {
         bettor.require_auth();
         assert!(amount > 0, "Amount must be positive");
 
+        // Enforce configurable min/max bet caps
+        let min_bet: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinBetAmount)
+            .unwrap_or(1_000_000i128); // default 0.1 XLM in stroops
+        assert!(amount >= min_bet, "bet below minimum");
+
+        let max_bet: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxBetAmount)
+            .unwrap_or(i128::MAX);
+        assert!(amount <= max_bet, "bet exceeds cap");
+
         // Hot read: is_paused from Instance
         let paused: bool = env
             .storage()
@@ -331,6 +350,7 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &(shares + amount));
+        env.storage().instance().extend_ttl(100, 1_000_000);
 
         // Emit Bet event
         // Topics: ("Bet", market_id)
@@ -400,6 +420,28 @@ impl PredictionMarket {
             .get(&DataKey::FeeModeConfig)
             .unwrap_or(FeeMode::Treasury);
         (fee, dest, mode)
+    }
+
+    /// Update the min/max bet caps (admin / FeeSetter role).
+    /// `min_amount` — minimum bet in stroops (must be >= 1).
+    /// `max_amount` — maximum bet in stroops (must be >= min_amount).
+    /// Pass 0 for `max_amount` to remove the cap (sets to i128::MAX internally).
+    pub fn update_bet_limits(env: Env, min_amount: i128, max_amount: i128) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        assert!(min_amount >= 1, "min must be >= 1");
+        let effective_max = if max_amount == 0 { i128::MAX } else { max_amount };
+        assert!(effective_max >= min_amount, "max must be >= min");
+        env.storage().instance().set(&DataKey::MinBetAmount, &min_amount);
+        env.storage().instance().set(&DataKey::MaxBetAmount, &effective_max);
+        env.storage().instance().extend_ttl(100, 1_000_000);
+    }
+
+    /// Get current bet limits. Returns (min_amount, max_amount).
+    pub fn get_bet_limits(env: Env) -> (i128, i128) {
+        let min: i128 = env.storage().instance().get(&DataKey::MinBetAmount).unwrap_or(1_000_000);
+        let max: i128 = env.storage().instance().get(&DataKey::MaxBetAmount).unwrap_or(i128::MAX);
+        (min, max)
     }
 
     /// Propose market resolution — only admin (oracle-triggered).
@@ -1891,6 +1933,80 @@ mod tests {
             &token,
         );
         assert_eq!(client.get_market(&2u64).id, 2u64);
+    }
+
+    // ── Bet caps ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_bet_limits_defaults() {
+        let (_, client, _, _, _) = setup();
+        let (min, max) = client.get_bet_limits();
+        assert_eq!(min, 1_000_000i128);
+        assert_eq!(max, i128::MAX);
+    }
+
+    #[test]
+    fn test_update_bet_limits_and_get() {
+        let (_, client, _, _, _) = setup();
+        client.update_bet_limits(&5_000_000i128, &100_000_000i128);
+        let (min, max) = client.get_bet_limits();
+        assert_eq!(min, 5_000_000i128);
+        assert_eq!(max, 100_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "bet exceeds cap")]
+    fn test_bet_above_max_panics() {
+        let (env, client, _, _, _) = setup();
+        client.update_bet_limits(&1_000_000i128, &10_000_000i128);
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &10_000_001i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "bet below minimum")]
+    fn test_bet_below_min_panics() {
+        let (env, client, _, _, _) = setup();
+        client.update_bet_limits(&5_000_000i128, &100_000_000i128);
+        let bettor = Address::generate(&env);
+        client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
+    }
+
+    #[test]
+    fn test_bet_at_exact_limits_succeeds() {
+        let (env, client, _, _, _) = setup();
+        client.update_bet_limits(&1_000_000i128, &50_000_000i128);
+        let bettor1 = Address::generate(&env);
+        let bettor2 = Address::generate(&env);
+        // Exactly at min
+        client.place_bet(&1u64, &0u32, &bettor1, &1_000_000i128);
+        // Exactly at max
+        client.place_bet(&1u64, &1u32, &bettor2, &50_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "max must be >= min")]
+    fn test_update_bet_limits_max_less_than_min_panics() {
+        let (_, client, _, _, _) = setup();
+        client.update_bet_limits(&10_000_000i128, &5_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "min must be >= 1")]
+    fn test_update_bet_limits_zero_min_panics() {
+        let (_, client, _, _, _) = setup();
+        client.update_bet_limits(&0i128, &10_000_000i128);
+    }
+
+    #[test]
+    fn test_update_bet_limits_zero_max_removes_cap() {
+        let (_, client, _, _, _) = setup();
+        // First set a cap
+        client.update_bet_limits(&1_000_000i128, &10_000_000i128);
+        // Pass 0 to remove cap
+        client.update_bet_limits(&1_000_000i128, &0i128);
+        let (_, max) = client.get_bet_limits();
+        assert_eq!(max, i128::MAX);
     }
 }
 
