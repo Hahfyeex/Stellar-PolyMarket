@@ -156,7 +156,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::UserPosition(market_id))
             .unwrap();
-        positions.set(bettor, (option_index, amount));
+        positions.set(bettor.clone(), (option_index, amount));
         env.storage()
             .persistent()
             .set(&DataKey::UserPosition(market_id), &positions);
