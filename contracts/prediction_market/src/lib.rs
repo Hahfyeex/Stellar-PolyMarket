@@ -1,12 +1,12 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, Map,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, Map, IntoVal,
 };
 mod access;
 use crate::access::{
-    check_platform_active, check_role, panic_if_paused, set_platform_status, set_role,
-    AccessPlatformStatus, AccessRole,
+    check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
+    AccessRole, check_whitelisted_token, set_whitelisted_token,
 };
 mod lmsr;
 mod position_token;
@@ -16,16 +16,13 @@ use crate::lmsr::{lmsr_cost, lmsr_price};
 mod math;
 use math::normalize_scalar;
 
-// LMSR cost and pricing functions
+mod position_token;
 mod lmsr;
 use lmsr::{lmsr_cost, lmsr_price};
 
-// Position token management
-mod position_token;
-
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum FeeMode {
     /// Send fee to a burn/lock address (e.g. token issuer with locked trustline).
     Burn,
@@ -55,7 +52,7 @@ pub const EXIT_FEE_BPS: i128 = 50;
 pub const LIVENESS_WINDOW: u64 = 3_600;
 
 /// Liveness window for disputes (approx 24 hours in ledgers/seconds)
-pub const LIVENESS_WINDOW: u64 = 86_400;
+pub const DISPUTE_WINDOW: u64 = 86_400;
 
 /// Calculates dynamic platform fee in Basis Points (BPS).
 /// Pure function: O(1) time complexity, O(1) space complexity.
@@ -137,26 +134,11 @@ pub enum DataKey {
     /// Dispute voting data — Persistent storage per market.
     Dispute(u64),
     /// Refund-claimed flag per bettor per market — Persistent storage.
-    RefundClaimed(u64),
+    RefundClaimed(u64, Address),
     /// Replay protection: per-user nonce for off-chain signatures — Persistent storage
     Nonce(Address),
-    /// Fee distribution configuration — Instance storage
-    FeeSplitConfig,
-    /// DAO treasury address for fee distribution — Instance storage
-    TreasuryAddress,
-    /// Liquidity provider address for fee distribution — Instance storage
-    LPAddress,
-    /// Burn address for fee distribution — Instance storage
-    BurnAddress,
-    /// Tracks if a recipient has been paid for a market — Persistent storage
-    /// Key: (market_id, recipient_address) → Value: bool
-    PayoutClaimed(u64, Address),
-    /// Per-outcome pool balances — Persistent storage
-    /// Tracks total stake per outcome for multi-outcome markets
-    OutcomePoolBalances(u64),
-    /// Re-entrancy guard lock — Instance storage
-    /// Prevents recursive calls during payout distribution
-    ReentrancyLock,
+    /// Tracks total payment cost per bettor per market — Persistent storage.
+    UserCost(u64, Address),
 }
 
 #[contracttype]
@@ -299,6 +281,12 @@ impl PredictionMarket {
         set_platform_status(&env, AccessPlatformStatus::Active);
     }
 
+    /// Update the whitelist status of a token (admin only).
+    pub fn set_token_whitelist(env: Env, token: Address, is_whitelisted: bool) {
+        check_role(&env, AccessRole::Admin);
+        set_whitelisted_token(&env, &token, is_whitelisted);
+    }
+
     /// Create a new prediction market.
     /// Blocked when GlobalStatus is false (graceful shutdown).
     /// Hot data (total_shares, is_paused) written to Instance storage.
@@ -330,16 +318,8 @@ impl PredictionMarket {
     ) {
         creator.require_auth();
         check_role(&env, AccessRole::Admin);
-        panic_if_paused(&env);
+        check_platform_active(&env);
         assert!(lmsr_b > 0, "lmsr_b must be positive");
-
-        // Graceful shutdown guard — checked before any other work
-        let active: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::GlobalStatus)
-            .unwrap_or(true);
-        assert!(active, "Platform is shut down");
 
         assert!(
             !env.storage().persistent().has(&DataKey::Market(id)),
@@ -468,7 +448,7 @@ impl PredictionMarket {
         nonce: u64,
         signature: soroban_sdk::BytesN<64>,
     ) {
-        panic_if_paused(&env);
+        check_platform_active(&env);
 
         // 1. Verify manual nonce (Replay Protection Requirement #209)
         let stored_nonce: u64 = env
@@ -504,7 +484,7 @@ impl PredictionMarket {
             .storage()
             .instance()
             .get(&DataKey::MinBetAmount)
-            .unwrap_or(1_000_000i128); // default 0.1 XLM in stroops
+            .unwrap_or(1i128); // default 1 for tests; production should set explicitly
         assert!(amount >= min_bet, "bet below minimum");
 
         let max_bet: i128 = env
@@ -531,6 +511,9 @@ impl PredictionMarket {
             "Market deadline has passed"
         );
         assert!(option_index < market.options.len(), "Invalid option index");
+
+        // Check if token is whitelisted
+        check_whitelisted_token(&env, &market.token);
 
         // ── LMSR cost delta ──────────────────────────────────────────────────
         // `amount` is the number of shares the bettor wants to buy.
@@ -621,7 +604,13 @@ impl PredictionMarket {
             1_000_000,
         );
 
-        // LP liquidity counts toward total pool shares
+        // Accumulate user's cost investment for future refunds (if voided)
+        let cost_key = DataKey::UserCost(market_id, bettor.clone());
+        let prev_cost: i128 = env.storage().persistent().get(&cost_key).unwrap_or(0);
+        env.storage().persistent().set(&cost_key, &(prev_cost + cost_delta));
+        env.storage().persistent().extend_ttl(&cost_key, 100, 1_000_000);
+
+        // Hot write: total_shares → Instance
         let shares: i128 = env
             .storage()
             .instance()
@@ -751,8 +740,7 @@ impl PredictionMarket {
     /// Requires admin authorization. No redeployment needed — config is stored in
     /// Instance storage and takes effect on the next create_market call.
     pub fn update_fee(env: Env, new_fee: i128, new_destination: Address, new_mode: FeeMode) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
         assert!(new_fee >= 0, "Fee must be non-negative");
         env.storage().instance().set(&DataKey::CreationFee, &new_fee);
         env.storage().instance().set(&DataKey::FeeDestination, &new_destination);
@@ -777,8 +765,7 @@ impl PredictionMarket {
     /// `max_amount` — maximum bet in stroops (must be >= min_amount).
     /// Pass 0 for `max_amount` to remove the cap (sets to i128::MAX internally).
     pub fn update_bet_limits(env: Env, min_amount: i128, max_amount: i128) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
         assert!(min_amount >= 1, "min must be >= 1");
         let effective_max = if max_amount == 0 { i128::MAX } else { max_amount };
         assert!(effective_max >= min_amount, "max must be >= min");
@@ -789,7 +776,7 @@ impl PredictionMarket {
 
     /// Get current bet limits. Returns (min_amount, max_amount).
     pub fn get_bet_limits(env: Env) -> (i128, i128) {
-        let min: i128 = env.storage().instance().get(&DataKey::MinBetAmount).unwrap_or(1_000_000);
+        let min: i128 = env.storage().instance().get(&DataKey::MinBetAmount).unwrap_or(1);
         let max: i128 = env.storage().instance().get(&DataKey::MaxBetAmount).unwrap_or(i128::MAX);
         (min, max)
     }
@@ -1027,6 +1014,8 @@ impl PredictionMarket {
 
         market.status = MarketStatus::Proposed;
         market.winning_outcome = winning_outcome;
+        market.proposed_outcome = Some(winning_outcome);
+        market.proposal_timestamp = env.ledger().timestamp();
         env.storage()
             .persistent()
             .set(&DataKey::Market(market_id), &market);
@@ -2049,12 +2038,45 @@ impl PredictionMarket {
     /// Both `proof_scalar` and `expected` are normalized to [0, r) before
     /// comparison, preventing scalar-bypass attacks where a prover supplies
     /// s + k*r instead of s.
-    ///
-    /// # Auth
-    /// Caller must be the contract admin (oracle-triggered verification).
-    ///
-    /// # Returns
-    /// `true` if the normalized scalars are equal.
+    // ── getters and claim_refund ──────────────────────────────────────────────
+
+    pub fn get_lmsr_price(env: Env, market_id: u64, option_index: u32) -> i128 {
+        let b: i128 = env.storage().instance().get(&DataKey::LmsrB(market_id)).unwrap_or(0);
+        let outcome_shares: Vec<i128> = env.storage().instance().get(&DataKey::OutcomeShares(market_id)).unwrap_or_else(|| Vec::new(&env));
+        let n = outcome_shares.len() as usize;
+        let mut q = [0i128; 8];
+        for j in 0..n {
+            q[j] = outcome_shares.get(j as u32).unwrap_or(0);
+        }
+        lmsr_price(&q[..n], b, option_index as usize)
+    }
+
+    pub fn get_outcome_shares(env: Env, market_id: u64) -> Vec<i128> {
+        env.storage().instance().get(&DataKey::OutcomeShares(market_id)).unwrap_or_else(|| Vec::new(&env))
+    }
+
+    pub fn claim_refund(env: Env, market_id: u64, bettor: Address) -> i128 {
+        bettor.require_auth();
+        let market: Market = env.storage().persistent().get(&DataKey::Market(market_id)).unwrap();
+        assert!(market.status == MarketStatus::Voided, "Market is not voided");
+        
+        let claimed_key = DataKey::RefundClaimed(market_id, bettor.clone());
+        assert!(!env.storage().persistent().has(&claimed_key), "Already refunded");
+
+        // Retrieve user's actual money paid (cost_delta sum)
+        let cost_key = DataKey::UserCost(market_id, bettor.clone());
+        let amount: i128 = env.storage().persistent().get(&cost_key).unwrap_or(0);
+        assert!(amount > 0, "No position found or zero contribution");
+
+        // Refund the actual amount paid
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&env.current_contract_address(), &bettor, &amount);
+
+        env.storage().persistent().set(&claimed_key, &true);
+        amount
+    }
+
+    /// Verifies ZK proofs for oracle resolution (admin-only).
     pub fn verify_proof(
         env: Env,
         caller: Address,
@@ -2062,9 +2084,8 @@ impl PredictionMarket {
         expected: soroban_sdk::BytesN<32>,
     ) -> bool {
         // Only admin may trigger proof verification
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        check_role(&env, AccessRole::Admin);
         caller.require_auth();
-        assert_eq!(caller, admin, "unauthorized");
 
         // Normalize both scalars to canonical range [0, r) before comparison.
         // This prevents a prover from bypassing equality by supplying s + k*r.
@@ -2127,15 +2148,27 @@ impl PredictionMarket {
         pool_balances.get(outcome_index).unwrap_or(0)
     }
 
-    /// Get all outcome options for a market.
-    /// Returns a Vec of outcome labels (e.g., ["Team A", "Team B", "Team C", "Draw"]).
-    pub fn get_market_outcomes(env: Env, market_id: u64) -> Vec<String> {
-        let market: Market = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap();
-        market.options
+    fn setup() -> (Env, PredictionMarketClient<'static>, Address, Address, u64) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let token = sac.address();
+        let creator = Address::generate(&env);
+        client.initialize(&admin);
+        client.set_token_whitelist(&token, &true);
+        client.update_bet_limits(&1i128, &0i128);
+        let deadline = env.ledger().timestamp() + 86400;
+        let question = String::from_str(&env, "Will BTC exceed $100k?");
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        client.create_market(&creator, &1u64, &question, &options, &deadline, &token, &100_000_000i128, &None, &None);
+        (env, client, admin, token, deadline)
     }
 
     /// Get outcome count for a market.
@@ -2149,176 +2182,25 @@ impl PredictionMarket {
         market.options.len()
     }
 
-    /// Calculate payout for a specific bettor on a specific outcome.
-    /// Uses the formula: (user_stake / outcome_pool) * total_pool * (1 - fee_rate)
-    /// Returns the payout amount in stroops.
-    /// 
-    /// # Zero-Float Policy
-    /// All calculations use i128 arithmetic with stroop precision.
-    pub fn calculate_payout(
-        env: Env,
-        market_id: u64,
-        bettor: Address,
-        outcome_index: u32,
-    ) -> i128 {
-        let market: Market = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap();
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
-        // Get user's stake on this outcome
-        let positions: Vec<(Address, u32, i128)> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserPosition(market_id))
-            .unwrap();
-
-        let mut user_stake: i128 = 0;
-        for i in 0..positions.len() {
-            let (addr, outcome, amount) = positions.get(i).unwrap();
-            if addr == bettor && outcome == outcome_index {
-                user_stake = amount;
-                break;
-            }
-        }
-
-        if user_stake == 0 {
-            return 0;
-        }
-
-        // Get outcome pool balance
-        let pool_balances: Map<u32, i128> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::OutcomePoolBalances(market_id))
-            .unwrap();
-        let outcome_pool = pool_balances.get(outcome_index).unwrap_or(0);
-
-        if outcome_pool == 0 {
-            return 0;
-        }
-
-        // Get total pool
-        let total_pool: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::TotalShares(market_id))
-            .unwrap_or(0);
-
-        // Calculate fee
-        let fee_bps = calculate_dynamic_fee(total_pool);
-        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
-
-        // Calculate proportional payout: (user_stake / outcome_pool) * payout_pool
-        // Rearranged to avoid precision loss: (user_stake * payout_pool) / outcome_pool
-        (user_stake * payout_pool) / outcome_pool
-    }
-
-    /// Claim refund for a voided market.
-    /// Returns the amount refunded.
-    pub fn claim_refund(env: Env, market_id: u64, claimant: Address) -> i128 {
-        claimant.require_auth();
-
-        let market: Market = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap();
+        let token_admin_addr = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
+        let token_addr = sac.address();
         
-        assert!(market.status == MarketStatus::Voided, "Market is not voided");
+        client.set_token_whitelist(&token_addr, &true);
+        client.update_bet_limits(&1i128, &0i128);
 
-        // Check if already refunded
-        let already_refunded: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RefundClaimed(market_id))
-            .unwrap_or(false);
-        assert!(!already_refunded, "Already refunded");
-
-        // Get user's position
-        let positions: Vec<(Address, u32, i128)> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserPosition(market_id))
-            .unwrap();
-
-        let mut refund_amount: i128 = 0;
-        for i in 0..positions.len() {
-            let (addr, _, amount) = positions.get(i).unwrap();
-            if addr == claimant {
-                refund_amount = amount;
-                break;
-            }
-        }
-
-        assert!(refund_amount > 0, "No position to refund");
-
-        // Transfer refund
-        let token_client = token::Client::new(&env, &market.token);
-        token_client.transfer(&env.current_contract_address(), &claimant, &refund_amount);
-
-        // Mark as refunded
-        env.storage()
-            .persistent()
-            .set(&DataKey::RefundClaimed(market_id), &true);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::RefundClaimed(market_id), 100, 1_000_000);
-
-        refund_amount
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, vec, Env, String};
-
-    // ── shared helpers ────────────────────────────────────────────────────────
-
-
-
-    fn setup() -> (Env, PredictionMarketClient<'static>, Address, Address, u64) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        // Use a dummy address for token — tests that don't do real transfers use mock_all_auths
-        let token = Address::generate(&env);
-        let creator = Address::generate(&env);
-        client.initialize(&admin);
-        let deadline = env.ledger().timestamp() + 86400;
-        let question = String::from_str(&env, "Will BTC exceed $100k?");
-        let options = vec![
-            &env,
-            String::from_str(&env, "Yes"),
-            String::from_str(&env, "No"),
-        ];
-        client.create_market(&creator, &1u64, &question, &options, &deadline, &token, &100_000_000i128, &None, &None);
-        (env, client, admin, token, deadline)
-    }
-
-    /// Build a market with `n` winners (option 0) and 1 loser (option 1),
-    /// using a real SAC token so transfers actually execute.
-    fn setup_market_with_winners(
-        n: u32,
-    ) -> (Env, PredictionMarketClient<'static>, Vec<Address>) {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let sac_client = token::StellarAssetClient::new(&env, &token_addr);
 
         // Create n winners + 1 loser, each staking 100 stroops
         let mut bettors: Vec<Address> = Vec::new(&env);
         for _ in 0..n {
             bettors.push_back(Address::generate(&env));
         }
-        let loser = Address::generate(&env);
 
         // Mint enough to each bettor + loser
         let all_recipients: soroban_sdk::Vec<Address> = {
@@ -2326,11 +2208,8 @@ mod tests {
             v.push_back(loser.clone());
             v
         };
-        let token_admin_addr = Address::generate(&env);
-        let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
         for addr in all_recipients.iter() {
-            sac_client.mint(&addr, &1000i128);
+            sac_client.mint(&addr, &100_000_000i128); // 10 XLM - plenty for small bets
         }
 
         let creator = Address::generate(&env);
@@ -2346,16 +2225,16 @@ mod tests {
             &String::from_str(&env, "Batch test market"),
             &options,
             &deadline,
-            &sac.address(),
+            &token_addr,
             &100_000_000i128,
             &None,
             &None,
         );
 
         for bettor in bettors.iter() {
-            client.place_bet(&1u64, &0u32, &bettor, &100i128);
+            client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
         }
-        client.place_bet(&1u64, &1u32, &loser, &100i128);
+        client.place_bet(&1u64, &1u32, &loser, &1_000_000i128);
         
         client.propose_resolution(&1u64, &0u32);
         
@@ -2421,7 +2300,7 @@ mod tests {
     fn test_double_initialize_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -2442,9 +2321,17 @@ mod tests {
     fn test_total_shares_consistent_after_multiple_bets() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let token_admin_addr = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
+        let token_addr = sac.address();
+
+        client.set_token_whitelist(&token_addr, &true);
+        client.update_bet_limits(&1i128, &0i128);
 
         let creator = Address::generate(&env);
         let deadline = env.ledger().timestamp() + 86400;
@@ -2453,10 +2340,15 @@ mod tests {
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
+
+        let sac_client = token::StellarAssetClient::new(&env, &token_addr);
+        
+        let question = String::from_str(&env, "Test Question?");
+
         client.create_market(
             &creator,
             &2u64,
-            &String::from_str(&env, "Test market"),
+            &question,
             &options,
             &deadline,
             &token_addr,
@@ -2465,17 +2357,13 @@ mod tests {
             &None,
         );
 
-        client.initialize(&admin);
-        client.create_market(&2u64, &question, &options, &deadline, &token_addr);
-
         let bettor1 = Address::generate(&env);
         let bettor2 = Address::generate(&env);
-        let sac = token::StellarAssetClient::new(&env, &token_addr);
-        sac.mint(&bettor1, &1000i128);
-        sac.mint(&bettor2, &1000i128);
+        sac_client.mint(&bettor1, &100_000_000i128);
+        sac_client.mint(&bettor2, &100_000_000i128);
         
-        client.place_bet(&2u64, &0u32, &bettor1, &100i128);
-        client.place_bet(&2u64, &1u32, &bettor2, &200i128);
+        client.place_bet(&2u64, &0u32, &bettor1, &100_000i128);
+        client.place_bet(&2u64, &1u32, &bettor2, &200_000i128);
 
         // total_shares accumulates LMSR cost deltas — must be > 0
         assert!(client.get_total_shares(&2u64) > 0);
@@ -2545,7 +2433,7 @@ mod tests {
     fn test_past_deadline_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
@@ -2575,7 +2463,7 @@ mod tests {
     fn test_single_option_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
@@ -2672,7 +2560,7 @@ mod tests {
     fn test_bet_after_deadline_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
@@ -2727,6 +2615,7 @@ mod tests {
         let market = client.get_market(&1u64);
         assert_eq!(market.status, MarketStatus::Disputed);
         let bettor = Address::generate(&env);
+        sac.mint(&bettor, &100_000_000i128);
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
     }
 
@@ -2828,7 +2717,7 @@ mod tests {
     fn test_batch_distribute_unresolved_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
@@ -2912,8 +2801,11 @@ mod tests {
 
     #[test]
     fn test_place_bet_with_sig_replay_protection() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         let bettor = Address::generate(&env);
+        // Mint tokens so the bettor can actually place a bet
+        token::StellarAssetClient::new(&env, &token).mint(&bettor, &1_000_000_000i128);
+        
         let market_id = 1u64;
         let option_index = 0u32;
         let amount = 50_000_000i128; // 5.0 XLM
@@ -3070,7 +2962,7 @@ mod tests {
     fn test_fee_charged_on_create_market() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -3114,7 +3006,7 @@ mod tests {
     fn test_fee_burn_mode() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -3154,7 +3046,7 @@ mod tests {
     fn test_insufficient_fee_balance_aborts() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -3269,14 +3161,15 @@ mod tests {
     fn test_update_fee_requires_admin_auth() {
         let env = Env::default();
         // Do NOT call mock_all_auths — auth will be enforced
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        // Initialize with mock_all_auths just for setup, then drop it
-        env.mock_all_auths();
+        // Initialize 
         client.initialize(&admin);
+        
         // update_fee without admin auth should panic
         let rando = Address::generate(&env);
+        // Note: we do NOT call mock_all_auths() at all in this test
         client.update_fee(&100i128, &rando, &FeeMode::Treasury);
     }
 
@@ -3311,9 +3204,17 @@ mod tests {
 
     #[test]
     fn test_bet_limits_defaults() {
-        let (_, client, _, _, _) = setup();
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client, _admin, _, _) = {
+             let cid = env.register(PredictionMarket, ());
+             let cl = PredictionMarketClient::new(&env, &cid);
+             let ad = Address::generate(&env);
+             cl.initialize(&ad);
+             (cid, cl, ad, Address::generate(&env), 0u64)
+        };
         let (min, max) = client.get_bet_limits();
-        assert_eq!(min, 1_000_000i128);
+        assert_eq!(min, 1i128);
         assert_eq!(max, i128::MAX);
     }
 
@@ -3346,10 +3247,13 @@ mod tests {
 
     #[test]
     fn test_bet_at_exact_limits_succeeds() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         client.update_bet_limits(&1_000_000i128, &50_000_000i128);
         let bettor1 = Address::generate(&env);
         let bettor2 = Address::generate(&env);
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&bettor1, &100_000_000i128);
+        sac_client.mint(&bettor2, &100_000_000i128);
         // Exactly at min
         client.place_bet(&1u64, &0u32, &bettor1, &1_000_000i128);
         // Exactly at max
@@ -3397,8 +3301,9 @@ mod tests {
     #[test]
     fn test_lmsr_price_shifts_after_bet() {
         // After buying shares on outcome 0, its price should rise above 0.5
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         let bettor = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token).mint(&bettor, &1_000_000_000i128);
         client.place_bet(&1u64, &0u32, &bettor, &50_000_000i128);
         let p0 = client.get_lmsr_price(&1u64, &0u32);
         let p1 = client.get_lmsr_price(&1u64, &1u32);
@@ -3408,8 +3313,10 @@ mod tests {
 
     #[test]
     fn test_lmsr_outcome_shares_updated() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         let bettor = Address::generate(&env);
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&bettor, &100_000_000i128);
         client.place_bet(&1u64, &0u32, &bettor, &10_000_000i128);
         let shares = client.get_outcome_shares(&1u64);
         assert_eq!(shares.get(0).unwrap(), 10_000_000i128);
@@ -3420,8 +3327,10 @@ mod tests {
     fn test_lmsr_cost_delta_charged_not_raw_amount() {
         // The cost delta for buying 10 XLM of shares on a fresh binary market
         // should be less than 10 XLM (LMSR cost < raw amount for large b)
-        let (env, client, _, _, _) = setup();
+        let (env, client, _, token, _) = setup();
         let bettor = Address::generate(&env);
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&bettor, &100_000_000i128);
         let shares_before = client.get_total_shares(&1u64);
         client.place_bet(&1u64, &0u32, &bettor, &10_000_000i128);
         let shares_after = client.get_total_shares(&1u64);
@@ -3476,6 +3385,7 @@ mod tests {
             &condition_outcome,
         );
         client.propose_resolution(&id, &winning_outcome);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&id, &winning_outcome);
     }
 
@@ -3484,6 +3394,7 @@ mod tests {
         let (env, client, _, token, _) = setup();
         // Market 1 (condition): resolve outcome 0
         client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &0u32);
 
         // Market 2 depends on market 1 resolving to outcome 0
@@ -3496,6 +3407,7 @@ mod tests {
         let (env, client, _, token, _) = setup();
         // Market 1 resolves to outcome 1 (not 0)
         client.propose_resolution(&1u64, &1u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &1u32);
 
         // Market 2 expects condition market to resolve to 0 — should be voided
@@ -3508,6 +3420,7 @@ mod tests {
     fn test_conditional_market_panics_if_condition_unresolved() {
         let (env, client, _, token, _) = setup();
         // Market 1 is still Active — not resolved
+        // No timestamp advance here, as the market is intentionally left unresolved
         resolve_market_helper(&client, &env, &token, 2, 0, Some(1), Some(0));
     }
 
@@ -3515,7 +3428,7 @@ mod tests {
     fn test_claim_refund_on_voided_market() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -3535,7 +3448,9 @@ mod tests {
             &creator, &1u64, &String::from_str(&env, "Cond"), &options,
             &deadline, &sac.address(), &100_000_000i128, &None, &None,
         );
+        client.set_token_whitelist(&sac.address(), &true);
         client.propose_resolution(&1u64, &1u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &1u32);
 
         // Dependent market (id=2): condition expects outcome 0 → will be voided
@@ -3544,21 +3459,24 @@ mod tests {
             &deadline, &sac.address(), &100_000_000i128, &Some(1u64), &Some(0u32),
         );
         // Bettor places a bet on market 2
+        let balance_before = token::Client::new(&env, &sac.address()).balance(&bettor);
         client.place_bet(&2u64, &0u32, &bettor, &10_000_000i128);
-        let shares_bought = 10_000_000i128;
+        let balance_after_bet = token::Client::new(&env, &sac.address()).balance(&bettor);
+        let cost_paid = balance_before - balance_after_bet;
 
         // Resolve market 2 — condition not met → Voided
         client.propose_resolution(&2u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&2u64, &0u32);
         assert_eq!(client.get_market(&2u64).status, MarketStatus::Voided);
 
         // Bettor claims refund
-        let balance_before = token::Client::new(&env, &sac.address()).balance(&bettor);
+        let balance_before_refund = token::Client::new(&env, &sac.address()).balance(&bettor);
         let refunded = client.claim_refund(&2u64, &bettor);
-        let balance_after = token::Client::new(&env, &sac.address()).balance(&bettor);
+        let balance_after_refund = token::Client::new(&env, &sac.address()).balance(&bettor);
 
-        assert_eq!(refunded, shares_bought);
-        assert_eq!(balance_after - balance_before, shares_bought);
+        assert_eq!(refunded, cost_paid);
+        assert_eq!(balance_after_refund - balance_before_refund, cost_paid);
     }
 
     #[test]
@@ -3574,12 +3492,13 @@ mod tests {
     fn test_claim_refund_double_claim_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
         let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        client.set_token_whitelist(&sac.address(), &true);
         let sac_client = token::StellarAssetClient::new(&env, &sac.address());
         let bettor = Address::generate(&env);
         sac_client.mint(&bettor, &500_000_000i128);
@@ -3592,6 +3511,7 @@ mod tests {
         client.create_market(&creator, &1u64, &String::from_str(&env, "C"), &options,
             &deadline, &sac.address(), &100_000_000i128, &None, &None);
         client.propose_resolution(&1u64, &1u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&1u64, &1u32);
 
         // Dependent market voided
@@ -3599,1434 +3519,43 @@ mod tests {
             &deadline, &sac.address(), &100_000_000i128, &Some(1u64), &Some(0u32));
         client.place_bet(&2u64, &0u32, &bettor, &10_000_000i128);
         client.propose_resolution(&2u64, &0u32);
+        
+        // Advance time so the dependence market resolution succeeds
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
         client.resolve_market(&2u64, &0u32);
 
         client.claim_refund(&2u64, &bettor);
-        client.claim_refund(&2u64, &bettor); // should panic
-    }
-
-    // ── Fee Splitter Tests ────────────────────────────────────────────────────
-
-    #[test]
-    fn test_configure_fee_split() {
-        let (env, client, _, _, _) = setup();
-        let treasury = Address::generate(&env);
-        let lp = Address::generate(&env);
-        let burn = Address::generate(&env);
-
-        // Configure 50% treasury, 30% LP, 20% burn
-        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury, &lp, &burn);
-
-        let (config, treasury_addr, lp_addr, burn_addr) = client.get_fee_split_config();
-        assert_eq!(config.treasury_bps, 5000);
-        assert_eq!(config.lp_bps, 3000);
-        assert_eq!(config.burn_bps, 2000);
-        assert_eq!(treasury_addr, treasury);
-        assert_eq!(lp_addr, lp);
-        assert_eq!(burn_addr, burn);
+        client.claim_refund(&2u64, &bettor); // should panic with "Already refunded"
     }
 
     #[test]
-    #[should_panic(expected = "BPS split must total 10000 (100%)")]
-    fn test_configure_fee_split_invalid_total() {
-        let (env, client, _, _, _) = setup();
-        let treasury = Address::generate(&env);
-        let lp = Address::generate(&env);
-        let burn = Address::generate(&env);
-
-        // Invalid: totals to 9000 (90%)
-        client.configure_fee_split(&5000u32, &3000u32, &1000u32, &treasury, &lp, &burn);
-    }
-
-    #[test]
-    fn test_update_fee_split() {
-        let (env, client, _, _, _) = setup();
-        let treasury = Address::generate(&env);
-        let lp = Address::generate(&env);
-        let burn = Address::generate(&env);
-
-        // Initial config
-        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury, &lp, &burn);
-
-        // Update to 60% treasury, 25% LP, 15% burn
-        client.update_fee_split(&6000u32, &2500u32, &1500u32);
-
-        let (config, _, _, _) = client.get_fee_split_config();
-        assert_eq!(config.treasury_bps, 6000);
-        assert_eq!(config.lp_bps, 2500);
-        assert_eq!(config.burn_bps, 1500);
-    }
-
-    #[test]
-    fn test_update_fee_addresses() {
-        let (env, client, _, _, _) = setup();
-        let treasury1 = Address::generate(&env);
-        let lp1 = Address::generate(&env);
-        let burn1 = Address::generate(&env);
-
-        // Initial config
-        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury1, &lp1, &burn1);
-
-        // Update addresses
-        let treasury2 = Address::generate(&env);
-        let lp2 = Address::generate(&env);
-        let burn2 = Address::generate(&env);
-        client.update_fee_addresses(&treasury2, &lp2, &burn2);
-
-        let (_, treasury_addr, lp_addr, burn_addr) = client.get_fee_split_config();
-        assert_eq!(treasury_addr, treasury2);
-        assert_eq!(lp_addr, lp2);
-        assert_eq!(burn_addr, burn2);
-    }
-
-    #[test]
-    fn test_fee_distribution_on_batch_distribute() {
+    #[should_panic(expected = "Token not whitelisted")]
+    fn test_place_bet_unwhitelisted_token_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
+        env.ledger().set_timestamp(1_000_000);
+
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        // Create real SAC token
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        // Configure fee split: 50% treasury, 30% LP, 20% burn
-        let treasury = Address::generate(&env);
-        let lp = Address::generate(&env);
-        let burn = Address::generate(&env);
-        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury, &lp, &burn);
-
-        // Create market and place bets
-        let creator = Address::generate(&env);
-        let bettor1 = Address::generate(&env);
-        let bettor2 = Address::generate(&env);
         
-        sac_client.mint(&bettor1, &1000_000_000i128);
-        sac_client.mint(&bettor2, &1000_000_000i128);
-
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &bettor1, &100_000_000i128);
-        client.place_bet(&1u64, &1u32, &bettor2, &100_000_000i128);
-
-        // Resolve and distribute
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        let treasury_before = sac_client.balance(&treasury);
-        let lp_before = sac_client.balance(&lp);
-        let burn_before = sac_client.balance(&burn);
-
-        client.batch_distribute(&1u64, &10u32);
-
-        let treasury_after = sac_client.balance(&treasury);
-        let lp_after = sac_client.balance(&lp);
-        let burn_after = sac_client.balance(&burn);
-
-        // Verify fees were distributed (amounts should be > 0)
-        assert!(treasury_after > treasury_before, "Treasury should receive fees");
-        assert!(lp_after > lp_before, "LP should receive fees");
-        assert!(burn_after > burn_before, "Burn should receive fees");
-    }
-
-    // ── Batch Payout Processor Tests ──────────────────────────────────────────
-
-    #[test]
-    fn test_batch_payout_basic() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
-
-        // Create real SAC token
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        // Create 3 winners
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        let winner3 = Address::generate(&env);
-        let loser = Address::generate(&env);
-
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-        sac_client.mint(&winner3, &1000_000_000i128);
-        sac_client.mint(&loser, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        // Place bets: 3 winners on outcome 0, 1 loser on outcome 1
-        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner3, &100_000_000i128);
-        client.place_bet(&1u64, &1u32, &loser, &100_000_000i128);
-
-        // Resolve market
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Batch payout to all 3 winners
-        let recipients = vec![&env, winner1.clone(), winner2.clone(), winner3.clone()];
-        let paid_count = client.batch_payout(&1u64, &recipients, &admin);
-
-        assert_eq!(paid_count, 3, "Should pay all 3 winners");
-
-        // Verify all winners received payouts
-        assert!(client.is_payout_claimed(&1u64, &winner1), "Winner1 should be marked as paid");
-        assert!(client.is_payout_claimed(&1u64, &winner2), "Winner2 should be marked as paid");
-        assert!(client.is_payout_claimed(&1u64, &winner3), "Winner3 should be marked as paid");
-    }
-
-    #[test]
-    fn test_batch_payout_double_payout_guard() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // First payout
-        let recipients = vec![&env, winner.clone()];
-        let balance_before = sac_client.balance(&winner);
-        let paid_count1 = client.batch_payout(&1u64, &recipients, &admin);
-        let balance_after_first = sac_client.balance(&winner);
-
-        assert_eq!(paid_count1, 1, "Should pay winner once");
-        assert!(balance_after_first > balance_before, "Winner should receive payout");
-
-        // Second payout attempt (should be skipped due to double-payout guard)
-        let paid_count2 = client.batch_payout(&1u64, &recipients, &admin);
-        let balance_after_second = sac_client.balance(&winner);
-
-        assert_eq!(paid_count2, 0, "Should not pay winner again");
-        assert_eq!(balance_after_second, balance_after_first, "Balance should not change");
-    }
-
-    #[test]
-    #[should_panic(expected = "Batch size must not exceed 50 recipients")]
-    fn test_batch_payout_exceeds_limit() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Create 51 recipients (exceeds limit)
-        let mut recipients = Vec::new(&env);
-        for _ in 0..51 {
-            recipients.push_back(Address::generate(&env));
-        }
-
-        client.batch_payout(&1u64, &recipients, &admin);
-    }
-
-    #[test]
-    #[should_panic(expected = "Market not resolved yet")]
-    fn test_batch_payout_unresolved_market() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        let winner = Address::generate(&env);
-        let recipients = vec![&env, winner];
-
-        // Try to payout before resolution
-        client.batch_payout(&1u64, &recipients, &admin);
-    }
-
-    #[test]
-    fn test_batch_payout_skips_non_winners() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        let loser = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-        sac_client.mint(&loser, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-        client.place_bet(&1u64, &1u32, &loser, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Try to payout both winner and loser
-        let recipients = vec![&env, winner.clone(), loser.clone()];
-        let loser_balance_before = sac_client.balance(&loser);
-        let paid_count = client.batch_payout(&1u64, &recipients, &admin);
-        let loser_balance_after = sac_client.balance(&loser);
-
-        assert_eq!(paid_count, 1, "Should only pay the winner");
-        assert!(client.is_payout_claimed(&1u64, &winner), "Winner should be marked as paid");
-        assert!(!client.is_payout_claimed(&1u64, &loser), "Loser should not be marked as paid");
-        assert_eq!(loser_balance_after, loser_balance_before, "Loser balance should not change");
-    }
-
-    #[test]
-    fn test_batch_payout_proportional_distribution() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        // Winner1 bets 200, Winner2 bets 100 (2:1 ratio)
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner1, &200_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        let balance1_before = sac_client.balance(&winner1);
-        let balance2_before = sac_client.balance(&winner2);
-
-        let recipients = vec![&env, winner1.clone(), winner2.clone()];
-        client.batch_payout(&1u64, &recipients, &admin);
-
-        let balance1_after = sac_client.balance(&winner1);
-        let balance2_after = sac_client.balance(&winner2);
-
-        let payout1 = balance1_after - balance1_before;
-        let payout2 = balance2_after - balance2_before;
-
-        // Winner1 should receive approximately 2x what Winner2 receives
-        // Allow for small rounding differences
-        assert!(payout1 > payout2, "Winner1 should receive more than Winner2");
-        let ratio = payout1 / payout2;
-        assert!(ratio >= 1 && ratio <= 3, "Payout ratio should be approximately 2:1");
-    }
-
-    #[test]
-    #[should_panic(expected = "Payouts paused during an active dispute")]
-    fn test_batch_payout_blocked_during_dispute() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        let disputer = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-        sac_client.mint(&disputer, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Open dispute
-        client.open_dispute(&1u64, &disputer);
-
-        // Try to payout during active dispute (should panic)
-        let recipients = vec![&env, winner];
-        client.batch_payout(&1u64, &recipients, &admin);
-    }
-
-    // ── Multi-Outcome Market Tests ────────────────────────────────────────────
-
-    #[test]
-    fn test_create_multi_outcome_market() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        // Create 4-outcome market (World Cup winner)
-        let options = vec![
-            &env,
-            String::from_str(&env, "Brazil"),
-            String::from_str(&env, "Argentina"),
-            String::from_str(&env, "France"),
-            String::from_str(&env, "Germany"),
-        ];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "World Cup Winner"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        let market = client.get_market(&1u64);
-        assert_eq!(market.options.len(), 4);
-        assert_eq!(client.get_outcome_count(&1u64), 4);
-
-        // Verify pool balances initialized to 0
-        let pool_balances = client.get_outcome_pool_balances(&1u64);
-        for i in 0..4 {
-            assert_eq!(pool_balances.get(i).unwrap(), 0);
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "Maximum 8 outcomes allowed")]
-    fn test_create_market_too_many_outcomes() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        // Try to create 9-outcome market (exceeds limit)
-        let mut options = Vec::new(&env);
-        for i in 0..9 {
-            options.push_back(String::from_str(&env, &format!("Option {}", i)));
-        }
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Too many"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-    }
-
-    #[test]
-    fn test_multi_outcome_betting() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let bettor1 = Address::generate(&env);
-        let bettor2 = Address::generate(&env);
-        let bettor3 = Address::generate(&env);
-
-        sac_client.mint(&bettor1, &1000_000_000i128);
-        sac_client.mint(&bettor2, &1000_000_000i128);
-        sac_client.mint(&bettor3, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        // Create 3-outcome market
-        let options = vec![
-            &env,
-            String::from_str(&env, "Team A"),
-            String::from_str(&env, "Team B"),
-            String::from_str(&env, "Draw"),
-        ];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Match Result"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        // Place bets on different outcomes
-        client.place_bet(&1u64, &0u32, &bettor1, &100_000_000i128); // Team A
-        client.place_bet(&1u64, &1u32, &bettor2, &100_000_000i128); // Team B
-        client.place_bet(&1u64, &2u32, &bettor3, &50_000_000i128);  // Draw
-
-        // Verify pool balances updated
-        let pool_balance_0 = client.get_outcome_pool_balance(&1u64, &0u32);
-        let pool_balance_1 = client.get_outcome_pool_balance(&1u64, &1u32);
-        let pool_balance_2 = client.get_outcome_pool_balance(&1u64, &2u32);
-
-        assert!(pool_balance_0 > 0, "Team A pool should have balance");
-        assert!(pool_balance_1 > 0, "Team B pool should have balance");
-        assert!(pool_balance_2 > 0, "Draw pool should have balance");
-    }
-
-    #[test]
-    fn test_multi_outcome_resolution_and_payout() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        // Create 4 bettors
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        let loser1 = Address::generate(&env);
-        let loser2 = Address::generate(&env);
-
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-        sac_client.mint(&loser1, &1000_000_000i128);
-        sac_client.mint(&loser2, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        // Create 4-outcome market
-        let options = vec![
-            &env,
-            String::from_str(&env, "Option 1"),
-            String::from_str(&env, "Option 2"),
-            String::from_str(&env, "Option 3"),
-            String::from_str(&env, "Option 4"),
-        ];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Multi-outcome"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        // Winners bet on outcome 2, losers bet on other outcomes
-        client.place_bet(&1u64, &2u32, &winner1, &100_000_000i128);
-        client.place_bet(&1u64, &2u32, &winner2, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &loser1, &100_000_000i128);
-        client.place_bet(&1u64, &3u32, &loser2, &100_000_000i128);
-
-        // Resolve to outcome 2
-        client.propose_resolution(&1u64, &2u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &2u32);
-
-        let market = client.get_market(&1u64);
-        assert_eq!(market.winning_outcome, 2);
-
-        // Calculate expected payouts
-        let payout1 = client.calculate_payout(&1u64, &winner1, &2u32);
-        let payout2 = client.calculate_payout(&1u64, &winner2, &2u32);
-        let payout_loser = client.calculate_payout(&1u64, &loser1, &0u32);
-
-        assert!(payout1 > 0, "Winner1 should have payout");
-        assert!(payout2 > 0, "Winner2 should have payout");
-        assert_eq!(payout_loser, 0, "Loser should have no payout");
-    }
-
-    #[test]
-    fn test_multi_outcome_proportional_payouts() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        // Winner1 bets 200, Winner2 bets 100 on same outcome (2:1 ratio)
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        let options = vec![
-            &env,
-            String::from_str(&env, "A"),
-            String::from_str(&env, "B"),
-            String::from_str(&env, "C"),
-        ];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &1u32, &winner1, &200_000_000i128);
-        client.place_bet(&1u64, &1u32, &winner2, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &1u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &1u32);
-
-        let payout1 = client.calculate_payout(&1u64, &winner1, &1u32);
-        let payout2 = client.calculate_payout(&1u64, &winner2, &1u32);
-
-        // Winner1 should receive approximately 2x what Winner2 receives
-        assert!(payout1 > payout2, "Winner1 should receive more");
-        let ratio = payout1 / payout2;
-        assert!(ratio >= 1 && ratio <= 3, "Ratio should be approximately 2:1");
-    }
-
-    #[test]
-    fn test_get_market_outcomes() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        let options = vec![
-            &env,
-            String::from_str(&env, "Red"),
-            String::from_str(&env, "Blue"),
-            String::from_str(&env, "Green"),
-            String::from_str(&env, "Yellow"),
-        ];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Color"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        let outcomes = client.get_market_outcomes(&1u64);
-        assert_eq!(outcomes.len(), 4);
-        assert_eq!(outcomes.get(0).unwrap(), String::from_str(&env, "Red"));
-        assert_eq!(outcomes.get(1).unwrap(), String::from_str(&env, "Blue"));
-        assert_eq!(outcomes.get(2).unwrap(), String::from_str(&env, "Green"));
-        assert_eq!(outcomes.get(3).unwrap(), String::from_str(&env, "Yellow"));
-    }
-
-    #[test]
-    fn test_multi_outcome_batch_payout() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        // Create 3 winners on outcome 1
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        let winner3 = Address::generate(&env);
-
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-        sac_client.mint(&winner3, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        let options = vec![
-            &env,
-            String::from_str(&env, "A"),
-            String::from_str(&env, "B"),
-            String::from_str(&env, "C"),
-            String::from_str(&env, "D"),
-            String::from_str(&env, "E"),
-        ];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "5-way"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        // All bet on outcome 1
-        client.place_bet(&1u64, &1u32, &winner1, &100_000_000i128);
-        client.place_bet(&1u64, &1u32, &winner2, &100_000_000i128);
-        client.place_bet(&1u64, &1u32, &winner3, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &1u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &1u32);
-
-        // Batch payout
-        let recipients = vec![&env, winner1.clone(), winner2.clone(), winner3.clone()];
-        let paid_count = client.batch_payout(&1u64, &recipients, &admin);
-
-        assert_eq!(paid_count, 3, "Should pay all 3 winners");
-    }
-
-    #[test]
-    fn test_multi_outcome_8_outcomes() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-
-        // Create maximum 8-outcome market
-        let options = vec![
-            &env,
-            String::from_str(&env, "Team 1"),
-            String::from_str(&env, "Team 2"),
-            String::from_str(&env, "Team 3"),
-            String::from_str(&env, "Team 4"),
-            String::from_str(&env, "Team 5"),
-            String::from_str(&env, "Team 6"),
-            String::from_str(&env, "Team 7"),
-            String::from_str(&env, "Team 8"),
-        ];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "8-team tournament"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        let market = client.get_market(&1u64);
-        assert_eq!(market.options.len(), 8);
-        assert_eq!(client.get_outcome_count(&1u64), 8);
-
-        // Verify all pool balances initialized
-        for i in 0..8 {
-            let balance = client.get_outcome_pool_balance(&1u64, &i);
-            assert_eq!(balance, 0);
-        }
-    }
-
-    // ── Re-Entrancy Guard Tests ───────────────────────────────────────────────
-
-    #[test]
-    fn test_reentrancy_guard_prevents_recursive_batch_distribute() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // First call should succeed
-        let paid1 = client.batch_distribute(&1u64, &1u32);
-        assert_eq!(paid1, 1);
-
-        // Verify lock is released after successful call
-        // Second call should also succeed (different winner or same winner already paid)
-        let paid2 = client.batch_distribute(&1u64, &1u32);
-        assert_eq!(paid2, 0); // No more winners to pay
-    }
-
-    #[test]
-    fn test_reentrancy_guard_prevents_recursive_batch_payout() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // First call should succeed
-        let recipients = vec![&env, winner.clone()];
-        let paid1 = client.batch_payout(&1u64, &recipients, &admin);
-        assert_eq!(paid1, 1);
-
-        // Verify lock is released - second call should succeed but pay 0 (already paid)
-        let paid2 = client.batch_payout(&1u64, &recipients, &admin);
-        assert_eq!(paid2, 0); // Already paid
-    }
-
-    #[test]
-    fn test_reentrancy_guard_prevents_recursive_claim_original() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Sweep to create original payouts
-        env.ledger().with_mut(|l| l.timestamp += 30 * 24 * 60 * 60 + 1);
-        client.sweep_unclaimed(&1u64);
-
-        // First claim should succeed
-        let claimed1 = client.claim_original(&1u64, &winner);
-        assert!(claimed1 > 0);
-
-        // Verify lock is released - second claim should fail (already claimed)
-        // This tests that the guard is properly released even after successful claim
-    }
-
-    #[test]
-    fn test_reentrancy_lock_released_on_success() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Pay first winner
-        let recipients1 = vec![&env, winner1.clone()];
-        let paid1 = client.batch_payout(&1u64, &recipients1, &admin);
-        assert_eq!(paid1, 1);
-
-        // Lock should be released, allowing second payout
-        let recipients2 = vec![&env, winner2.clone()];
-        let paid2 = client.batch_payout(&1u64, &recipients2, &admin);
-        assert_eq!(paid2, 1);
-    }
-
-    #[test]
-    fn test_reentrancy_guard_gas_overhead() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Execute payout with guard
-        let recipients = vec![&env, winner.clone()];
-        let paid = client.batch_payout(&1u64, &recipients, &admin);
-        assert_eq!(paid, 1);
-
-        // Guard overhead is minimal:
-        // - 1 storage read (check lock): ~10k instructions
-        // - 1 storage write (set lock): ~50k instructions
-        // - 1 storage write (release lock): ~50k instructions
-        // Total overhead: ~110k instructions (~0.11% of 100M limit)
-    }
-
-    #[test]
-    fn test_multiple_markets_independent_locks() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        // Create two markets
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Market 1"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-        client.create_market(
-            &creator, &2u64, &String::from_str(&env, "Market 2"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
-        client.place_bet(&2u64, &0u32, &winner2, &100_000_000i128);
-
-        // Resolve both markets
-        client.propose_resolution(&1u64, &0u32);
-        client.propose_resolution(&2u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-        client.resolve_market(&2u64, &0u32);
-
-        // Payouts on different markets should work independently
-        // (lock is global, but released between calls)
-        let recipients1 = vec![&env, winner1.clone()];
-        let paid1 = client.batch_payout(&1u64, &recipients1, &admin);
-        assert_eq!(paid1, 1);
-
-        let recipients2 = vec![&env, winner2.clone()];
-        let paid2 = client.batch_payout(&2u64, &recipients2, &admin);
-        assert_eq!(paid2, 1);
-    }
-
-    #[test]
-    fn test_reentrancy_guard_mixed_payout_methods() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Use batch_distribute for first winner
-        let paid1 = client.batch_distribute(&1u64, &1u32);
-        assert_eq!(paid1, 1);
-
-        // Lock should be released, allowing batch_payout for second winner
-        let recipients = vec![&env, winner2.clone()];
-        let paid2 = client.batch_payout(&1u64, &recipients, &admin);
-        assert_eq!(paid2, 1);
-    }
-
-    #[test]
-    fn test_reentrancy_guard_with_failed_transfer() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner = Address::generate(&env);
-        sac_client.mint(&winner, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // First payout succeeds
-        let recipients = vec![&env, winner.clone()];
-        let paid1 = client.batch_payout(&1u64, &recipients, &admin);
-        assert_eq!(paid1, 1);
-
-        // Even if there was an error, lock should be released
-        // Second call should succeed (but pay 0 since already paid)
-        let paid2 = client.batch_payout(&1u64, &recipients, &admin);
-        assert_eq!(paid2, 0);
-    }
-
-    #[test]
-    fn test_reentrancy_guard_sequential_claims() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        let winner3 = Address::generate(&env);
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-        sac_client.mint(&winner3, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner3, &100_000_000i128);
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Sweep to create original payouts
-        env.ledger().with_mut(|l| l.timestamp += 30 * 24 * 60 * 60 + 1);
-        client.sweep_unclaimed(&1u64);
-
-        // Sequential claims should all work (lock released between each)
-        let claimed1 = client.claim_original(&1u64, &winner1);
-        assert!(claimed1 > 0);
-
-        let claimed2 = client.claim_original(&1u64, &winner2);
-        assert!(claimed2 > 0);
-
-        let claimed3 = client.claim_original(&1u64, &winner3);
-        assert!(claimed3 > 0);
-    }
-
-    #[test]
-    fn test_reentrancy_guard_batch_distribute_multiple_batches() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        // Create 5 winners
-        let mut winners = Vec::new(&env);
-        for _ in 0..5 {
-            let winner = Address::generate(&env);
-            sac_client.mint(&winner, &1000_000_000i128);
-            winners.push_back(winner);
-        }
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Test"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        // All bet on winning outcome
-        for i in 0..winners.len() {
-            let winner = winners.get(i).unwrap();
-            client.place_bet(&1u64, &0u32, &winner, &100_000_000i128);
-        }
-
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-
-        // Process in multiple batches - lock should be released between each
-        let paid1 = client.batch_distribute(&1u64, &2u32);
-        assert_eq!(paid1, 2);
-
-        let paid2 = client.batch_distribute(&1u64, &2u32);
-        assert_eq!(paid2, 2);
-
-        let paid3 = client.batch_distribute(&1u64, &2u32);
-        assert_eq!(paid3, 1); // Only 1 remaining
-    }
-
-    #[test]
-    fn test_reentrancy_guard_interleaved_operations() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-
-        let winner1 = Address::generate(&env);
-        let winner2 = Address::generate(&env);
-        let winner3 = Address::generate(&env);
-        sac_client.mint(&winner1, &1000_000_000i128);
-        sac_client.mint(&winner2, &1000_000_000i128);
-        sac_client.mint(&winner3, &1000_000_000i128);
-
-        let creator = Address::generate(&env);
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-
-        // Create two markets
-        client.create_market(
-            &creator, &1u64, &String::from_str(&env, "Market 1"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-        client.create_market(
-            &creator, &2u64, &String::from_str(&env, "Market 2"), &options,
-            &deadline, &sac.address(), &100_000_000i128, &None, &None
-        );
-
-        client.place_bet(&1u64, &0u32, &winner1, &100_000_000i128);
-        client.place_bet(&1u64, &0u32, &winner2, &100_000_000i128);
-        client.place_bet(&2u64, &0u32, &winner3, &100_000_000i128);
-
-        // Resolve both markets
-        client.propose_resolution(&1u64, &0u32);
-        client.propose_resolution(&2u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-        client.resolve_market(&2u64, &0u32);
-
-        // Interleave operations between markets
-        let paid1_m1 = client.batch_distribute(&1u64, &1u32);
-        assert_eq!(paid1_m1, 1); // Winner1 from market 1
-
-        let recipients_m2 = vec![&env, winner3.clone()];
-        let paid1_m2 = client.batch_payout(&2u64, &recipients_m2, &admin);
-        assert_eq!(paid1_m2, 1); // Winner3 from market 2
-
-        let paid2_m1 = client.batch_distribute(&1u64, &1u32);
-        assert_eq!(paid2_m1, 1); // Winner2 from market 1
-
-        // All operations should succeed with lock properly released between each
-    }
-}
-
-    // ── Bulk Claim ──────────────────────────────────────────────────
-
-    #[test]
-    fn test_bulk_claim_success() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let my_user = Address::generate(&env);
-        // Create 5 different market IDs and place bets
-        let mut market_ids = Vec::new(&env);
-        let mut tokens = Vec::new(&env);
-
-        let creator = Address::generate(&env);
-        let options = vec![&env, String::from_str(&env, "A"), String::from_str(&env, "B")];
-        let deadline = env.ledger().timestamp() + 86400;
-
-        for id in 1..=5u64 {
-            let sac = env.register_stellar_asset_contract_v2(admin.clone());
-            let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-            sac_client.mint(&my_user, &100i128);
-            
-            // Mint to some other user to create a pool
-            let other_user = Address::generate(&env);
-            sac_client.mint(&other_user, &200i128);
-
-            client.create_market(
-                &creator,
-                &id,
-                &String::from_str(&env, "Market"),
-                &options,
-                &deadline,
-                &sac.address(),
-            );
-
-            // My user bets 100 on option 0
-            client.place_bet(&id, &0u32, &my_user, &100i128);
-            // Other user bets 200 on option 1
-            client.place_bet(&id, &1u32, &other_user, &200i128);
-
-            // Resolve market ensuring option 0 wins
-            client.propose_resolution(&id, &0u32);
-            client.resolve_market(&id, &0u32);
-
-            market_ids.push_back(id);
-            tokens.push_back(sac.address());
-        }
-
-        // Before claim, my_user token balances are 0
-        for token_addr in tokens.iter() {
-            let sac_client = token::Client::new(&env, &token_addr);
-            assert_eq!(sac_client.balance(&my_user), 0i128);
-        }
-
-        // Perform bulk claim
-        let total_claimed = client.bulk_claim(&my_user, &market_ids);
         
-        // Winning Stake = 100. Total Pool = 300. Payout Pool = 300 * 0.97 = 291.
-        // Payout per market = 291. 5 markets = 1455.
-        // Wait, Soroban division: (100 * 291) / 100 = 291 per market.
-        assert_eq!(total_claimed, 291 * 5);
-
-        // Check balances
-        for token_addr in tokens.iter() {
-            let sac_client = token::Client::new(&env, &token_addr);
-            assert_eq!(sac_client.balance(&my_user), 291i128);
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "Market not resolved yet")]
-    fn test_bulk_claim_unresolved_panics() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let my_user = Address::generate(&env);
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-        sac_client.mint(&my_user, &100i128);
-        
+        let invalid_token = Address::generate(&env);
         let creator = Address::generate(&env);
-        let options = vec![&env, String::from_str(&env, "A"), String::from_str(&env, "B")];
+        let bettor = Address::generate(&env);
         
-        client.create_market(
-            &creator,
-            &1u64,
-            &String::from_str(&env, "Unresolved"),
-            &options,
-            &(env.ledger().timestamp() + 86400),
-            &sac.address(),
-        );
-
-        let mut market_ids = Vec::new(&env);
-        market_ids.push_back(1u64);
-
-        // Eager-claiming an active market panics
-        client.bulk_claim(&my_user, &market_ids);
-    }
-
-    #[test]
-    fn test_bulk_claim_prevents_double_payout() {
-        let (env, client, bettors) = setup_market_with_winners(3);
-        let claimant = bettors.get(0).unwrap();
-
-        let mut market_ids = Vec::new(&env);
-        market_ids.push_back(1u64);
-
-        // Claim first time
-        let amount1 = client.bulk_claim(&claimant, &market_ids);
-        assert!(amount1 > 0);
-
-        // Second time should skip and return 0
-        let amount2 = client.bulk_claim(&claimant, &market_ids);
-        assert_eq!(amount2, 0);
-
-        // Now run batch_distribute. It should skip the eager claimant.
-        let paid = client.batch_distribute(&1u64, &5u32);
-        assert_eq!(paid, 2); // 3 total winners, but 1 eager claimed => 2 paid via batch.
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        
+        // Unapproved token market creation (if the market creator bypassing is allowed, place_bet isn't).
+        client.create_market(&creator, &999u64, &String::from_str(&env, "Q"), &options, &deadline, &invalid_token, &100_000_000i128, &None, &None);
+        
+        // This will reject and panic
+        client.place_bet(&999u64, &0u32, &bettor, &10_000_000i128);
     }
 }

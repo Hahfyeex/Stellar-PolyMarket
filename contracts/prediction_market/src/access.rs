@@ -2,10 +2,11 @@ use soroban_sdk::{contracttype, contracterror, Address, Env};
 
 /// Persistent storage keys for role assignments and platform status.
 #[contracttype]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum AccessKey {
     Role(AccessRole),
     PlatformStatus,
+    WhitelistedToken(Address),
 }
 
 #[contracttype]
@@ -69,17 +70,25 @@ pub fn check_platform_active(env: &Env) {
     }
 }
 
-/// Helper to panic if the platform is paused or shutdown.
-pub fn panic_if_paused(env: &Env) {
-    let status: AccessPlatformStatus = env
-        .storage()
-        .instance()
-        .get(&AccessKey::PlatformStatus)
-        .unwrap_or(AccessPlatformStatus::Active);
+/// Helper to set a token's whitelist status.
+pub fn set_whitelisted_token(env: &Env, token: &Address, status: bool) {
+    if status {
+        env.storage().persistent().set(&AccessKey::WhitelistedToken(token.clone()), &true);
+        // Extend TTL to ensure persistent record does not easily expire (100 ledgers min padding, 1,000,000 max lifetime)
+        env.storage().persistent().extend_ttl(&AccessKey::WhitelistedToken(token.clone()), 100, 1_000_000);
+    } else {
+        env.storage().persistent().remove(&AccessKey::WhitelistedToken(token.clone()));
+    }
+}
 
-    match status {
-        AccessPlatformStatus::Active => {}
-        AccessPlatformStatus::Paused => panic!("Platform is paused"),
-        AccessPlatformStatus::Shutdown => panic!("Platform is shut down"),
+/// Helper to check if a token is whitelisted.
+pub fn is_whitelisted_token(env: &Env, token: &Address) -> bool {
+    env.storage().persistent().has(&AccessKey::WhitelistedToken(token.clone()))
+}
+
+/// Require that a token is whitelisted.
+pub fn check_whitelisted_token(env: &Env, token: &Address) {
+    if !is_whitelisted_token(env, token) {
+        panic!("Token not whitelisted");
     }
 }
