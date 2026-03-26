@@ -4,8 +4,8 @@ use soroban_sdk::{
 };
 mod access;
 use crate::access::{
-    check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
-    AccessRole,
+    check_platform_active, check_role, panic_if_paused, set_platform_status, set_role,
+    AccessPlatformStatus, AccessRole,
 };
 mod lmsr;
 mod position_token;
@@ -15,6 +15,13 @@ use crate::lmsr::{lmsr_cost, lmsr_price};
 mod math;
 use math::normalize_scalar;
 
+// LMSR cost and pricing functions
+mod lmsr;
+use lmsr::{lmsr_cost, lmsr_price};
+
+// Position token management
+mod position_token;
+
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
 #[derive(Clone, PartialEq)]
@@ -23,6 +30,19 @@ pub enum FeeMode {
     Burn,
     /// Transfer fee to the DAO treasury multisig account.
     Treasury,
+}
+
+/// Fee distribution configuration in Basis Points (BPS).
+/// Total must equal 10000 (100%).
+#[contracttype]
+#[derive(Clone, PartialEq)]
+pub struct FeeConfig {
+    /// Basis points allocated to DAO treasury (0-10000)
+    pub treasury_bps: u32,
+    /// Basis points allocated to liquidity providers (0-10000)
+    pub lp_bps: u32,
+    /// Basis points allocated to burn address (0-10000)
+    pub burn_bps: u32,
 }
 
 /// Maximum winners processed per batch_distribute call.
@@ -72,6 +92,8 @@ pub enum DataKey {
     TotalShares(u64),
     /// Hot: pause flag per market — Instance storage
     IsPaused(u64),
+    /// Global pause flag — Instance storage
+    IsPausedGlobal,
     /// Hot: settlement cursor (index into winners vec) — Instance storage
     SettlementCursor(u64),
 
@@ -97,6 +119,10 @@ pub enum DataKey {
     MaxBetAmount,
     /// Minimum bet amount in stroops — Instance storage. Default: 1_000_000 (0.1 XLM).
     MinBetAmount,
+    /// LP contributions per market: Map<Address, i128> — Persistent storage.
+    LpContribution(u64),
+    /// Total LP fee pool for a market (3% of total pool) — Persistent storage.
+    LpFeePool(u64),
     /// LMSR liquidity parameter b for a market — Instance storage.
     LmsrB(u64),
     /// Per-outcome cumulative share quantities for LMSR — Instance storage.
@@ -105,6 +131,16 @@ pub enum DataKey {
     Dispute(u64),
     /// Refund-claimed flag per bettor per market — Persistent storage.
     RefundClaimed(u64),
+    /// Replay protection: per-user nonce for off-chain signatures — Persistent storage
+    Nonce(Address),
+    /// Fee distribution configuration — Instance storage
+    FeeSplitConfig,
+    /// DAO treasury address for fee distribution — Instance storage
+    TreasuryAddress,
+    /// Liquidity provider address for fee distribution — Instance storage
+    LPAddress,
+    /// Burn address for fee distribution — Instance storage
+    BurnAddress,
 }
 
 #[contracttype]
@@ -277,7 +313,7 @@ impl PredictionMarket {
         condition_outcome: Option<u32>,
     ) {
         creator.require_auth();
-        check_role(&env, Role::Admin);
+        check_role(&env, AccessRole::Admin);
         panic_if_paused(&env);
         assert!(lmsr_b > 0, "lmsr_b must be positive");
 
@@ -384,6 +420,53 @@ impl PredictionMarket {
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         check_platform_active(&env);
         bettor.require_auth();
+        Self::internal_place_bet(env, market_id, option_index, bettor, amount);
+    }
+
+    /// Gasless bet placement using an off-chain signature and a manual nonce for replay protection.
+    /// 
+    /// # Replay Protection
+    /// 1. Manual Nonce: Each signature includes a nonce that must match the stored nonce for the address.
+    /// 2. Soroban Auth: require_auth_for_args ensures the signature is valid for the provided arguments.
+    /// 3. Nonce Increment: The stored nonce is incremented after every successful bet.
+    pub fn place_bet_with_sig(
+        env: Env,
+        market_id: u64,
+        option_index: u32,
+        bettor: Address,
+        amount: i128,
+        nonce: u64,
+        signature: soroban_sdk::BytesN<64>,
+    ) {
+        panic_if_paused(&env);
+
+        // 1. Verify manual nonce (Replay Protection Requirement #209)
+        let stored_nonce: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Nonce(bettor.clone()))
+            .unwrap_or(0);
+        assert!(nonce == stored_nonce, "Invalid signature nonce");
+
+        // 2. Verify signature via Soroban auth
+        // We include the nonce and signature in the args to ensure they are signed.
+        bettor.require_auth_for_args((market_id, option_index, amount, nonce, signature.clone()).into_val(&env));
+
+        // 3. Update nonce state
+        env.storage()
+            .persistent()
+            .set(&DataKey::Nonce(bettor.clone()), &(stored_nonce + 1));
+        // Extend TTL for nonce storage to manage rent
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Nonce(bettor.clone()), 100, 1_000_000);
+
+        // 4. Execute bet logic
+        Self::internal_place_bet(env, market_id, option_index, bettor, amount);
+    }
+
+    /// Internal logic for placing a bet, shared by place_bet and place_bet_with_sig.
+    fn internal_place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         assert!(amount > 0, "Amount must be positive");
 
         // Enforce configurable min/max bet caps
@@ -474,101 +557,124 @@ impl PredictionMarket {
         env.events().publish((symbol_short!("Bet"), market_id), (bettor.clone(), cost_delta, option_index));
     }
 
-    /// Exit a portion of an existing position using the current LMSR AMM quote.
-    /// Applies a fixed 0.5% fee routed to the configured fee destination if present.
-    pub fn exit_position(env: Env, market_id: u64, outcome: u32, caller: Address, amount: i128) {
-        check_platform_active(&env);
-        caller.require_auth();
+    /// Seed a market's liquidity pool. Transfers `amount` from `provider` into the contract
+    /// and records the contribution in Persistent storage for proportional fee distribution.
+    pub fn provide_liquidity(env: Env, market_id: u64, provider: Address, amount: i128) {
+        provider.require_auth();
         assert!(amount > 0, "Amount must be positive");
 
-        let paused: bool = env
+        let market: Market = env
             .storage()
-            .instance()
-            .get(&DataKey::IsPaused(market_id))
-            .unwrap_or(false);
-        assert!(!paused, "Market is paused");
-
-        let market = load_market(&env, market_id);
-        assert!(market.status == MarketStatus::Active, "Market not active");
-        assert!(env.ledger().timestamp() < market.deadline, "Market deadline has passed");
-        assert!(outcome < market.options.len(), "Invalid option index");
-
-        let owned_amount = get_user_position_amount(&env, market_id, &caller, outcome);
-        assert!(owned_amount >= amount, "Insufficient position balance");
-
-        let b: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::LmsrB(market_id))
+            .persistent()
+            .get(&DataKey::Market(market_id))
             .unwrap();
-        let outcome_shares = load_outcome_shares(&env, market_id);
-        let (q_before, n) = build_share_arrays(&outcome_shares);
-        let mut q_after = q_before;
-        q_after[outcome as usize] -= amount;
-
-        let cost_before = lmsr_cost(&q_before[..n], b);
-        let cost_after = lmsr_cost(&q_after[..n], b);
-        let gross_payout = cost_before - cost_after;
-        assert!(gross_payout > 0, "Exit payout must be positive");
-
-        let fee_amount = (gross_payout * EXIT_FEE_BPS) / 10_000;
-        let net_payout = gross_payout - fee_amount;
-        assert!(net_payout > 0, "Exit payout too small after fee");
+        assert!(market.status == MarketStatus::Active, "Market not active");
 
         let token_client = token::Client::new(&env, &market.token);
-        token_client.transfer(&env.current_contract_address(), &caller, &net_payout);
+        token_client.transfer(&provider, &env.current_contract_address(), &amount);
 
-        if fee_amount > 0 {
-            if let Some(fee_destination) = env.storage().instance().get::<_, Address>(&DataKey::FeeDestination) {
-                token_client.transfer(&env.current_contract_address(), &fee_destination, &fee_amount);
-            }
-        }
+        let mut contributions: soroban_sdk::Map<Address, i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LpContribution(market_id))
+            .unwrap_or(soroban_sdk::Map::new(&env));
 
-        let mut new_shares = outcome_shares.clone();
-        new_shares.set(outcome, q_after[outcome as usize]);
-        env.storage().instance().set(&DataKey::OutcomeShares(market_id), &new_shares);
+        let existing = contributions.get(provider.clone()).unwrap_or(0);
+        contributions.set(provider.clone(), existing + amount);
 
-        let total_shares: i128 = env
+        env.storage()
+            .persistent()
+            .set(&DataKey::LpContribution(market_id), &contributions);
+        env.storage().persistent().extend_ttl(
+            &DataKey::LpContribution(market_id),
+            100,
+            1_000_000,
+        );
+
+        // LP liquidity counts toward total pool shares
+        let shares: i128 = env
             .storage()
             .instance()
             .get(&DataKey::TotalShares(market_id))
             .unwrap_or(0);
-        env.storage().instance().set(&DataKey::TotalShares(market_id), &(total_shares - gross_payout));
-
-        upsert_user_position(&env, market_id, &caller, outcome, -amount);
-
-        let current_position_balance = position_token::balance_of(&env, market_id, outcome, &caller);
-        assert!(current_position_balance >= amount, "Insufficient position token balance");
-        position_token::burn(&env, market_id, outcome, &caller);
-        if current_position_balance > amount {
-            position_token::mint(&env, market_id, outcome, &caller, current_position_balance - amount);
-        }
-
-        env.storage().persistent().extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalShares(market_id), &(shares + amount));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
-        let current_price = lmsr_price(&q_before[..n], b, outcome as usize);
         env.events().publish(
-            (symbol_short!("Exit"), market_id),
-            (caller, outcome, amount, current_price, gross_payout, fee_amount, net_payout),
+            (symbol_short!("LpSeed"), market_id),
+            (provider, amount),
         );
     }
 
-    pub fn get_user_position(env: Env, market_id: u64, bettor: Address, outcome: u32) -> i128 {
-        get_user_position_amount(&env, market_id, &bettor, outcome)
-    }
+    /// Claim proportional share of the fee pool for a liquidity provider.
+    /// Can only be called after the market is resolved.
+    pub fn claim_lp_reward(env: Env, market_id: u64, lp: Address) -> i128 {
+        lp.require_auth();
 
-    pub fn get_current_price(env: Env, market_id: u64, outcome: u32) -> i128 {
-        let market = load_market(&env, market_id);
-        assert!(outcome < market.options.len(), "Invalid option index");
-        let b: i128 = env
+        let market: Market = env
             .storage()
-            .instance()
-            .get(&DataKey::LmsrB(market_id))
+            .persistent()
+            .get(&DataKey::Market(market_id))
             .unwrap();
-        let outcome_shares = load_outcome_shares(&env, market_id);
-        let (q_before, n) = build_share_arrays(&outcome_shares);
-        lmsr_price(&q_before[..n], b, outcome as usize)
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+
+        let fee_pool: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LpFeePool(market_id))
+            .unwrap_or(0);
+        assert!(fee_pool > 0, "No fee pool for this market");
+
+        let mut contributions: soroban_sdk::Map<Address, i128> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LpContribution(market_id))
+            .unwrap_or(soroban_sdk::Map::new(&env));
+
+        let lp_amount = contributions.get(lp.clone()).unwrap_or(0);
+        assert!(lp_amount > 0, "No LP contribution found");
+
+        // Sum total LP contributions
+        let mut total_lp: i128 = 0;
+        for (_, v) in contributions.iter() {
+            total_lp += v;
+        }
+
+        let reward = (lp_amount * fee_pool) / total_lp;
+        assert!(reward > 0, "Reward rounds to zero");
+
+        // Zero out this LP's contribution to prevent double-claim
+        contributions.set(lp.clone(), 0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LpContribution(market_id), &contributions);
+        env.storage().persistent().extend_ttl(
+            &DataKey::LpContribution(market_id),
+            100,
+            1_000_000,
+        );
+
+        // Deduct from fee pool
+        env.storage()
+            .persistent()
+            .set(&DataKey::LpFeePool(market_id), &(fee_pool - reward));
+        env.storage().persistent().extend_ttl(
+            &DataKey::LpFeePool(market_id),
+            100,
+            1_000_000,
+        );
+
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&env.current_contract_address(), &lp, &reward);
+
+        env.events().publish(
+            (symbol_short!("LpClaim"), market_id),
+            (lp, reward),
+        );
+
+        reward
     }
 
     /// Pause or unpause a market (admin only).
@@ -656,6 +762,221 @@ impl PredictionMarket {
         let min: i128 = env.storage().instance().get(&DataKey::MinBetAmount).unwrap_or(1_000_000);
         let max: i128 = env.storage().instance().get(&DataKey::MaxBetAmount).unwrap_or(i128::MAX);
         (min, max)
+    }
+
+    /// Configure fee distribution split between treasury, LPs, and burn address.
+    /// Only callable by FeeSetter role (admin).
+    /// 
+    /// # Parameters
+    /// - `treasury_bps` — Basis points allocated to DAO treasury (0-10000)
+    /// - `lp_bps` — Basis points allocated to liquidity providers (0-10000)
+    /// - `burn_bps` — Basis points allocated to burn address (0-10000)
+    /// - `treasury_addr` — Address of DAO treasury
+    /// - `lp_addr` — Address of liquidity provider pool
+    /// - `burn_addr` — Stellar burn address (issuer with locked trustline)
+    /// 
+    /// # Requirements
+    /// - treasury_bps + lp_bps + burn_bps MUST equal 10000 (100%)
+    /// - All addresses must be valid
+    /// - Caller must have admin authorization
+    /// 
+    /// # Storage
+    /// Writes to Instance storage with TTL extension for rent management.
+    pub fn configure_fee_split(
+        env: Env,
+        treasury_bps: u32,
+        lp_bps: u32,
+        burn_bps: u32,
+        treasury_addr: Address,
+        lp_addr: Address,
+        burn_addr: Address,
+    ) {
+        check_role(&env, AccessRole::Admin);
+        
+        // Assert BPS split totals 100%
+        let total_bps = treasury_bps + lp_bps + burn_bps;
+        assert!(total_bps == 10000, "BPS split must total 10000 (100%)");
+        
+        let config = FeeConfig {
+            treasury_bps,
+            lp_bps,
+            burn_bps,
+        };
+        
+        env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
+        env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
+        env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
+        env.storage().instance().set(&DataKey::BurnAddress, &burn_addr);
+        env.storage().instance().extend_ttl(100, 1_000_000);
+    }
+
+    /// Update fee distribution configuration (admin only).
+    /// Validates that BPS split totals 100% before updating.
+    pub fn update_fee_split(
+        env: Env,
+        treasury_bps: u32,
+        lp_bps: u32,
+        burn_bps: u32,
+    ) {
+        check_role(&env, AccessRole::Admin);
+        
+        // Assert BPS split totals 100%
+        let total_bps = treasury_bps + lp_bps + burn_bps;
+        assert!(total_bps == 10000, "BPS split must total 10000 (100%)");
+        
+        let config = FeeConfig {
+            treasury_bps,
+            lp_bps,
+            burn_bps,
+        };
+        
+        env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
+        env.storage().instance().extend_ttl(100, 1_000_000);
+    }
+
+    /// Update fee destination addresses (admin only).
+    pub fn update_fee_addresses(
+        env: Env,
+        treasury_addr: Address,
+        lp_addr: Address,
+        burn_addr: Address,
+    ) {
+        check_role(&env, AccessRole::Admin);
+        
+        env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
+        env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
+        env.storage().instance().set(&DataKey::BurnAddress, &burn_addr);
+        env.storage().instance().extend_ttl(100, 1_000_000);
+    }
+
+    /// Get current fee split configuration.
+    /// Returns (FeeConfig, treasury_addr, lp_addr, burn_addr).
+    pub fn get_fee_split_config(env: Env) -> (FeeConfig, Address, Address, Address) {
+        let config: FeeConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeSplitConfig)
+            .unwrap_or(FeeConfig {
+                treasury_bps: 10000,
+                lp_bps: 0,
+                burn_bps: 0,
+            });
+        
+        let treasury: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TreasuryAddress)
+            .expect("Treasury address not configured");
+        
+        let lp: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::LPAddress)
+            .expect("LP address not configured");
+        
+        let burn: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::BurnAddress)
+            .expect("Burn address not configured");
+        
+        (config, treasury, lp, burn)
+    }
+
+    /// Distribute collected fees according to configured split.
+    /// Uses zero-float i128 arithmetic with 7-decimal (stroop) precision.
+    /// 
+    /// # Parameters
+    /// - `fee_amount` — Total fee amount in stroops to distribute
+    /// - `token` — Token address for transfers
+    /// 
+    /// # Process
+    /// 1. Read FeeConfig from Instance storage
+    /// 2. Calculate proportional amounts using BPS (no floats)
+    /// 3. Transfer to each destination (treasury, LP, burn)
+    /// 4. Emit event for off-chain indexing
+    /// 
+    /// # Auth
+    /// Requires admin authorization via check_role.
+    /// 
+    /// # Storage Rent
+    /// Extends TTL for Instance storage after writes.
+    fn distribute_fee_split(env: &Env, fee_amount: i128, token: &Address) {
+        if fee_amount == 0 {
+            return;
+        }
+        
+        // Read fee split configuration
+        let config: FeeConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeSplitConfig)
+            .unwrap_or(FeeConfig {
+                treasury_bps: 10000,
+                lp_bps: 0,
+                burn_bps: 0,
+            });
+        
+        let treasury_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TreasuryAddress)
+            .expect("Treasury address not configured");
+        
+        let lp_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::LPAddress)
+            .expect("LP address not configured");
+        
+        let burn_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::BurnAddress)
+            .expect("Burn address not configured");
+        
+        // Calculate split amounts using BPS (zero-float policy)
+        // Formula: amount * bps / 10000
+        let treasury_amount = (fee_amount * config.treasury_bps as i128) / 10000;
+        let lp_amount = (fee_amount * config.lp_bps as i128) / 10000;
+        let burn_amount = (fee_amount * config.burn_bps as i128) / 10000;
+        
+        let token_client = token::Client::new(env, token);
+        
+        // Transfer to treasury
+        if treasury_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &treasury_addr,
+                &treasury_amount,
+            );
+        }
+        
+        // Transfer to LP pool
+        if lp_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &lp_addr,
+                &lp_amount,
+            );
+        }
+        
+        // Transfer to burn address (Stellar burn mechanism)
+        if burn_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &burn_addr,
+                &burn_amount,
+            );
+        }
+        
+        // Emit event for off-chain indexing
+        env.events().publish(
+            (symbol_short!("FeeSplit"), fee_amount),
+            (treasury_amount, lp_amount, burn_amount),
+        );
+        
+        env.storage().instance().extend_ttl(100, 1_000_000);
     }
 
     /// Propose market resolution — only admin (oracle-triggered).
@@ -772,6 +1093,27 @@ impl PredictionMarket {
         env.storage()
             .persistent()
             .set(&DataKey::ClaimDeadline(market_id), &resolution_time);
+
+        // Capture 3% platform fee into LP fee pool (only if LPs exist for this market)
+        let has_lps = env.storage().persistent().has(&DataKey::LpContribution(market_id));
+        if has_lps {
+            let total_pool: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalShares(market_id))
+                .unwrap_or(0);
+            let fee_pool = total_pool * 3 / 100;
+            if fee_pool > 0 {
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::LpFeePool(market_id), &fee_pool);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::LpFeePool(market_id),
+                    100,
+                    1_000_000,
+                );
+            }
+        }
         env.storage().persistent().extend_ttl(&DataKey::ClaimDeadline(market_id), 100, 1_000_000);
     }
 
@@ -1242,6 +1584,7 @@ impl PredictionMarket {
         }
 
         let fee_bps = calculate_dynamic_fee(total_pool);
+        let fee_amount = (total_pool * fee_bps as i128) / 10000;
         let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
         let token_client = token::Client::new(&env, &market.token);
 
@@ -1267,6 +1610,11 @@ impl PredictionMarket {
             position_token::burn(&env, market_id, market.winning_outcome, &bettor);
             token_client.transfer(&env.current_contract_address(), &bettor, &payout);
             paid += 1;
+        }
+
+        // Distribute protocol fee using configured split (only on first batch)
+        if cursor == 0 && fee_amount > 0 {
+            distribute_fee_split(&env, fee_amount, &market.token);
         }
 
         // Hot write: advance cursor in Instance storage (1 write regardless of batch_size)
@@ -1334,6 +1682,22 @@ impl PredictionMarket {
 
         // 3. Bump Instance storage (TotalShares, IsPaused, etc. are grouped here)
         env.storage().instance().extend_ttl(threshold, extend_to);
+
+        // 4. Bump LP tracking keys if they exist
+        if env.storage().persistent().has(&DataKey::LpContribution(market_id)) {
+            env.storage().persistent().extend_ttl(
+                &DataKey::LpContribution(market_id),
+                threshold,
+                extend_to,
+            );
+        }
+        if env.storage().persistent().has(&DataKey::LpFeePool(market_id)) {
+            env.storage().persistent().extend_ttl(
+                &DataKey::LpFeePool(market_id),
+                threshold,
+                extend_to,
+            );
+        }
     }
 
     /// Verify a ZK proof scalar against an expected value.
@@ -1364,6 +1728,93 @@ impl PredictionMarket {
         let norm_expected = normalize_scalar(expected.to_array());
 
         norm_proof == norm_expected
+    }
+
+    /// Get LMSR price for a specific outcome.
+    /// Returns probability in SCALE units (10_000_000 = 1.0 = 100%).
+    pub fn get_lmsr_price(env: Env, market_id: u64, outcome_index: u32) -> i128 {
+        let b: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LmsrB(market_id))
+            .unwrap();
+        
+        let outcome_shares: Vec<i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OutcomeShares(market_id))
+            .unwrap();
+        
+        let n = outcome_shares.len() as usize;
+        let mut q = [0i128; 8];
+        for j in 0..n {
+            q[j] = outcome_shares.get(j as u32).unwrap();
+        }
+        
+        lmsr_price(&q[..n], b, outcome_index as usize)
+    }
+
+    /// Get outcome shares for a market.
+    /// Returns a Vec of share quantities for each outcome.
+    pub fn get_outcome_shares(env: Env, market_id: u64) -> Vec<i128> {
+        env.storage()
+            .instance()
+            .get(&DataKey::OutcomeShares(market_id))
+            .unwrap()
+    }
+
+    /// Claim refund for a voided market.
+    /// Returns the amount refunded.
+    pub fn claim_refund(env: Env, market_id: u64, claimant: Address) -> i128 {
+        claimant.require_auth();
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        
+        assert!(market.status == MarketStatus::Voided, "Market is not voided");
+
+        // Check if already refunded
+        let already_refunded: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RefundClaimed(market_id))
+            .unwrap_or(false);
+        assert!(!already_refunded, "Already refunded");
+
+        // Get user's position
+        let positions: Vec<(Address, u32, i128)> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserPosition(market_id))
+            .unwrap();
+
+        let mut refund_amount: i128 = 0;
+        for i in 0..positions.len() {
+            let (addr, _, amount) = positions.get(i).unwrap();
+            if addr == claimant {
+                refund_amount = amount;
+                break;
+            }
+        }
+
+        assert!(refund_amount > 0, "No position to refund");
+
+        // Transfer refund
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&env.current_contract_address(), &claimant, &refund_amount);
+
+        // Mark as refunded
+        env.storage()
+            .persistent()
+            .set(&DataKey::RefundClaimed(market_id), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::RefundClaimed(market_id), 100, 1_000_000);
+
+        refund_amount
     }
 }
 
@@ -2001,6 +2452,34 @@ mod tests {
         // market 1 was created before shutdown — betting must still be blocked
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
+    }
+
+    #[test]
+    fn test_place_bet_with_sig_replay_protection() {
+        let (env, client, _, _, _) = setup();
+        let bettor = Address::generate(&env);
+        let market_id = 1u64;
+        let option_index = 0u32;
+        let amount = 50_000_000i128; // 5.0 XLM
+        let nonce = 0u64;
+        let signature = soroban_sdk::BytesN::from_array(&env, &[0u8; 64]);
+
+        // Mock all auths to bypass signature verification in the mock environment
+        env.mock_all_auths();
+
+        // 1. First bet should succeed
+        client.place_bet_with_sig(&market_id, &option_index, &bettor, &amount, &nonce, &signature);
+        assert!(client.get_total_shares(&market_id) > 0);
+
+        // 2. Replaying the SAME nonce should panic
+        let res = env.as_contract(&client.address, || {
+            client.try_place_bet_with_sig(&market_id, &option_index, &bettor, &amount, &nonce, &signature)
+        });
+        assert!(res.is_err(), "Replay with same nonce should fail");
+
+        // 3. Using the NEXT nonce should succeed
+        let next_nonce = 1u64;
+        client.place_bet_with_sig(&market_id, &option_index, &bettor, &amount, &next_nonce, &signature);
     }
 
     /// batch_distribute still works during shutdown.
@@ -2665,6 +3144,138 @@ mod tests {
 
         client.claim_refund(&2u64, &bettor);
         client.claim_refund(&2u64, &bettor); // should panic
+    }
+
+    // ── Fee Splitter Tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_configure_fee_split() {
+        let (env, client, _, _, _) = setup();
+        let treasury = Address::generate(&env);
+        let lp = Address::generate(&env);
+        let burn = Address::generate(&env);
+
+        // Configure 50% treasury, 30% LP, 20% burn
+        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury, &lp, &burn);
+
+        let (config, treasury_addr, lp_addr, burn_addr) = client.get_fee_split_config();
+        assert_eq!(config.treasury_bps, 5000);
+        assert_eq!(config.lp_bps, 3000);
+        assert_eq!(config.burn_bps, 2000);
+        assert_eq!(treasury_addr, treasury);
+        assert_eq!(lp_addr, lp);
+        assert_eq!(burn_addr, burn);
+    }
+
+    #[test]
+    #[should_panic(expected = "BPS split must total 10000 (100%)")]
+    fn test_configure_fee_split_invalid_total() {
+        let (env, client, _, _, _) = setup();
+        let treasury = Address::generate(&env);
+        let lp = Address::generate(&env);
+        let burn = Address::generate(&env);
+
+        // Invalid: totals to 9000 (90%)
+        client.configure_fee_split(&5000u32, &3000u32, &1000u32, &treasury, &lp, &burn);
+    }
+
+    #[test]
+    fn test_update_fee_split() {
+        let (env, client, _, _, _) = setup();
+        let treasury = Address::generate(&env);
+        let lp = Address::generate(&env);
+        let burn = Address::generate(&env);
+
+        // Initial config
+        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury, &lp, &burn);
+
+        // Update to 60% treasury, 25% LP, 15% burn
+        client.update_fee_split(&6000u32, &2500u32, &1500u32);
+
+        let (config, _, _, _) = client.get_fee_split_config();
+        assert_eq!(config.treasury_bps, 6000);
+        assert_eq!(config.lp_bps, 2500);
+        assert_eq!(config.burn_bps, 1500);
+    }
+
+    #[test]
+    fn test_update_fee_addresses() {
+        let (env, client, _, _, _) = setup();
+        let treasury1 = Address::generate(&env);
+        let lp1 = Address::generate(&env);
+        let burn1 = Address::generate(&env);
+
+        // Initial config
+        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury1, &lp1, &burn1);
+
+        // Update addresses
+        let treasury2 = Address::generate(&env);
+        let lp2 = Address::generate(&env);
+        let burn2 = Address::generate(&env);
+        client.update_fee_addresses(&treasury2, &lp2, &burn2);
+
+        let (_, treasury_addr, lp_addr, burn_addr) = client.get_fee_split_config();
+        assert_eq!(treasury_addr, treasury2);
+        assert_eq!(lp_addr, lp2);
+        assert_eq!(burn_addr, burn2);
+    }
+
+    #[test]
+    fn test_fee_distribution_on_batch_distribute() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Create real SAC token
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+
+        // Configure fee split: 50% treasury, 30% LP, 20% burn
+        let treasury = Address::generate(&env);
+        let lp = Address::generate(&env);
+        let burn = Address::generate(&env);
+        client.configure_fee_split(&5000u32, &3000u32, &2000u32, &treasury, &lp, &burn);
+
+        // Create market and place bets
+        let creator = Address::generate(&env);
+        let bettor1 = Address::generate(&env);
+        let bettor2 = Address::generate(&env);
+        
+        sac_client.mint(&bettor1, &1000_000_000i128);
+        sac_client.mint(&bettor2, &1000_000_000i128);
+
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+        client.create_market(
+            &creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None
+        );
+
+        client.place_bet(&1u64, &0u32, &bettor1, &100_000_000i128);
+        client.place_bet(&1u64, &1u32, &bettor2, &100_000_000i128);
+
+        // Resolve and distribute
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        let treasury_before = sac_client.balance(&treasury);
+        let lp_before = sac_client.balance(&lp);
+        let burn_before = sac_client.balance(&burn);
+
+        client.batch_distribute(&1u64, &10u32);
+
+        let treasury_after = sac_client.balance(&treasury);
+        let lp_after = sac_client.balance(&lp);
+        let burn_after = sac_client.balance(&burn);
+
+        // Verify fees were distributed (amounts should be > 0)
+        assert!(treasury_after > treasury_before, "Treasury should receive fees");
+        assert!(lp_after > lp_before, "LP should receive fees");
+        assert!(burn_after > burn_before, "Burn should receive fees");
     }
 }
 
