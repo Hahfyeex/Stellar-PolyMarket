@@ -7,6 +7,7 @@ import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
 import MarketFilters from "../components/MarketFilters";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
+import SocialTicker from "../components/SocialTicker";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
@@ -168,6 +169,9 @@ export default function Home() {
           <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{error}</p>
         </div>
       )}
+
+      {/* Social proof ticker — real-time recent bets strip */}
+      <SocialTicker apiUrl={process.env.NEXT_PUBLIC_API_URL} />
 
       <InsufficientGasModal isOpen={isGasModalOpen} onClose={() => setIsGasModalOpen(false)} />
 
