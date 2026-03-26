@@ -47,6 +47,8 @@ module.exports = {
       collectCoverageFrom: [
         "src/utils/simulatorCalc.ts",
         "src/utils/poolOwnership.ts",
+        "src/utils/trustline.ts",
+        "src/utils/marketDiscovery.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

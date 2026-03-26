@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" fill="none">
+  <!-- Outer hex ring -->
+  <polygon points="40,8 66,23 66,57 40,72 14,57 14,23" fill="#1a1a2e" stroke="#f59e0b" stroke-width="2"/>
+  <!-- Inner hex -->
+  <polygon points="40,18 58,28 58,52 40,62 22,52 22,28" fill="#292524" stroke="#fbbf24" stroke-width="1" opacity="0.6"/>
+  <!-- Bitcoin B symbol -->
+  <text x="40" y="48" font-family="monospace" font-size="26" font-weight="bold" fill="#f59e0b" text-anchor="middle">₿</text>
+  <!-- Glow dots -->
+  <circle cx="40" cy="8" r="3" fill="#fbbf24" opacity="0.9"/>
+  <circle cx="66" cy="23" r="3" fill="#fbbf24" opacity="0.9"/>
+  <circle cx="66" cy="57" r="3" fill="#fbbf24" opacity="0.9"/>
+  <circle cx="40" cy="72" r="3" fill="#fbbf24" opacity="0.9"/>
+  <circle cx="14" cy="57" r="3" fill="#fbbf24" opacity="0.9"/>
+  <circle cx="14" cy="23" r="3" fill="#fbbf24" opacity="0.9"/>
+</svg>
