@@ -68,3 +68,18 @@ pub fn check_platform_active(env: &Env) {
         AccessPlatformStatus::Shutdown => panic!("Platform is shut down"),
     }
 }
+
+/// Helper to panic if the platform is paused or shutdown.
+pub fn panic_if_paused(env: &Env) {
+    let status: AccessPlatformStatus = env
+        .storage()
+        .instance()
+        .get(&AccessKey::PlatformStatus)
+        .unwrap_or(AccessPlatformStatus::Active);
+
+    match status {
+        AccessPlatformStatus::Active => {}
+        AccessPlatformStatus::Paused => panic!("Platform is paused"),
+        AccessPlatformStatus::Shutdown => panic!("Platform is shut down"),
+    }
+}
