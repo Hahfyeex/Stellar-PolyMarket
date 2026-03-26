@@ -1,0 +1,63 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`MetadataUnavailable matches snapshot with message and className 1`] = `
+<DocumentFragment>
+  <div
+    aria-label="Market metadata unavailable"
+    class="rounded-lg border border-dashed border-gray-600 bg-gray-900/40 px-6 py-8 text-center mt-4"
+    data-testid="metadata-unavailable"
+    role="status"
+  >
+    <div
+      aria-hidden="true"
+      class="mb-3 text-3xl"
+    >
+      ⚠️
+    </div>
+    <p
+      class="text-sm font-semibold text-gray-300"
+    >
+      Market metadata unavailable
+    </p>
+    <p
+      class="mt-1 text-xs text-gray-500"
+    >
+      Could not retrieve metadata from IPFS or on-chain sources. The market may still be active — check back later.
+    </p>
+    <p
+      class="mt-2 text-xs text-gray-400"
+      data-testid="metadata-unavailable-message"
+    >
+      Timeout after 5s
+    </p>
+  </div>
+</DocumentFragment>
+`;
+
+exports[`MetadataUnavailable matches snapshot with no props 1`] = `
+<DocumentFragment>
+  <div
+    aria-label="Market metadata unavailable"
+    class="rounded-lg border border-dashed border-gray-600 bg-gray-900/40 px-6 py-8 text-center "
+    data-testid="metadata-unavailable"
+    role="status"
+  >
+    <div
+      aria-hidden="true"
+      class="mb-3 text-3xl"
+    >
+      ⚠️
+    </div>
+    <p
+      class="text-sm font-semibold text-gray-300"
+    >
+      Market metadata unavailable
+    </p>
+    <p
+      class="mt-1 text-xs text-gray-500"
+    >
+      Could not retrieve metadata from IPFS or on-chain sources. The market may still be active — check back later.
+    </p>
+  </div>
+</DocumentFragment>
+`;
