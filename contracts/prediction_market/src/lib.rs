@@ -8,6 +8,8 @@ use crate::access::{
     check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
     AccessRole, check_whitelisted_token, set_whitelisted_token,
 };
+mod checked_math;
+use crate::checked_math::{cadd, csub, cmul, cdiv, cmuldiv};
 mod events;
 use crate::events::{
     emit_bet_placed, emit_contract_initialized, emit_dispute_raised, emit_fee_collected,
@@ -21,6 +23,9 @@ use crate::lmsr::{lmsr_cost, lmsr_price};
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
 use math::normalize_scalar;
+
+#[cfg(test)]
+mod fuzz_arithmetic;
 
 mod position_token;
 mod lmsr;
@@ -64,18 +69,17 @@ pub const DISPUTE_WINDOW: u64 = 86_400;
 /// Pure function: O(1) time complexity, O(1) space complexity.
 /// Logic: Fee = Max(0.5%, 2% - (Volume / Threshold))
 pub fn calculate_dynamic_fee(volume: i128) -> u32 {
-    let base_fee_bps: i128 = 200;      // 2.0%
-    let floor_fee_bps: i128 = 50;       // 0.5%
-    let total_reduction_bps: i128 = 150; // Difference (2.0% - 0.5%)
-    let threshold: i128 = 100_000 * 10_000_000; // 100k XLM = 1,000,000,000,000 stroops
+    let base_fee_bps: i128 = 200;
+    let floor_fee_bps: i128 = 50;
+    let total_reduction_bps: i128 = 150;
+    let threshold: i128 = 100_000 * 10_000_000;
 
     if volume <= 0 {
         return base_fee_bps as u32;
     }
 
-    // Linear scaling: reduction = (Volume / Threshold) * total_reduction
-    let reduction = (volume * total_reduction_bps) / threshold;
-    let fee = base_fee_bps - reduction;
+    let reduction = cdiv(cmul(volume, total_reduction_bps, "fee reduction"), threshold, "fee reduction");
+    let fee = csub(base_fee_bps, reduction, "fee calc");
 
     if fee < floor_fee_bps {
         floor_fee_bps as u32
@@ -255,7 +259,7 @@ fn upsert_user_position(
     for i in 0..positions.len() {
         let (addr, position_outcome, prev_amount) = positions.get(i).unwrap();
         if addr == *bettor && position_outcome == outcome {
-            let new_amount = prev_amount + amount_delta;
+            let new_amount = cadd(prev_amount, amount_delta, "upsert position");
             assert!(new_amount >= 0, "Insufficient position balance");
             positions.set(i, (bettor.clone(), outcome, new_amount));
             found = true;
@@ -546,11 +550,11 @@ impl PredictionMarket {
         for j in 0..n {
             q_after[j] = q_before[j];
         }
-        q_after[option_index as usize] += amount;
+        q_after[option_index as usize] = cadd(q_after[option_index as usize], amount, "q_after shares");
 
         let cost_before = lmsr_cost(&q_before[..n], b);
         let cost_after = lmsr_cost(&q_after[..n], b);
-        let cost_delta = cost_after - cost_before;
+        let cost_delta = csub(cost_after, cost_before, "lmsr cost delta");
         assert!(cost_delta > 0, "cost delta must be positive");
 
         // Charge the bettor the LMSR cost delta (not raw `amount`)
@@ -578,7 +582,7 @@ impl PredictionMarket {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares(market_id), &(shares + cost_delta));
+            .set(&DataKey::TotalShares(market_id), &cadd(shares, cost_delta, "total shares"));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
         emit_bet_placed(&env, market_id, &bettor, option_index, cost_delta, amount);
@@ -607,7 +611,7 @@ impl PredictionMarket {
             .unwrap_or(soroban_sdk::Map::new(&env));
 
         let existing = contributions.get(provider.clone()).unwrap_or(0);
-        contributions.set(provider.clone(), existing + amount);
+        contributions.set(provider.clone(), cadd(existing, amount, "lp contribution"));
 
         env.storage()
             .persistent()
@@ -621,7 +625,7 @@ impl PredictionMarket {
         // Accumulate user's cost investment for future refunds (if voided)
         let cost_key = DataKey::UserCost(market_id, bettor.clone());
         let prev_cost: i128 = env.storage().persistent().get(&cost_key).unwrap_or(0);
-        env.storage().persistent().set(&cost_key, &(prev_cost + cost_delta));
+        env.storage().persistent().set(&cost_key, &cadd(prev_cost, cost_delta, "user cost"));
         env.storage().persistent().extend_ttl(&cost_key, 100, 1_000_000);
 
         // Hot write: total_shares → Instance
@@ -632,7 +636,7 @@ impl PredictionMarket {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares(market_id), &(shares + amount));
+            .set(&DataKey::TotalShares(market_id), &cadd(shares, amount, "lp total shares"));
         env.storage().instance().extend_ttl(100, 1_000_000);
 
         env.events().publish(
@@ -673,10 +677,10 @@ impl PredictionMarket {
         // Sum total LP contributions
         let mut total_lp: i128 = 0;
         for (_, v) in contributions.iter() {
-            total_lp += v;
+            total_lp = cadd(total_lp, v, "total lp sum");
         }
 
-        let reward = (lp_amount * fee_pool) / total_lp;
+        let reward = cmuldiv(lp_amount, fee_pool, total_lp, "lp reward");
         assert!(reward > 0, "Reward rounds to zero");
 
         // Zero out this LP's contribution to prevent double-claim
@@ -693,7 +697,7 @@ impl PredictionMarket {
         // Deduct from fee pool
         env.storage()
             .persistent()
-            .set(&DataKey::LpFeePool(market_id), &(fee_pool - reward));
+            .set(&DataKey::LpFeePool(market_id), &csub(fee_pool, reward, "lp fee pool"));
         env.storage().persistent().extend_ttl(
             &DataKey::LpFeePool(market_id),
             100,
@@ -969,11 +973,9 @@ impl PredictionMarket {
             .get(&DataKey::BurnAddress)
             .expect("Burn address not configured");
         
-        // Calculate split amounts using BPS (zero-float policy)
-        // Formula: amount * bps / 10000
-        let treasury_amount = (fee_amount * config.treasury_bps as i128) / 10000;
-        let lp_amount = (fee_amount * config.lp_bps as i128) / 10000;
-        let burn_amount = (fee_amount * config.burn_bps as i128) / 10000;
+        let treasury_amount = cmuldiv(fee_amount, config.treasury_bps as i128, 10000, "treasury fee split");
+        let lp_amount       = cmuldiv(fee_amount, config.lp_bps as i128,       10000, "lp fee split");
+        let burn_amount     = cmuldiv(fee_amount, config.burn_bps as i128,     10000, "burn fee split");
         
         let token_client = token::Client::new(env, token);
         
@@ -1135,7 +1137,7 @@ impl PredictionMarket {
                 .instance()
                 .get(&DataKey::TotalShares(market_id))
                 .unwrap_or(0);
-            let fee_pool = total_pool * 3 / 100;
+            let fee_pool = cmuldiv(total_pool, 3, 100, "lp fee pool 3pct");
             if fee_pool > 0 {
                 env.storage()
                     .persistent()
@@ -1230,14 +1232,14 @@ impl PredictionMarket {
         assert!(balance > 0, "No voting weight");
 
         dispute.votes.set(voter.clone(), balance);
-        dispute.total_votes += balance;
+        dispute.total_votes = cadd(dispute.total_votes, balance, "total votes");
         if support {
-            dispute.support_votes += balance;
+            dispute.support_votes = cadd(dispute.support_votes, balance, "support votes");
         }
 
-        // Check threshold: more than 60% support (support_votes / total_votes > 0.6)
-        // Equivalent to: support_votes * 10 > total_votes * 6
-        if dispute.support_votes * 10 > dispute.total_votes * 6 {
+        // Check threshold: more than 60% support
+        // support_votes * 10 > total_votes * 6  (no floats)
+        if cmul(dispute.support_votes, 10, "vote threshold") > cmul(dispute.total_votes, 6, "vote threshold") {
             let mut updated_market = market;
             updated_market.status = MarketStatus::ReReview;
             env.storage()
@@ -1335,11 +1337,10 @@ impl PredictionMarket {
             let (addr, outcome, amount) = positions.get(i).unwrap();
             if outcome == market.winning_outcome {
                 winners.push_back((addr, amount));
-                winning_stake += amount;
+                winning_stake = cadd(winning_stake, amount, "winning stake sweep");
             }
         }
         if winning_stake == 0 {
-            // No winners, mark as swept and return 0
             env.storage()
                 .instance()
                 .set(&DataKey::MarketSwept(market_id), &true);
@@ -1347,12 +1348,12 @@ impl PredictionMarket {
         }
 
         let fee_bps = calculate_dynamic_fee(total_pool);
-        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+        let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool sweep");
 
         // Calculate and store original payouts for each winner
         let mut original_payouts: Map<Address, i128> = Map::new(&env);
         for (bettor, amount) in winners.iter() {
-            let payout = (amount * payout_pool) / winning_stake;
+            let payout = cmuldiv(amount, payout_pool, winning_stake, "original payout");
             original_payouts.set(bettor, payout);
         }
         env.storage()
@@ -1372,14 +1373,14 @@ impl PredictionMarket {
             .get(&DataKey::Claimed(market_id))
             .unwrap_or(Map::new(&env));
 
-        // Calculate unclaimed amount (winners beyond cursor haven't been paid AND haven't eager claimed)
+        // Calculate unclaimed amount
         let mut unclaimed_total: i128 = 0;
         let total_winners = winners.len();
         for i in cursor..total_winners {
             let (bettor, _) = winners.get(i).unwrap();
             if !claimed_map.get(bettor.clone()).unwrap_or(false) {
                 let payout = original_payouts.get(bettor).unwrap();
-                unclaimed_total += payout;
+                unclaimed_total = cadd(unclaimed_total, payout, "unclaimed total");
             }
         }
 
@@ -1391,7 +1392,7 @@ impl PredictionMarket {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::VaultBalance, &(current_vault + unclaimed_total));
+            .set(&DataKey::VaultBalance, &cadd(current_vault, unclaimed_total, "vault balance"));
 
         // Mark market as swept
         env.storage()
@@ -1528,13 +1529,10 @@ impl PredictionMarket {
                 .instance()
                 .get(&DataKey::VaultBalance)
                 .unwrap_or(0);
-            assert!(
-                vault_balance >= payout_amount,
-                "Insufficient vault balance"
-            );
+            assert!(vault_balance >= payout_amount, "Insufficient vault balance");
             env.storage()
                 .instance()
-                .set(&DataKey::VaultBalance, &(vault_balance - payout_amount));
+                .set(&DataKey::VaultBalance, &csub(vault_balance, payout_amount, "vault deduct claim"));
         }
 
         token_client.transfer(&env.current_contract_address(), &claimant, &payout_amount);
@@ -1652,7 +1650,7 @@ impl PredictionMarket {
             let (addr, outcome, amount) = positions.get(i).unwrap();
             if outcome == market.winning_outcome {
                 winners.push_back((addr, amount));
-                winning_stake += amount;
+                winning_stake = cadd(winning_stake, amount, "winning stake distribute");
             }
         }
 
@@ -1661,8 +1659,8 @@ impl PredictionMarket {
         }
 
         let fee_bps = calculate_dynamic_fee(total_pool);
-        let fee_amount = (total_pool * fee_bps as i128) / 10000;
-        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+        let fee_amount = cmuldiv(total_pool, fee_bps as i128, 10000, "fee amount");
+        let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool distribute");
         let token_client = token::Client::new(env, &market.token);
 
         // Hot read: cursor from Instance
@@ -1688,8 +1686,7 @@ impl PredictionMarket {
 
         for i in cursor..end {
             let (bettor, amount) = winners.get(i).unwrap();
-            let payout = (amount * payout_pool) / winning_stake;
-            // Burn position token on claim
+            let payout = cmuldiv(amount, payout_pool, winning_stake, "batch distribute payout");
             position_token::burn(env, market_id, market.winning_outcome, &bettor);
             token_client.transfer(&env.current_contract_address(), &bettor, &payout);
             paid += 1;
@@ -1710,8 +1707,8 @@ impl PredictionMarket {
             .iter()
             .skip(cursor as usize)
             .take((end - cursor) as usize)
-            .map(|(_, amount)| (amount * payout_pool) / winning_stake)
-            .sum();
+            .map(|(_, amount)| cmuldiv(amount, payout_pool, winning_stake, "batch distribute total"))
+            .fold(0i128, |acc, x| cadd(acc, x, "batch distribute sum"));
         emit_payout_claimed(env, market_id, paid, total_distributed, end);
 
         paid
@@ -1816,14 +1813,14 @@ impl PredictionMarket {
         for i in 0..positions.len() {
             let (_, outcome, amount) = positions.get(i).unwrap();
             if outcome == market.winning_outcome {
-                winning_stake += amount;
+                winning_stake = cadd(winning_stake, amount, "winning stake batch payout");
             }
         }
 
         assert!(winning_stake > 0, "No winners to pay out");
 
         let fee_bps = calculate_dynamic_fee(total_pool);
-        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+        let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool batch");
         let token_client = token::Client::new(env, &market.token);
 
         let mut paid_count: u32 = 0;
@@ -1861,13 +1858,11 @@ impl PredictionMarket {
                 continue;
             }
 
-            // Calculate payout using zero-float arithmetic
-            let payout = (recipient_stake * payout_pool) / winning_stake;
+            // Calculate payout using checked arithmetic (zero-float policy)
+            let payout = cmuldiv(recipient_stake, payout_pool, winning_stake, "batch payout calc");
 
-            // Transfer payout to recipient
             token_client.transfer(&env.current_contract_address(), &recipient, &payout);
 
-            // Mark as paid in Persistent storage with TTL extension
             env.storage()
                 .persistent()
                 .set(&DataKey::PayoutClaimed(market_id, recipient.clone()), &true);
@@ -1875,11 +1870,10 @@ impl PredictionMarket {
                 .persistent()
                 .extend_ttl(&DataKey::PayoutClaimed(market_id, recipient.clone()), 100, 1_000_000);
 
-            // Burn position token on claim
             position_token::burn(env, market_id, market.winning_outcome, &recipient);
 
             paid_count += 1;
-            total_distributed += payout;
+            total_distributed = cadd(total_distributed, payout, "total distributed");
         }
 
         // Emit PayoutClaimed event for off-chain indexing
@@ -1974,7 +1968,7 @@ impl PredictionMarket {
                         user_amount = amount;
                         user_winner_index = winner_count;
                     }
-                    winning_stake += amount;
+                    winning_stake = cadd(winning_stake, amount, "bulk claim winning stake");
                     winner_count += 1;
                 }
             }
@@ -2000,9 +1994,9 @@ impl PredictionMarket {
                 .instance()
                 .get(&DataKey::TotalShares(market_id))
                 .unwrap_or(0);
-            let payout_pool = total_pool * 97 / 100;
+            let payout_pool = cmuldiv(total_pool, 97, 100, "bulk claim payout pool");
 
-            let payout = (user_amount * payout_pool) / winning_stake;
+            let payout = cmuldiv(user_amount, payout_pool, winning_stake, "bulk claim payout");
             
             if payout > 0 {
                 let token_client = token::Client::new(&env, &market.token);

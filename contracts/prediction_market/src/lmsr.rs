@@ -1,22 +1,16 @@
 /// Fixed-point LMSR (Logarithmic Market Scoring Rule) math.
 ///
 /// All values use 7-decimal precision: SCALE = 10_000_000 (1.0 = 10_000_000).
-/// No floats anywhere — only i128 arithmetic.
+/// No floats anywhere — only i128 arithmetic with checked_* operations.
 ///
 /// LMSR cost function:  C(q) = b * ln( Σ exp(q_i / b) )
 /// Price of outcome i:  p_i  = exp(q_i / b) / Σ exp(q_j / b)
 /// Cost to move shares: ΔC   = C(q_after) - C(q_before)
 
+use crate::checked_math::{cadd, csub, cmul, cdiv};
+
 pub const SCALE: i128 = 10_000_000; // 1.0 in fixed-point
 
-/// Fixed-point natural log approximation.
-/// Input `x` is in SCALE units (x > 0).
-/// Returns ln(x) in SCALE units.
-///
-/// Uses identity: ln(x) = ln(m * 2^k) = k*ln(2) + ln(m), where m ∈ [0.5, 1).
-/// ln(m) approximated by a 3rd-order minimax polynomial on [0.5, 1):
-///   ln(m) ≈ a0 + a1*(m-1) + a2*(m-1)^2 + a3*(m-1)^3
-/// Coefficients (scaled): a1≈1, a2≈-0.5, a3≈0.3333
 pub fn ln_fp(x: i128) -> i128 {
     assert!(x > 0, "ln undefined for x <= 0");
     if x == SCALE {
@@ -28,38 +22,39 @@ pub fn ln_fp(x: i128) -> i128 {
     let mut val = x;
     let mut k: i128 = 0;
 
-    // Normalize val into [0.707 * SCALE, 1.414 * SCALE]
-    // 0.707 * 10^7 = 7,071,068
-    // 1.414 * 10^7 = 14,142,136
     while val < 7_071_068 {
         val <<= 1;
-        k -= 1;
+        k = csub(k, 1, "ln_fp k decrement");
     }
     while val > 14_142_136 {
         val >>= 1;
-        k += 1;
+        k = cadd(k, 1, "ln_fp k increment");
     }
 
-    // ln(x) = k*ln(2) + ln(val/SCALE)
-    // Let m = val/SCALE. m is in [0.707, 1.414].
-    // Let t = m - 1 = (val - SCALE) / SCALE. t is in [-0.293, 0.414].
-    // ln(1 + t) ≈ t - t^2/2 + t^3/3 - t^4/4 + t^5/5 - t^6/6 + t^7/7 - t^8/8
-    let t = val - SCALE;
+    let t = csub(val, SCALE, "ln_fp t");
     if t == 0 {
-        return k * LN2;
+        return cmul(k, LN2, "ln_fp k*ln2");
     }
 
-    let t2 = t * t / SCALE;
-    let t3 = t2 * t / SCALE;
-    let t4 = t3 * t / SCALE;
-    let t5 = t4 * t / SCALE;
-    let t6 = t5 * t / SCALE;
-    let t7 = t6 * t / SCALE;
-    let t8 = t7 * t / SCALE;
+    let t2 = cdiv(cmul(t, t, "ln t2"), SCALE, "ln t2 scale");
+    let t3 = cdiv(cmul(t2, t, "ln t3"), SCALE, "ln t3 scale");
+    let t4 = cdiv(cmul(t3, t, "ln t4"), SCALE, "ln t4 scale");
+    let t5 = cdiv(cmul(t4, t, "ln t5"), SCALE, "ln t5 scale");
+    let t6 = cdiv(cmul(t5, t, "ln t6"), SCALE, "ln t6 scale");
+    let t7 = cdiv(cmul(t6, t, "ln t7"), SCALE, "ln t7 scale");
+    let t8 = cdiv(cmul(t7, t, "ln t8"), SCALE, "ln t8 scale");
 
-    let ln_m = t - t2 / 2 + t3 / 3 - t4 / 4 + t5 / 5 - t6 / 6 + t7 / 7 - t8 / 8;
+    // ln(1+t) ≈ t - t²/2 + t³/3 - t⁴/4 + t⁵/5 - t⁶/6 + t⁷/7 - t⁸/8
+    let ln_m = t
+        .checked_sub(t2 / 2).unwrap_or_else(|| panic!("arithmetic overflow in ln_fp term2"))
+        .checked_add(t3 / 3).unwrap_or_else(|| panic!("arithmetic overflow in ln_fp term3"))
+        .checked_sub(t4 / 4).unwrap_or_else(|| panic!("arithmetic overflow in ln_fp term4"))
+        .checked_add(t5 / 5).unwrap_or_else(|| panic!("arithmetic overflow in ln_fp term5"))
+        .checked_sub(t6 / 6).unwrap_or_else(|| panic!("arithmetic overflow in ln_fp term6"))
+        .checked_add(t7 / 7).unwrap_or_else(|| panic!("arithmetic overflow in ln_fp term7"))
+        .checked_sub(t8 / 8).unwrap_or_else(|| panic!("arithmetic overflow in ln_fp term8"));
 
-    k * LN2 + ln_m
+    cadd(cmul(k, LN2, "ln_fp k*ln2"), ln_m, "ln_fp result")
 }
 
 pub fn exp_fp(x: i128) -> i128 {
@@ -73,25 +68,29 @@ pub fn exp_fp(x: i128) -> i128 {
 
     const LN2: i128 = 6_931_472;
 
-    // Decompose x = k*ln2 + r, r ∈ [0, ln2)
     let mut k = x / LN2;
     let mut r = x % LN2;
     if r < 0 {
-        r += LN2;
-        k -= 1;
+        r = cadd(r, LN2, "exp_fp r adjust");
+        k = csub(k, 1, "exp_fp k adjust");
     }
 
-    // Taylor: exp(r) = 1 + r + r^2/2 + r^3/6 + r^4/24 + r^5/120
-    let r2 = r * r / SCALE;
-    let r3 = r2 * r / SCALE;
-    let r4 = r3 * r / SCALE;
-    let r5 = r4 * r / SCALE;
+    let r2 = cdiv(cmul(r, r, "exp r2"), SCALE, "exp r2 scale");
+    let r3 = cdiv(cmul(r2, r, "exp r3"), SCALE, "exp r3 scale");
+    let r4 = cdiv(cmul(r3, r, "exp r4"), SCALE, "exp r4 scale");
+    let r5 = cdiv(cmul(r4, r, "exp r5"), SCALE, "exp r5 scale");
 
-    let exp_r = SCALE + r + r2 / 2 + r3 / 6 + r4 / 24 + r5 / 120;
+    // exp(r) = 1 + r + r²/2 + r³/6 + r⁴/24 + r⁵/120
+    let exp_r = SCALE
+        .checked_add(r).unwrap_or_else(|| panic!("arithmetic overflow in exp_fp r"))
+        .checked_add(r2 / 2).unwrap_or_else(|| panic!("arithmetic overflow in exp_fp r2"))
+        .checked_add(r3 / 6).unwrap_or_else(|| panic!("arithmetic overflow in exp_fp r3"))
+        .checked_add(r4 / 24).unwrap_or_else(|| panic!("arithmetic overflow in exp_fp r4"))
+        .checked_add(r5 / 120).unwrap_or_else(|| panic!("arithmetic overflow in exp_fp r5"));
 
     if k >= 0 {
         if k > 60 { return i128::MAX / SCALE; }
-        exp_r << k
+        exp_r.checked_shl(k as u32).unwrap_or(i128::MAX / SCALE)
     } else {
         if k < -60 { return 0; }
         exp_r >> (-k)
@@ -99,31 +98,24 @@ pub fn exp_fp(x: i128) -> i128 {
 }
 
 /// LMSR cost function: C(q) = b * ln( Σ exp(q_i / b) )
-/// `q` — outcome share quantities in stroops (raw i128, NOT scaled)
-/// `b` — liquidity parameter in stroops (raw i128, NOT scaled)
-/// Returns cost in stroops.
 pub fn lmsr_cost(q: &[i128], b: i128) -> i128 {
     assert!(b > 0, "b must be positive");
 
     let mut q_max = q[0];
     for &qi in q {
-        if qi > q_max {
-            q_max = qi;
-        }
+        if qi > q_max { q_max = qi; }
     }
 
-    // C = q_max + b * ln( Σ exp((q_i - q_max) / b) )
     let mut sum_exp: i128 = 0;
     for &qi in q {
-        let arg = (qi - q_max) * SCALE / b; 
-        sum_exp += exp_fp(arg);
+        let arg = cdiv(cmul(csub(qi, q_max, "lmsr arg sub"), SCALE, "lmsr arg mul"), b, "lmsr arg div");
+        sum_exp = cadd(sum_exp, exp_fp(arg), "lmsr sum_exp");
     }
 
-    q_max + (b * ln_fp(sum_exp) / SCALE)
+    cadd(q_max, cdiv(cmul(b, ln_fp(sum_exp), "lmsr b*ln"), SCALE, "lmsr cost scale"), "lmsr cost")
 }
 
 /// Price of outcome `i`: p_i = exp(q_i/b) / Σ exp(q_j/b)
-/// Returns probability in SCALE units (SCALE = 1.0).
 pub fn lmsr_price(q: &[i128], b: i128, i: usize) -> i128 {
     assert!(b > 0, "b must be positive");
     assert!(i < q.len(), "index out of range");
@@ -131,14 +123,12 @@ pub fn lmsr_price(q: &[i128], b: i128, i: usize) -> i128 {
     let mut sum_exp: i128 = 0;
     let mut exp_i: i128 = 0;
     for (j, &qj) in q.iter().enumerate() {
-        let e = exp_fp(qj * SCALE / b);
-        sum_exp += e;
-        if j == i {
-            exp_i = e;
-        }
+        let e = exp_fp(cdiv(cmul(qj, SCALE, "price exp mul"), b, "price exp div"));
+        sum_exp = cadd(sum_exp, e, "price sum_exp");
+        if j == i { exp_i = e; }
     }
 
-    exp_i * SCALE / sum_exp
+    cdiv(cmul(exp_i, SCALE, "price numerator"), sum_exp, "price")
 }
 
 #[cfg(test)]
