@@ -117,6 +117,7 @@ module.exports = {
         "src/utils/poolOwnership.ts",
         "src/utils/trustline.ts",
         "src/utils/marketDiscovery.ts",
+        "src/utils/slippageCalc.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
