@@ -237,6 +237,7 @@ export default function Home() {
                       onBetPlaced={fetchMarkets}
                     />
                   </ContractErrorBoundary>
+                </div>
               ))}
             </div>
           )}
