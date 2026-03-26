@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getMessaging, getToken, onMessage } from "firebase/messaging";
+import { getMessaging, getToken, onMessage, Messaging } from "firebase/messaging";
 import { getFirestore } from "firebase/firestore";
 import {
   initializeAppCheck,
@@ -72,9 +72,20 @@ if (typeof window !== "undefined") {
 const db = getFirestore(app);
 
 // Initialize Messaging (browser only)
-let messaging = null;
+let messaging: Messaging | null = null;
 if (typeof window !== "undefined") {
   messaging = getMessaging(app);
 }
 
 export { app, db, messaging, getToken, onMessage };
+
+/**
+ * trackEvent — lightweight analytics stub.
+ * Replace with a real analytics call (e.g. Firebase Analytics logEvent)
+ * when analytics is configured.
+ */
+export function trackEvent(name: string, params?: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === "development") {
+    console.debug("[analytics]", name, params);
+  }
+}
