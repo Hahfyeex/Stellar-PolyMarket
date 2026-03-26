@@ -2,6 +2,12 @@
   "name": "stella-polymarket",
   "version": "1.0.0",
   "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "oracle",
+    "contracts"
+  ],
   "scripts": {
     "prepare": "husky",
     "lint": "eslint \"{frontend,backend,oracle}/src/**/*.{js,ts,tsx}\"",
