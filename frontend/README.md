@@ -59,6 +59,31 @@ Coverage threshold: **95% lines/functions, 90% branches** on `useRecentActivity.
 
 ---
 
+## Onboarding Wizard (Issue #120)
+
+### What it does
+
+The `OnboardingWizard` provides a 4-step guided introduction for new users:
+1. **Wallet Connection**: Explains why a Stellar wallet (Freighter) is needed.
+2. **Market Mechanics**: Visual diagram of how prediction markets work.
+3. **Demo Betting**: Shows a `MarketCard` in preview mode with a disabled bet form.
+4. **Payout Calculation**: Explains the math behind potential winnings.
+
+### Testing & Resetting
+
+To test the onboarding flow multiple times:
+1. Open Browser DevTools (F12).
+2. Go to the **Application** tab -> **Local Storage**.
+3. Delete the key `onboardingComplete`.
+4. Refresh the page to trigger the wizard again.
+
+Alternatively, run this in the console:
+```javascript
+localStorage.removeItem('onboardingComplete'); location.reload();
+```
+
+---
+
 ## Project Structure
 
 ```

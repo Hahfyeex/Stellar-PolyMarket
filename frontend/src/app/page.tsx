@@ -16,6 +16,7 @@ import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
 import ContractErrorBoundary from "../components/ContractErrorBoundary";
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
+import OnboardingWizard from "../components/OnboardingWizard";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
 
@@ -38,6 +39,14 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    const complete = localStorage.getItem("onboardingComplete");
+    if (!complete) {
+      setShowOnboarding(true);
+    }
+  }, []);
 
   // Restore filter state from URL params on mount
   const [filters, setFilters] = useState<SearchFilters>(() => ({
@@ -266,6 +275,9 @@ export default function Home() {
 
   return (
     <>
+      {showOnboarding && (
+        <OnboardingWizard onComplete={() => setShowOnboarding(false)} />
+      )}
       {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell
