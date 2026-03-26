@@ -35,5 +35,8 @@
     "{frontend,backend,oracle}/src/**/*.css": [
       "prettier --write"
     ]
+  },
+  "dependencies": {
+    "react-window": "^1.8.11"
   }
 }

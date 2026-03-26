@@ -74,27 +74,27 @@ export default function VirtualizedOrderBook({
   const [loadingMore, setLoadingMore] = useState(false);
   const pageRef = useRef(1);
 
-  // react-window list ref — used to call resetAfterIndex after data updates
+  // react-window list ref — used to imperatively scroll if needed
   const listRef = useRef<FixedSizeList>(null);
 
   // Sync dataRef when initialRows prop changes (e.g. first API response arrives)
   useEffect(() => {
     dataRef.current = initialRows;
     setItemCount(initialRows.length);
-    // Reset scroll position and row cache from index 0
-    listRef.current?.resetAfterIndex(0);
+    // FixedSizeList re-renders automatically when itemCount state changes;
+    // no resetAfterIndex needed (that's a VariableSizeList API).
   }, [initialRows]);
 
   /**
    * Append new rows to the data ref without re-rendering existing rows.
-   * resetAfterIndex(prevLength) tells react-window only new rows need layout.
+   * Updating itemCount state triggers react-window to render the new rows
+   * while existing rows keep their cached layout (fixed height = no remeasure).
    */
   const appendRows = useCallback((newRows: OrderBookRow[]) => {
-    const prevLength = dataRef.current.length;
     dataRef.current = [...dataRef.current, ...newRows];
+    // Updating itemCount is sufficient — FixedSizeList recalculates scroll
+    // height from itemCount * itemSize without touching existing rows.
     setItemCount(dataRef.current.length);
-    // Only invalidate newly added rows — existing rows keep their cached layout
-    listRef.current?.resetAfterIndex(prevLength);
   }, []);
 
   /**
