@@ -1,9 +1,31 @@
-node_modules/
-.env
+# Next.js
 .next/
+frontend/.env.local
+frontend/next-env.d.ts
+.env
+.env.local
+
+# Build
 dist/
 target/
 *.wasm
 
 # Husky
 .husky/_/
+
+# Node
+node_modules/
+# Stress Test Results
+stress-test-results/
+*.jtl
+bzt.log
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+ENV/

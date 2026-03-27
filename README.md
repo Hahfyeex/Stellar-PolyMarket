@@ -2,6 +2,19 @@
 
 > A decentralized prediction market built on the Stellar blockchain
 
+---
+
+## 🏗️ Monorepo Layout
+
+Root workspace now uses npm workspaces and shares constants through `constants/`.
+
+- `contracts/` - Soroban smart contract Rust code
+- `frontend/` - Next.js frontend
+- `backend/` - Node.js API server
+- `oracle/` - Oracle connectors
+- `constants/` - shared TypeScript constants / config
+
+
 ![Stellar](https://img.shields.io/badge/Stellar-XLM-blue?logo=stellar)
 ![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-purple)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -65,11 +78,24 @@ Users stake tokens on outcomes of real-world events.
 
 ## ⚙️ How It Works
 
-1. **Market Creation** — Admin or DAO creates a market with a question, end date, and possible outcomes
+1. **Market Creation** — Anyone can create a market with automated validation (permissionless)
 2. **User Participation** — Users connect their Stellar wallet and stake XLM or tokens on an outcome
 3. **Fund Locking** — Funds are locked in Soroban smart contracts (transparent + tamper-proof)
 4. **Oracle Resolution** — External data source confirms the result (sports API, financial feed, etc.)
 5. **Payout Distribution** — Winners share the pool proportionally; platform takes a small fee
+
+### Permissionless Market Creation
+
+Markets are created instantly without admin approval through automated validation:
+- **Description**: Minimum 50 characters for context
+- **Outcomes**: 2-5 options (binary or multi-choice)
+- **End Date**: Must be future date within 1 year
+- **No Duplicates**: Unique questions only
+- **Rate Limit**: 3 markets per wallet per 24 hours
+- **Creation Fee**: Configurable fee (default 0) charged in the market's token — burned or sent to DAO treasury
+
+See [Permissionless Launch Guide](PERMISSIONLESS_LAUNCH_README.md) for details.
+See [Creation Fee & DAO Governance](contracts/prediction_market/CREATION_FEE_README.md) for fee configuration.
 
 ---
 
@@ -121,6 +147,18 @@ distribute_rewards(market_id)
 - Governance voting
 - Fee discounts
 - Rewards distribution
+
+---
+
+## ⚖️ Dispute Voting & Governance
+
+Oracles can sometimes be wrong. The dispute voting mechanism gives the community a way to challenge incorrect resolutions and protect users.
+
+**Dispute Flow:**
+1. **Open Dispute:** Any token holder can open a dispute within 24 hours of market resolution. This pauses all payout distributions.
+2. **Weighted Voting:** For the next 24 hours, users can cast votes (Support or Reject). Voting power is strictly weighted 1:1 by the user's STELLA token balance at the time of voting.
+3. **Threshold Check:** If the 'Support' votes cross the 60% threshold (`support_votes / total_votes > 0.6`), the market immediately enters a `ReReview` state.
+4. **Resolution:** After the deadline, the dispute is closed, and the final outcome is determined based on the vote results or admin review if in `ReReview`.
 
 ---
 
@@ -214,6 +252,42 @@ npm run dev
 ```
 
 > Smart contract deployment requires the [Soroban CLI](https://soroban.stellar.org/docs/getting-started/setup).
+
+---
+
+## 🧪 Performance & Load Testing
+
+Stella Polymarket includes comprehensive stress testing to ensure platform stability under peak load.
+
+### Quick Start
+```bash
+# Install test dependencies
+pip install -r requirements.txt
+
+# Start backend server
+cd backend && npm start
+
+# Run stress tests
+python3 run-stress-test.py
+```
+
+### Test Coverage
+- **500 concurrent users** placing bets simultaneously
+- **50 simultaneous market resolutions** under load
+- **1000 concurrent WebSocket connections** for real-time updates
+
+### Performance Targets
+- p95 latency < 2000ms
+- Error rate < 1%
+- Throughput > 8 requests/second
+
+### Documentation
+- 📖 [Full Testing Guide](STRESS_TEST_README.md)
+- 🔍 [Bottleneck Analysis](STRESS_TEST_BOTTLENECKS.md)
+- ⚡ [Quick Reference](STRESS_TEST_QUICK_REFERENCE.md)
+
+### CI/CD Integration
+Stress tests run automatically on every PR to `main` branch via GitHub Actions. Tests must pass before merge.
 
 ---
 

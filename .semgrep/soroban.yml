@@ -1,0 +1,163 @@
+rules:
+
+  # ── Rule 1: Missing require_auth on sensitive state changes ───────────────
+  # Any function that writes to storage (persistent or instance) without a
+  # preceding require_auth() call is a potential auth-bypass.
+  - id: soroban-missing-require-auth
+    patterns:
+      - pattern: |
+          pub fn $FUNC($ENV: Env, ...) {
+            ...
+            $ENV.storage().$STORAGE().set(...);
+            ...
+          }
+      - pattern-not: |
+          pub fn $FUNC($ENV: Env, ...) {
+            ...
+            $ADDR.require_auth();
+            ...
+            $ENV.storage().$STORAGE().set(...);
+            ...
+          }
+      # Exclude read-only helpers and initializers that guard via check_initialized
+      - pattern-not: |
+          pub fn get_$NAME(...) { ... }
+      - pattern-not: |
+          pub fn initialize(...) { ... }
+    message: >
+      [SOROBAN] Function `$FUNC` writes to contract storage without calling
+      `require_auth()`. Any caller can mutate state without authorization.
+      Add `<address>.require_auth()` before the storage write.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-862: Missing Authorization"
+      confidence: HIGH
+      references:
+        - https://developers.stellar.org/docs/smart-contracts/guides/authorization/require-auth
+
+  # ── Rule 2: Hardcoded Stellar private key (S... 56-char seed) ─────────────
+  - id: soroban-hardcoded-stellar-secret
+    patterns:
+      - pattern-regex: '"S[A-Z2-7]{55}"'
+    message: >
+      [SOROBAN] Hardcoded Stellar secret key detected. Never embed private keys
+      in source code. Use environment variables or a secrets manager instead.
+    languages: [rust, javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      confidence: HIGH
+
+  # ── Rule 3: Hardcoded Stellar private key in JS/TS string assignments ─────
+  - id: soroban-hardcoded-secret-js
+    patterns:
+      - pattern-regex: "(?:secret|privateKey|secretKey|STELLAR_SECRET)\\s*=\\s*['\"]S[A-Z2-7]{55}['\"]"
+    message: >
+      [SOROBAN] Hardcoded Stellar secret key in assignment. Rotate this key
+      immediately and store it in a secrets manager or environment variable.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      confidence: HIGH
+
+  # ── Rule 4: Double-initialization guard missing ────────────────────────────
+  # An initialize() function that doesn't check whether the contract is already
+  # initialised allows an attacker to re-initialize and seize admin control.
+  - id: soroban-missing-init-guard
+    patterns:
+      - pattern: |
+          pub fn initialize($ENV: Env, $ADMIN: Address) {
+            ...
+            $ENV.storage().instance().set(&DataKey::Admin, &$ADMIN);
+            ...
+          }
+      - pattern-not: |
+          pub fn initialize($ENV: Env, $ADMIN: Address) {
+            ...
+            assert!(...);
+            ...
+            $ENV.storage().instance().set(&DataKey::Admin, &$ADMIN);
+            ...
+          }
+      - pattern-not: |
+          pub fn initialize($ENV: Env, $ADMIN: Address) {
+            ...
+            check_initialized(...);
+            ...
+          }
+    message: >
+      [SOROBAN] `initialize()` sets admin without an initialization guard.
+      Without `check_initialized()` or an `assert!`, anyone can call this
+      function again to seize admin control. Add a double-init guard.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-665: Improper Initialization"
+      confidence: HIGH
+
+  # ── Rule 5: Integer overflow in reward arithmetic ─────────────────────────
+  # Unchecked multiplication before division in payout calculations can overflow.
+  - id: soroban-unchecked-payout-arithmetic
+    patterns:
+      - pattern: |
+          let $PAYOUT = ($AMOUNT * $POOL) / $STAKE;
+      - pattern-not: |
+          let $PAYOUT = ($AMOUNT.checked_mul($POOL).unwrap()) / $STAKE;
+    message: >
+      [SOROBAN] Unchecked integer multiplication in payout calculation.
+      `amount * pool` may overflow i128 for large values. Use
+      `checked_mul()` and handle the None case explicitly.
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-190: Integer Overflow or Wraparound"
+      confidence: MEDIUM
+
+  # ── Rule 6: process.env secret printed to console ─────────────────────────
+  - id: js-secret-logged-to-console
+    patterns:
+      - pattern: console.log(..., process.env.$SECRET, ...)
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: ".*(KEY|SECRET|TOKEN|PASSWORD|PRIVATE).*"
+    message: >
+      [SECRETS] A sensitive environment variable (`$SECRET`) is being logged
+      to the console. Remove this log statement — it may expose credentials
+      in CI logs or browser DevTools.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+      confidence: HIGH
+
+  # ── Rule 7: firebase-admin initialised with hardcoded credentials ──────────
+  - id: firebase-admin-hardcoded-credentials
+    patterns:
+      - pattern: |
+          admin.initializeApp({
+            credential: admin.credential.cert({ ... }),
+            ...
+          });
+      - pattern-not: |
+          admin.initializeApp({
+            credential: admin.credential.applicationDefault(),
+            ...
+          });
+    message: >
+      [FIREBASE] Firebase Admin is initialized with inline credentials.
+      Use `admin.credential.applicationDefault()` (ADC) in production and
+      load service account JSON via `GOOGLE_APPLICATION_CREDENTIALS` env var.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      confidence: MEDIUM

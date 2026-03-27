@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const logger = require("../utils/logger");
+const eventBus = require("../bots/eventBus");
+
+const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
 // POST /api/bets — place a bet
 router.post("/", async (req, res) => {
@@ -15,6 +19,7 @@ router.post("/", async (req, res) => {
       [marketId]
     );
     if (!market.rows.length) {
+      logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: market not found, resolved, or expired");
       return res.status(400).json({ error: "Market not found, already resolved, or expired" });
     }
 
@@ -30,8 +35,24 @@ router.post("/", async (req, res) => {
       [amount, marketId]
     );
 
+    logger.info({
+      bet_id: bet.rows[0].id,
+      market_id: marketId,
+      wallet_address: walletAddress,
+      outcome_index: outcomeIndex,
+      amount,
+    }, "Bet placed");
+
+    // Fetch updated pool and emit pool.low if depth has fallen below threshold
+    const poolResult = await db.query("SELECT total_pool FROM markets WHERE id = $1", [marketId]);
+    const totalPool = parseFloat(poolResult.rows[0]?.total_pool ?? 0);
+    if (totalPool < POOL_LOW_THRESHOLD) {
+      eventBus.emit("pool.low", { marketId, totalPool, threshold: POOL_LOW_THRESHOLD });
+    }
+
     res.status(201).json({ bet: bet.rows[0] });
   } catch (err) {
+    logger.error({ err, market_id: marketId, wallet_address: walletAddress }, "Failed to place bet");
     res.status(500).json({ error: err.message });
   }
 });
@@ -44,6 +65,7 @@ router.post("/payout/:marketId", async (req, res) => {
       [req.params.marketId]
     );
     if (!market.rows.length) {
+      logger.warn({ market_id: req.params.marketId }, "Payout rejected: market not resolved");
       return res.status(400).json({ error: "Market not resolved yet" });
     }
 
@@ -70,8 +92,17 @@ router.post("/payout/:marketId", async (req, res) => {
       [req.params.marketId, winning_outcome]
     );
 
+    logger.info({
+      market_id: req.params.marketId,
+      winning_outcome,
+      winners_count: winners.rows.length,
+      total_pool,
+      winning_stake: winningStake,
+    }, "Payouts distributed");
+
     res.json({ payouts });
   } catch (err) {
+    logger.error({ err, market_id: req.params.marketId }, "Failed to distribute payouts");
     res.status(500).json({ error: err.message });
   }
 });
@@ -89,8 +120,53 @@ router.get("/recent", async (req, res) => {
        LIMIT $1`,
       [limit]
     );
+    logger.debug({ activity_count: result.rows.length, limit }, "Recent activity fetched");
     res.json({ activity: result.rows });
   } catch (err) {
+    logger.error({ err }, "Failed to fetch recent activity");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/bets/my-positions — paginated user positions
+router.get("/my-positions", async (req, res) => {
+  const { walletAddress, cursor } = req.query;
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+
+  if (!walletAddress) {
+    return res.status(400).json({ error: "walletAddress is required" });
+  }
+
+  try {
+    const cursorId = cursor ? parseInt(cursor) : null;
+    const query = `
+      SELECT b.id, b.market_id, b.outcome_index, b.amount, b.created_at, b.paid_out,
+             m.question, m.status as market_status, m.resolved
+      FROM bets b
+      JOIN markets m ON m.id = b.market_id
+      WHERE b.wallet_address = $1
+        AND ($2::integer IS NULL OR b.id < $2)
+      ORDER BY b.id DESC
+      LIMIT $3
+    `;
+
+    const result = await db.query(query, [walletAddress, cursorId, limit]);
+    const bets = result.rows;
+    const nextCursor = bets.length > 0 ? bets[bets.length - 1].id : null;
+
+    logger.info({
+      wallet_address: walletAddress,
+      bets_count: bets.length,
+      next_cursor: nextCursor,
+    }, "User positions fetched");
+
+    res.json({
+      positions: bets,
+      next_cursor: nextCursor,
+      limit,
+    });
+  } catch (err) {
+    logger.error({ err, wallet_address: walletAddress }, "Failed to fetch user positions");
     res.status(500).json({ error: err.message });
   }
 });

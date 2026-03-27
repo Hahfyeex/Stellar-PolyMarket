@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 30s      # matches Redis cache TTL — no point scraping faster
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: "stella-backend"
+    static_configs:
+      - targets: ["backend:3000"]
+    metrics_path: "/api/health/prometheus-metrics"
+    scrape_timeout: 10s

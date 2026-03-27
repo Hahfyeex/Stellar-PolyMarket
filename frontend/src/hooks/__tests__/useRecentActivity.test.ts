@@ -1,10 +1,15 @@
-import { formatWallet, formatRelativeTime, mapActivityItem, ActivityItem } from "../useRecentActivity";
+import {
+  formatWallet,
+  formatRelativeTime,
+  mapActivityItem,
+  ActivityItem,
+} from "../useRecentActivity";
 
 // ── formatWallet ──────────────────────────────────────────────────────────────
 
 describe("formatWallet", () => {
-  it("truncates a full Stellar address", () => {
-    expect(formatWallet("GBXYZ1234ABCDEFGH")).toBe("GBXY…EFGH");
+  it("truncates a full Stellar address to first 4 + last 3", () => {
+    expect(formatWallet("GBXYZ1234ABCDEFGH")).toBe("GBXY...FGH");
   });
 
   it("returns short strings unchanged", () => {
@@ -16,7 +21,13 @@ describe("formatWallet", () => {
   });
 
   it("handles exactly 8 chars", () => {
-    expect(formatWallet("ABCD1234")).toBe("ABCD…1234");
+    expect(formatWallet("ABCD1234")).toBe("ABCD...234");
+  });
+
+  it("uses '...' separator (not ellipsis char)", () => {
+    const result = formatWallet("GABCDEFGHIJKLMNOP");
+    expect(result).toContain("...");
+    expect(result).not.toContain("…");
   });
 });
 

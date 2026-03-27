@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { Horizon } = require("@stellar/stellar-sdk");
 const db = require("../db");
+const logger = require("../utils/logger");
 
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 let cache = { data: null, fetchedAt: 0 };
@@ -23,7 +24,8 @@ async function fetchXLMBalance(contractAddress) {
     const account = await server.loadAccount(contractAddress);
     const native = account.balances.find((b) => b.asset_type === "native");
     return native ? native.balance : "0";
-  } catch {
+  } catch (err) {
+    logger.warn({ contract_address: contractAddress, err: err.message }, "Failed to fetch XLM balance from Horizon");
     return null;
   }
 }
@@ -35,6 +37,7 @@ router.get("/", async (req, res) => {
   const now = Date.now();
 
   if (cache.data && now - cache.fetchedAt < CACHE_TTL_MS) {
+    logger.debug("Reserves served from cache");
     return res.json({ ...cache.data, cached: true });
   }
 
@@ -65,8 +68,10 @@ router.get("/", async (req, res) => {
     };
 
     cache = { data: payload, fetchedAt: now };
+    logger.info({ markets_count: markets.length, network: NETWORK }, "Reserves fetched from Horizon");
     res.json(payload);
   } catch (err) {
+    logger.error({ err }, "Failed to fetch reserves");
     res.status(500).json({ error: err.message });
   }
 });
