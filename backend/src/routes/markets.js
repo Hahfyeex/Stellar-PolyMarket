@@ -15,52 +15,65 @@ const eventBus = require("../bots/eventBus");
 router.get("/", async (req, res) => {
   try {
     // Parse and validate pagination parameters
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const offset = parseInt(req.query.offset) || 0;
-
-    // Validate limit and offset are non-negative integers
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-      return res.status(400).json({
-        error: "Invalid limit parameter",
-        details: "limit must be an integer between 1 and 100",
-      });
+    const limitParam = req.query.limit;
+    const offsetParam = req.query.offset;
+    
+    let limit = 20; // default
+    let offset = 0; // default
+    
+    // Validate limit
+    if (limitParam !== undefined) {
+      const parsedLimit = parseInt(limitParam, 10);
+      if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+        return res.status(400).json({ 
+          error: {
+            code: 'INVALID_LIMIT',
+            message: 'limit must be an integer between 1 and 100',
+            details: { provided: limitParam }
+          }
+        });
+      }
+      limit = parsedLimit;
     }
-
-    if (!Number.isInteger(offset) || offset < 0) {
-      return res.status(400).json({
-        error: "Invalid offset parameter",
-        details: "offset must be a non-negative integer",
-      });
+    
+    // Validate offset
+    if (offsetParam !== undefined) {
+      const parsedOffset = parseInt(offsetParam, 10);
+      if (isNaN(parsedOffset) || parsedOffset < 0) {
+        return res.status(400).json({ 
+          error: {
+            code: 'INVALID_OFFSET',
+            message: 'offset must be a non-negative integer',
+            details: { provided: offsetParam }
+          }
+        });
+      }
+      offset = parsedOffset;
     }
-
-    // Get total count of markets
+    
+    // Get total count for pagination meta
     const countResult = await db.query("SELECT COUNT(*) as total FROM markets");
-    const total = parseInt(countResult.rows[0].total);
-
-    // Fetch paginated results
+    const total = parseInt(countResult.rows[0].total, 10);
+    
+    // Fetch markets with pagination
     const result = await db.query(
       "SELECT * FROM markets ORDER BY created_at DESC LIMIT $1 OFFSET $2",
       [limit, offset]
     );
-
-    const hasMore = offset + limit < total;
-
-    logger.debug({
-      market_count: result.rows.length,
-      total,
-      limit,
-      offset,
-      has_more: hasMore,
-    }, "Markets fetched with pagination");
-
+    
+    const markets = result.rows;
+    const hasMore = offset + markets.length < total;
+    
+    logger.debug({ market_count: markets.length, total, limit, offset }, "Markets fetched with pagination");
+    
     res.json({
-      markets: result.rows,
+      markets,
       meta: {
         total,
         limit,
         offset,
-        hasMore,
-      },
+        hasMore
+      }
     });
   } catch (err) {
     logger.error({ err }, "Failed to fetch markets");
