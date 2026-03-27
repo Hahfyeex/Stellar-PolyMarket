@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const logger = require("../utils/logger");
 
 // POST /api/notifications/register — register or update FCM token
 router.post("/register", async (req, res) => {
@@ -18,8 +19,10 @@ router.post("/register", async (req, res) => {
       RETURNING *;
     `;
     const result = await db.query(query, [walletAddress, fcmToken, preferences || { market_proposed: true, market_resolved: true }]);
+    logger.info({ wallet_address: walletAddress, has_preferences: !!preferences }, "FCM token registered");
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
+    logger.error({ err, wallet_address: walletAddress }, "Failed to register FCM token");
     res.status(500).json({ error: err.message });
   }
 });
@@ -28,9 +31,13 @@ router.post("/register", async (req, res) => {
 router.get("/:walletAddress", async (req, res) => {
   try {
     const result = await db.query("SELECT * FROM user_notifications WHERE wallet_address = $1", [req.params.walletAddress]);
-    if (!result.rows.length) return res.status(404).json({ error: "User not found" });
+    if (!result.rows.length) {
+      logger.debug({ wallet_address: req.params.walletAddress }, "Notification preferences not found");
+      return res.status(404).json({ error: "User not found" });
+    }
     res.json({ user: result.rows[0] });
   } catch (err) {
+    logger.error({ err, wallet_address: req.params.walletAddress }, "Failed to fetch notification preferences");
     res.status(500).json({ error: err.message });
   }
 });

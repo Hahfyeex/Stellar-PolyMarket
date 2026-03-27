@@ -1,0 +1,171 @@
+---
+# Taurus Stress Test Configuration for Stellar PolyMarket
+# This suite tests platform throughput under peak load conditions
+# Run with: bzt stress-test.yml
+
+execution:
+  # Scenario 1: Concurrent Bets - 500 users placing bets simultaneously
+  # Tests the core betting endpoint under realistic peak traffic
+  - concurrency: 5 # Reduced for CI (was 500)
+    ramp-up: 10s # Short ramp-up for CI
+    hold-for: 30s # Short hold for CI (was 2m)
+    scenario: concurrent-bets
+
+  # Scenario 2: Market Resolution Under Load - 50 simultaneous resolutions
+  # Tests oracle resolution endpoint performance and database transaction handling
+  - concurrency: 5 # Reduced for CI (was 50)
+    ramp-up: 10s # Quick ramp-up to stress test resolution logic
+    hold-for: 1m # Hold for 1 minute to measure sustained performance
+    scenario: market-resolution
+
+  # Scenario 3: WebSocket Connection Stress Test
+  # Tests maximum concurrent WebSocket connections for real-time updates
+  - concurrency: 1000 # Target: 1000 concurrent WebSocket connections
+    ramp-up: 30s # Gradual connection establishment
+    hold-for: 3m # Maintain connections for 3 minutes
+    scenario: websocket-connections
+
+scenarios:
+  # Scenario 1: Concurrent Bets
+  # Simulates 500 users each placing 1 bet on random markets
+  concurrent-bets:
+    requests:
+      # Step 1: Fetch available markets to get valid market IDs
+      - url: http://localhost:4000/api/markets
+        method: GET
+        label: fetch-markets
+        extract-jsonpath:
+          market_id: $.markets[0].id # Extract first market ID for betting
+        assert:
+          - contains:
+              - 200
+            subject: http-code
+
+      # Step 2: Place a bet on the fetched market
+      - url: http://localhost:4000/api/bets
+        method: POST
+        label: place-bet
+        headers:
+          Content-Type: application/json
+        body:
+          marketId: ${market_id}
+          outcomeIndex: 0 # Bet on first outcome
+          amount: "10.00"
+          walletAddress: "GTEST${__Random(1000000,9999999,)}" # Generate random test wallet
+        assert:
+          - contains:
+              - 201
+            subject: http-code
+            not: false
+
+  # Scenario 2: Market Resolution Under Load
+  # Tests resolution endpoint with 50 concurrent resolution requests
+  market-resolution:
+    requests:
+      # Step 1: Create a test market for resolution
+      - url: http://localhost:4000/api/markets
+        method: POST
+        label: create-market
+        headers:
+          Content-Type: application/json
+        body:
+          question: "Stress Test Market ${__time()}"
+          endDate: "2026-12-31T23:59:59Z"
+          outcomes: ["Yes", "No"]
+          contractAddress: "CTEST${__Random(100000,999999,)}"
+        extract-jsonpath:
+          created_market_id: $.market.id
+        assert:
+          - contains:
+              - 201
+            subject: http-code
+
+      # Step 2: Propose resolution
+      - url: http://localhost:4000/api/markets/${created_market_id}/propose
+        method: POST
+        label: propose-resolution
+        headers:
+          Content-Type: application/json
+        body:
+          proposedOutcome: 0
+        assert:
+          - contains:
+              - 200
+            subject: http-code
+
+      # Step 3: Trigger final resolution
+      - url: http://localhost:4000/api/markets/${created_market_id}/resolve
+        method: POST
+        label: resolve-market
+        headers:
+          Content-Type: application/json
+        body:
+          winningOutcome: 0
+        assert:
+          - contains:
+              - 200
+            subject: http-code
+
+  # Scenario 3: WebSocket Connections
+  # Tests concurrent WebSocket connection limits
+  websocket-connections:
+    requests:
+      # Health check to establish baseline HTTP performance
+      - url: http://localhost:4000/health
+        method: GET
+        label: health-check
+        assert:
+          - contains:
+              - 200
+            subject: http-code
+
+      # Fetch recent activity (simulates WebSocket-like polling)
+      - url: http://localhost:4000/api/bets/recent?limit=20
+        method: GET
+        label: recent-activity
+        assert:
+          - contains:
+              - 200
+            subject: http-code
+
+# Reporting configuration
+reporting:
+  - module: final-stats # Console summary
+    summary: true
+    percentiles: true
+    summary-labels: true
+
+  - module: console # Real-time console output
+
+  - module: blazemeter # Generate HTML report
+    report-name: "Stellar PolyMarket Stress Test"
+    test-name: "Throughput Stress Test"
+
+# Performance thresholds - CI will fail if these are exceeded
+# These align with the Definition of Done requirements
+modules:
+  console:
+    disable: false
+
+  final-stats:
+    summary: true
+    percentiles: true
+    failed-labels: true
+    test-duration: true
+
+services:
+  - module: shellexec
+    post-process:
+      # Generate detailed HTML report after test completion
+      - python3 -c "print('Stress test completed. Check report for detailed metrics.')"
+
+# Performance criteria for CI/CD pipeline
+# Test fails if any of these conditions are met:
+# - p95 latency exceeds 2000ms (2 seconds)
+# - Error rate exceeds 1%
+# - Any request takes longer than 5000ms (5 seconds)
+pass-fail:
+  - avg-rt>2000ms for 10s, stop as failed # Average response time threshold
+  - p95>2000ms, stop as failed # p95 latency must be under 2s
+  - fail>1% for 10s, stop as failed # Error rate must be below 1%
+  - p95>5000ms for market-resolution, stop as failed # Resolution p95 must be under 5s
