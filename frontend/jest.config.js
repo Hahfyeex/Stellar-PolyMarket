@@ -16,6 +16,7 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
+        "src/hooks/useOnboarding.ts",
         "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
