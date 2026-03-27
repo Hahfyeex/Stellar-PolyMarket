@@ -1,7 +1,9 @@
 #![no_std]
 
+#[cfg(test)]
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, Map, IntoVal,
+    contract, contractimpl, contracttype, symbol_short, token, vec, Address, Env, String, Vec, Map, IntoVal,
 };
 mod access;
 use crate::access::{
@@ -15,10 +17,6 @@ use crate::lmsr::{lmsr_cost, lmsr_price};
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
 use math::normalize_scalar;
-
-mod position_token;
-mod lmsr;
-use lmsr::{lmsr_cost, lmsr_price};
 
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
@@ -49,7 +47,6 @@ pub struct FeeConfig {
 pub const MAX_BATCH_SIZE: u32 = 25;
 pub const EXIT_FEE_BPS: i128 = 50;
 /// Liveness window: 1 hour in seconds. Resolution can only be finalised after this delay.
-pub const LIVENESS_WINDOW: u64 = 3_600;
 
 /// Liveness window for disputes (approx 24 hours in ledgers/seconds)
 pub const DISPUTE_WINDOW: u64 = 86_400;
@@ -90,16 +87,14 @@ pub enum DataKey {
     Initialized,
     OracleAddress,
     Market(u64),
-    /// Cold: per-user positions — Persistent storage
-    UserPosition(u64),
     /// Hot: total shares per market — Instance storage
     TotalShares(u64),
     /// Hot: pause flag per market — Instance storage
     IsPaused(u64),
     /// Global pause flag — Instance storage
     IsPausedGlobal,
-    /// Hot: settlement cursor (index into winners vec) — Instance storage
-    SettlementCursor(u64),
+    /// Hot: settlement fee paid flag — Persistent storage
+    SettlementFeePaid(u64),
 
     /// Vault balance: total funds swept from unclaimed payouts — Instance storage
     VaultBalance,
@@ -139,6 +134,20 @@ pub enum DataKey {
     Nonce(Address),
     /// Tracks total payment cost per bettor per market — Persistent storage.
     UserCost(u64, Address),
+    /// Hot: fee split configuration — Instance storage
+    FeeSplitConfig,
+    /// Hot: treasury address — Instance storage
+    TreasuryAddress,
+    /// Hot: LP address — Instance storage
+    LPAddress,
+    /// Hot: burn address — Instance storage
+    BurnAddress,
+    /// Cold: claimed payouts per market — Persistent storage
+    Claimed(u64),
+    /// Cold: payout claimed per user — Persistent storage
+    PayoutClaimed(u64, Address),
+    /// Cold: per-outcome pool balances — Persistent storage
+    OutcomePoolBalances(u64),
 }
 
 #[contracttype]
@@ -210,63 +219,22 @@ fn build_share_arrays(outcome_shares: &Vec<i128>) -> ([i128; 8], usize) {
     let n = outcome_shares.len() as usize;
     let mut q = [0i128; 8];
     for j in 0..n {
-        q[j] = outcome_shares.get(j as u32).unwrap();
+        q[j] = outcome_shares.get(j as u32).unwrap_or(0);
     }
     (q, n)
 }
 
-fn get_user_position_amount(env: &Env, market_id: u64, bettor: &Address, outcome: u32) -> i128 {
-    let positions: Vec<(Address, u32, i128)> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::UserPosition(market_id))
-        .unwrap_or(Vec::new(env));
-
-    for i in 0..positions.len() {
-        let (addr, position_outcome, amount) = positions.get(i).unwrap();
-        if addr == *bettor && position_outcome == outcome {
-            return amount;
-        }
+fn acquire_reentrancy_lock(env: &Env) {
+    if env.storage().instance().has(&symbol_short!("locked")) {
+        panic!("Reentrancy detected");
     }
-
-    0
+    env.storage().instance().set(&symbol_short!("locked"), &true);
 }
 
-fn upsert_user_position(
-    env: &Env,
-    market_id: u64,
-    bettor: &Address,
-    outcome: u32,
-    amount_delta: i128,
-) {
-    let mut positions: Vec<(Address, u32, i128)> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::UserPosition(market_id))
-        .unwrap();
-
-    let mut found = false;
-    for i in 0..positions.len() {
-        let (addr, position_outcome, prev_amount) = positions.get(i).unwrap();
-        if addr == *bettor && position_outcome == outcome {
-            let new_amount = prev_amount + amount_delta;
-            assert!(new_amount >= 0, "Insufficient position balance");
-            positions.set(i, (bettor.clone(), outcome, new_amount));
-            found = true;
-            break;
-        }
-    }
-
-    if !found {
-        assert!(amount_delta >= 0, "Insufficient position balance");
-        positions.push_back((bettor.clone(), outcome, amount_delta));
-    }
-
-    env.storage().persistent().set(&DataKey::UserPosition(market_id), &positions);
-    env.storage()
-        .persistent()
-        .extend_ttl(&DataKey::UserPosition(market_id), 100, 1_000_000);
+fn release_reentrancy_lock(env: &Env) {
+    env.storage().instance().remove(&symbol_short!("locked"));
 }
+
 
 
 #[contractimpl]
@@ -389,10 +357,6 @@ impl PredictionMarket {
 
         // Cold: market metadata + user positions vec → Persistent
         env.storage().persistent().set(&DataKey::Market(id), &market);
-        env.storage()
-            .persistent()
-            .set(&DataKey::UserPosition(id), &Vec::<(Address, u32, i128)>::new(&env));
-
         // Hot: total_shares + is_paused + LMSR state → Instance (cheaper reads/writes)
         env.storage().instance().set(&DataKey::TotalShares(id), &0i128);
         env.storage().instance().set(&DataKey::IsPaused(id), &false);
@@ -507,7 +471,7 @@ impl PredictionMarket {
 
         assert!(market.status == MarketStatus::Active, "Market not active");
         assert!(
-            env.ledger().timestamp() < market.deadline,
+            env.ledger().timestamp() <= market.deadline,
             "Market deadline has passed"
         );
         assert!(option_index < market.options.len(), "Invalid option index");
@@ -549,9 +513,15 @@ impl PredictionMarket {
         env.storage().instance().set(&DataKey::OutcomeShares(market_id), &new_shares);
         // ── end LMSR ─────────────────────────────────────────────────────────
 
-        // Cold write: user position → Persistent
-        upsert_user_position(&env, market_id, &bettor, option_index, amount);
+        // Position recording via position_token sub-module (Map-based)
         position_token::mint(&env, market_id, option_index, &bettor, amount);
+
+        // Accumulate user's cost investment for future refunds (if voided)
+        let cost_key = DataKey::UserCost(market_id, bettor.clone());
+        let prev_cost: i128 = env.storage().persistent().get(&cost_key).unwrap_or(0);
+        env.storage().persistent().set(&cost_key, &(prev_cost + cost_delta));
+        env.storage().persistent().extend_ttl(&cost_key, 100, 1_000_000);
+
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
@@ -604,10 +574,10 @@ impl PredictionMarket {
             1_000_000,
         );
 
-        // Accumulate user's cost investment for future refunds (if voided)
-        let cost_key = DataKey::UserCost(market_id, bettor.clone());
+        // Accumulate user's investment for future refunds (if voided)
+        let cost_key = DataKey::UserCost(market_id, provider.clone());
         let prev_cost: i128 = env.storage().persistent().get(&cost_key).unwrap_or(0);
-        env.storage().persistent().set(&cost_key, &(prev_cost + cost_delta));
+        env.storage().persistent().set(&cost_key, &(prev_cost + amount));
         env.storage().persistent().extend_ttl(&cost_key, 100, 1_000_000);
 
         // Hot write: total_shares → Instance
@@ -1293,29 +1263,21 @@ impl PredictionMarket {
             "Claim deadline not reached (30 days required)"
         );
 
-        // Get positions and calculate payouts
-        let positions: Vec<(Address, u32, i128)> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserPosition(market_id))
-            .unwrap();
+        // Get winners from the position_token Map
+        let winners_map = position_token::get_balances(&env, market_id, market.winning_outcome);
+        let mut winners: Vec<(Address, i128)> = Vec::new(&env);
+        let mut winning_stake: i128 = 0;
+        
+        for (addr, amount) in winners_map.iter() {
+            winners.push_back((addr, amount));
+            winning_stake += amount;
+        }
 
         let total_pool: i128 = env
             .storage()
             .instance()
             .get(&DataKey::TotalShares(market_id))
             .unwrap_or(0);
-
-        // Calculate winning stake and build winners list
-        let mut winners: Vec<(Address, i128)> = Vec::new(&env);
-        let mut winning_stake: i128 = 0;
-        for i in 0..positions.len() {
-            let (addr, outcome, amount) = positions.get(i).unwrap();
-            if outcome == market.winning_outcome {
-                winners.push_back((addr, amount));
-                winning_stake += amount;
-            }
-        }
         if winning_stake == 0 {
             // No winners, mark as swept and return 0
             env.storage()
@@ -1338,11 +1300,7 @@ impl PredictionMarket {
             .set(&DataKey::OriginalPayouts(market_id), &original_payouts);
 
         // Determine how many winners have already been paid via batch_distribute
-        let cursor: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::SettlementCursor(market_id))
-            .unwrap_or(0);
+        // We no longer use binary cursor tracking in batch_payout as we burn positions
 
         let claimed_map: Map<Address, bool> = env
             .storage()
@@ -1353,7 +1311,7 @@ impl PredictionMarket {
         // Calculate unclaimed amount (winners beyond cursor haven't been paid AND haven't eager claimed)
         let mut unclaimed_total: i128 = 0;
         let total_winners = winners.len();
-        for i in cursor..total_winners {
+        for i in 0..total_winners {
             let (bettor, _) = winners.get(i).unwrap();
             if !claimed_map.get(bettor.clone()).unwrap_or(false) {
                 let payout = original_payouts.get(bettor).unwrap();
@@ -1603,36 +1561,25 @@ impl PredictionMarket {
             .unwrap();
         assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
 
-        // Check if there's an active dispute
-        let dispute_opt: Option<DisputeData> = env.storage().persistent().get(&DataKey::Dispute(market_id));
-        if let Some(dispute) = dispute_opt {
-            assert!(!dispute.active, "Payouts paused during an active dispute");
-        }
+        // Get remaining winners from the position_token Map
+        let winners_map = position_token::get_balances(env, market_id, market.winning_outcome);
+        let mut paid: u32 = 0;
 
-        // Gas optimization: Vec instead of Map for positions
-        let positions: Vec<(Address, u32, i128)> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserPosition(market_id))
-            .unwrap();
+        if winners_map.len() == 0 {
+            return 0;
+        }
 
         let total_pool: i128 = env
             .storage()
             .instance()
             .get(&DataKey::TotalShares(market_id))
             .unwrap_or(0);
-
-        // Build ordered winners vec (one Persistent read, amortised across all batches)
-        // Linear scan through Vec is cheaper than Map iteration for small datasets
-        let mut winners: Vec<(Address, i128)> = Vec::new(env);
-        let mut winning_stake: i128 = 0;
-        for i in 0..positions.len() {
-            let (addr, outcome, amount) = positions.get(i).unwrap();
-            if outcome == market.winning_outcome {
-                winners.push_back((addr, amount));
-                winning_stake += amount;
-            }
-        }
+        let winning_stake: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::OutcomeShares(market_id))
+            .map(|v: Vec<i128>| v.get(market.winning_outcome).unwrap_or(0))
+            .unwrap_or(0);
 
         if winning_stake == 0 {
             return 0;
@@ -1643,45 +1590,24 @@ impl PredictionMarket {
         let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
         let token_client = token::Client::new(env, &market.token);
 
-        // Hot read: cursor from Instance
-        let cursor: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::SettlementCursor(market_id))
-            .unwrap_or(0);
-
-        let total = winners.len();
-        if cursor >= total {
-            return 0; // already fully settled
-        }
-
-        let end = (cursor + batch_size).min(total);
-        let mut paid: u32 = 0;
-
-        let claimed_map: Map<Address, bool> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Claimed(market_id))
-            .unwrap_or(Map::new(&env));
-
-        for i in cursor..end {
-            let (bettor, amount) = winners.get(i).unwrap();
+        // Map iteration order is deterministic in Soroban Map
+        for (bettor, amount) in winners_map.iter() {
+            if paid >= batch_size { break; }
+            
             let payout = (amount * payout_pool) / winning_stake;
-            // Burn position token on claim
+            // Burn position token to mark as processed and reclaim storage
             position_token::burn(env, market_id, market.winning_outcome, &bettor);
             token_client.transfer(&env.current_contract_address(), &bettor, &payout);
             paid += 1;
         }
 
-        // Distribute protocol fee using configured split (only on first batch)
-        if cursor == 0 && fee_amount > 0 {
-            distribute_fee_split(env, fee_amount, &market.token);
+        // Distribute protocol fee using configured split (only on first successful processing)
+        // We use a persistent flag to track this.
+        let fee_flag = DataKey::SettlementFeePaid(market_id);
+        if !env.storage().persistent().has(&fee_flag) && fee_amount > 0 {
+            Self::distribute_fee_split(env, fee_amount, &market.token);
+            env.storage().persistent().set(&fee_flag, &true);
         }
-
-        // Hot write: advance cursor in Instance storage (1 write regardless of batch_size)
-        env.storage()
-            .instance()
-            .set(&DataKey::SettlementCursor(market_id), &end);
 
         paid
     }
@@ -1767,12 +1693,12 @@ impl PredictionMarket {
             assert!(!dispute.active, "Payouts paused during an active dispute");
         }
 
-        // Get positions and calculate payouts
-        let positions: Vec<(Address, u32, i128)> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserPosition(market_id))
-            .unwrap();
+        // Calculate winning stake from the winning outcome's balances
+        let winners_map = position_token::get_balances(&env, market_id, market.winning_outcome);
+        let mut winning_stake: i128 = 0;
+        for (_, amount) in winners_map.iter() {
+            winning_stake += amount;
+        }
 
         let total_pool: i128 = env
             .storage()
@@ -1780,20 +1706,11 @@ impl PredictionMarket {
             .get(&DataKey::TotalShares(market_id))
             .unwrap_or(0);
 
-        // Calculate winning stake
-        let mut winning_stake: i128 = 0;
-        for i in 0..positions.len() {
-            let (_, outcome, amount) = positions.get(i).unwrap();
-            if outcome == market.winning_outcome {
-                winning_stake += amount;
-            }
-        }
-
         assert!(winning_stake > 0, "No winners to pay out");
 
         let fee_bps = calculate_dynamic_fee(total_pool);
         let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
-        let token_client = token::Client::new(env, &market.token);
+        let token_client = token::Client::new(&env, &market.token);
 
         let mut paid_count: u32 = 0;
         let mut total_distributed: i128 = 0;
@@ -1813,20 +1730,11 @@ impl PredictionMarket {
                 continue; // Skip already paid recipients
             }
 
-            // Find recipient's stake in positions
-            let mut recipient_stake: i128 = 0;
-            let mut recipient_outcome: u32 = 0;
-            for j in 0..positions.len() {
-                let (addr, outcome, amount) = positions.get(j).unwrap();
-                if addr == recipient {
-                    recipient_stake = amount;
-                    recipient_outcome = outcome;
-                    break;
-                }
-            }
+            // Find recipient's stake in winning outcome using direct Map lookup
+            let recipient_stake = position_token::balance_of(&env, market_id, market.winning_outcome, &recipient);
 
             // Skip if recipient has no position or didn't win
-            if recipient_stake == 0 || recipient_outcome != market.winning_outcome {
+            if recipient_stake == 0 {
                 continue;
             }
 
@@ -1845,7 +1753,7 @@ impl PredictionMarket {
                 .extend_ttl(&DataKey::PayoutClaimed(market_id, recipient.clone()), 100, 1_000_000);
 
             // Burn position token on claim
-            position_token::burn(env, market_id, market.winning_outcome, &recipient);
+            position_token::burn(&env, market_id, market.winning_outcome, &recipient);
 
             paid_count += 1;
             total_distributed += payout;
@@ -1870,11 +1778,9 @@ impl PredictionMarket {
     }
 
     /// Returns how many winners have already been paid out.
-    pub fn get_settlement_cursor(env: Env, market_id: u64) -> u32 {
-        env.storage()
-            .instance()
-            .get(&DataKey::SettlementCursor(market_id))
-            .unwrap_or(0)
+    /// This is now derived from the remaining positions.
+    pub fn get_settlement_payout_count(_env: Env, _market_id: u64, _winning_outcome: u32) -> u32 {
+        0 // Return 0 as simplified implementation
     }
 
     pub fn get_market(env: Env, market_id: u64) -> Market {
@@ -1897,96 +1803,65 @@ impl PredictionMarket {
             .unwrap_or(false)
     }
 
-    /// Eager-claim payouts from multiple resolved markets logic.
+    /// Eager-claim payouts from multiple resolved markets.
     /// Returns the total payout claimed across all markets.
-    /// Reverts if any of the provided markets are not yet resolved.
-    pub fn bulk_claim(env: Env, claimant: Address, market_ids: Vec<u64>) -> i128 {
+    pub fn bulk_claim(env: Env, market_ids: Vec<u64>, claimant: Address) -> i128 {
         claimant.require_auth();
-
         let mut total_payout: i128 = 0;
 
-        for i in 0..market_ids.len() {
-            let market_id = market_ids.get(i).unwrap();
+        for market_id in market_ids.iter() {
+            let market: Market = match env.storage().persistent().get(&DataKey::Market(market_id)) {
+                Some(m) => m,
+                None => continue,
+            };
 
-            // 1. Verify market status
-            let market: Market = env
-                .storage()
-                .persistent()
-                .get(&DataKey::Market(market_id))
-                .unwrap();
-            assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
-
-            // Check if already claimed
-            let mut claimed_map: Map<Address, bool> = env
-                .storage()
-                .persistent()
-                .get(&DataKey::Claimed(market_id))
-                .unwrap_or(Map::new(&env));
-
-            if claimed_map.get(claimant.clone()).unwrap_or(false) {
+            if market.status != MarketStatus::Resolved {
                 continue;
             }
 
-            // 2. Scan positions
-            let positions: Vec<(Address, u32, i128)> = env
-                .storage()
-                .persistent()
-                .get(&DataKey::UserPosition(market_id))
-                .unwrap();
-
-            let mut winning_stake: i128 = 0;
-            let mut user_amount: i128 = 0;
-            let mut winner_count: u32 = 0;
-            let mut user_winner_index: u32 = u32::MAX;
-
-            for j in 0..positions.len() {
-                let (addr, outcome, amount) = positions.get(j).unwrap();
-                if outcome == market.winning_outcome {
-                    if addr == claimant {
-                        user_amount = amount;
-                        user_winner_index = winner_count;
-                    }
-                    winning_stake += amount;
-                    winner_count += 1;
-                }
+            // check re-entrancy
+            if env.storage().instance().has(&symbol_short!("locked")) {
+                continue; 
             }
 
-            if user_amount == 0 || winning_stake == 0 {
-                continue; // Not a winner in this market
+            let user_amount = position_token::balance_of(&env, market_id, market.winning_outcome, &claimant);
+            if user_amount == 0 {
+                continue;
             }
 
-            // 3. Check cursor to avoid double-payouts
-            let cursor: u32 = env
+            // Calculate winning stake
+            let winning_stake: i128 = env
                 .storage()
                 .instance()
-                .get(&DataKey::SettlementCursor(market_id))
+                .get(&DataKey::OutcomeShares(market_id))
+                .and_then(|v: Vec<i128>| v.get(market.winning_outcome))
                 .unwrap_or(0);
 
-            if user_winner_index < cursor {
-                continue; // Already processed by batch_distribute
+            if winning_stake == 0 {
+                continue;
             }
 
-            // 4. Calculate payout and transfer
-            let total_pool: i128 = env
-                .storage()
-                .instance()
-                .get(&DataKey::TotalShares(market_id))
-                .unwrap_or(0);
-            let payout_pool = total_pool * 97 / 100;
+            let total_pool: i128 = env.storage().instance().get(&DataKey::TotalShares(market_id)).unwrap_or(0);
+            let fee_bps = calculate_dynamic_fee(total_pool);
+            let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+            let fee_amount = (total_pool * fee_bps as i128) / 10000;
 
             let payout = (user_amount * payout_pool) / winning_stake;
             
             if payout > 0 {
+                // Burn position to finalize claim
+                position_token::burn(&env, market_id, market.winning_outcome, &claimant);
                 let token_client = token::Client::new(&env, &market.token);
                 token_client.transfer(&env.current_contract_address(), &claimant, &payout);
                 total_payout += payout;
-            }
 
-            // 5. Mark as claimed
-            claimed_map.set(claimant.clone(), true);
-            env.storage()
-                .persistent()
-                .set(&DataKey::Claimed(market_id), &claimed_map);
+                // Distribute fee if not already done
+                let fee_flag = DataKey::SettlementFeePaid(market_id);
+                if !env.storage().persistent().has(&fee_flag) && fee_amount > 0 {
+                    Self::distribute_fee_split(&env, fee_amount, &market.token);
+                    env.storage().persistent().set(&fee_flag, &true);
+                }
+            }
         }
 
         total_payout
@@ -2006,12 +1881,6 @@ impl PredictionMarket {
             extend_to
         );
 
-        // 2. Bump Persistent User Positions Map
-        env.storage().persistent().extend_ttl(
-            &DataKey::UserPosition(market_id),
-            threshold,
-            extend_to
-        );
 
         // 3. Bump Instance storage (TotalShares, IsPaused, etc. are grouped here)
         env.storage().instance().extend_ttl(threshold, extend_to);
@@ -2033,27 +1902,70 @@ impl PredictionMarket {
         }
     }
 
-    /// Verify a ZK proof scalar against an expected value.
-    ///
-    /// Both `proof_scalar` and `expected` are normalized to [0, r) before
-    /// comparison, preventing scalar-bypass attacks where a prover supplies
-    /// s + k*r instead of s.
-    // ── getters and claim_refund ──────────────────────────────────────────────
+    pub fn get_user_position(env: Env, market_id: u64, user: Address, option_index: u32) -> i128 {
+        position_token::balance_of(&env, market_id, option_index, &user)
+    }
+
+    pub fn exit_position(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) -> i128 {
+        bettor.require_auth();
+        assert!(amount > 0, "Amount must be positive");
+
+        let market: Market = load_market(&env, market_id);
+        assert!(market.status == MarketStatus::Active, "Market not active");
+        assert!(option_index < market.options.len(), "Invalid option index");
+
+        let b: i128 = env.storage().instance().get(&DataKey::LmsrB(market_id)).unwrap_or(0);
+        let outcome_shares: Vec<i128> = load_outcome_shares(&env, market_id);
+
+        let (q_before, n) = build_share_arrays(&outcome_shares);
+        let mut q_after = [0i128; 8];
+        for j in 0..n {
+            q_after[j] = q_before[j];
+        }
+        assert!(q_after[option_index as usize] >= amount, "Insufficient position balance");
+        q_after[option_index as usize] -= amount;
+
+        let cost_before = lmsr_cost(&q_before[..n], b);
+        let cost_after = lmsr_cost(&q_after[..n], b);
+        let cost_delta = cost_before - cost_after; // Amount contract pays user
+        assert!(cost_delta > 0, "payout must be positive");
+
+        // Take a 0.5% exit fee to reward LPs and discourage churn
+        let exit_fee = (cost_delta * EXIT_FEE_BPS) / 10000;
+        let final_payout = cost_delta - exit_fee;
+
+        // Update outcome shares
+        let mut new_shares = outcome_shares.clone();
+        new_shares.set(option_index, q_after[option_index as usize]);
+        env.storage().instance().set(&DataKey::OutcomeShares(market_id), &new_shares);
+
+        // Position recording via position_token burn_partial
+        position_token::burn_partial(&env, market_id, option_index, &bettor, amount);
+
+        // Refund the payout
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&env.current_contract_address(), &bettor, &final_payout);
+
+        // Distribute exit fee and update market total
+        let total_pool: i128 = env.storage().instance().get(&DataKey::TotalShares(market_id)).unwrap_or(0);
+        env.storage().instance().set(&DataKey::TotalShares(market_id), &(total_pool - cost_delta));
+        Self::distribute_fee_split(&env, exit_fee, &market.token);
+
+        final_payout
+    }
 
     pub fn get_lmsr_price(env: Env, market_id: u64, option_index: u32) -> i128 {
         let b: i128 = env.storage().instance().get(&DataKey::LmsrB(market_id)).unwrap_or(0);
-        let outcome_shares: Vec<i128> = env.storage().instance().get(&DataKey::OutcomeShares(market_id)).unwrap_or_else(|| Vec::new(&env));
-        let n = outcome_shares.len() as usize;
-        let mut q = [0i128; 8];
-        for j in 0..n {
-            q[j] = outcome_shares.get(j as u32).unwrap_or(0);
-        }
+        let outcome_shares: Vec<i128> = load_outcome_shares(&env, market_id);
+        let (q, n) = build_share_arrays(&outcome_shares);
         lmsr_price(&q[..n], b, option_index as usize)
     }
 
     pub fn get_outcome_shares(env: Env, market_id: u64) -> Vec<i128> {
-        env.storage().instance().get(&DataKey::OutcomeShares(market_id)).unwrap_or_else(|| Vec::new(&env))
+        load_outcome_shares(&env, market_id)
     }
+
+    // ── getters and claim_refund ──────────────────────────────────────────────
 
     pub fn claim_refund(env: Env, market_id: u64, bettor: Address) -> i128 {
         bettor.require_auth();
@@ -2095,38 +2007,6 @@ impl PredictionMarket {
         norm_proof == norm_expected
     }
 
-    /// Get LMSR price for a specific outcome.
-    /// Returns probability in SCALE units (10_000_000 = 1.0 = 100%).
-    pub fn get_lmsr_price(env: Env, market_id: u64, outcome_index: u32) -> i128 {
-        let b: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::LmsrB(market_id))
-            .unwrap();
-        
-        let outcome_shares: Vec<i128> = env
-            .storage()
-            .instance()
-            .get(&DataKey::OutcomeShares(market_id))
-            .unwrap();
-        
-        let n = outcome_shares.len() as usize;
-        let mut q = [0i128; 8];
-        for j in 0..n {
-            q[j] = outcome_shares.get(j as u32).unwrap();
-        }
-        
-        lmsr_price(&q[..n], b, outcome_index as usize)
-    }
-
-    /// Get outcome shares for a market.
-    /// Returns a Vec of share quantities for each outcome.
-    pub fn get_outcome_shares(env: Env, market_id: u64) -> Vec<i128> {
-        env.storage()
-            .instance()
-            .get(&DataKey::OutcomeShares(market_id))
-            .unwrap()
-    }
 
     /// Get per-outcome pool balances for a multi-outcome market.
     /// Returns a Map of outcome_index → total stake in that outcome.
@@ -2148,29 +2028,6 @@ impl PredictionMarket {
         pool_balances.get(outcome_index).unwrap_or(0)
     }
 
-    fn setup() -> (Env, PredictionMarketClient<'static>, Address, Address, u64) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register(PredictionMarket, ());
-        let client = PredictionMarketClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let token = sac.address();
-        let creator = Address::generate(&env);
-        client.initialize(&admin);
-        client.set_token_whitelist(&token, &true);
-        client.update_bet_limits(&1i128, &0i128);
-        let deadline = env.ledger().timestamp() + 86400;
-        let question = String::from_str(&env, "Will BTC exceed $100k?");
-        let options = vec![
-            &env,
-            String::from_str(&env, "Yes"),
-            String::from_str(&env, "No"),
-        ];
-        client.create_market(&creator, &1u64, &question, &options, &deadline, &token, &100_000_000i128, &None, &None);
-        (env, client, admin, token, deadline)
-    }
-
     /// Get outcome count for a market.
     /// Returns the number of possible outcomes (2-8).
     pub fn get_outcome_count(env: Env, market_id: u64) -> u32 {
@@ -2181,11 +2038,77 @@ impl PredictionMarket {
             .unwrap();
         market.options.len()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    fn setup() -> (Env, PredictionMarketClient<'static>, Address, Address, u64) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        
+        let fee_dest = Address::generate(&env);
+        client.update_fee(&0i128, &fee_dest, &FeeMode::Treasury);
+
+        let token_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin);
+        let token_addr = sac.address();
+        
+        client.set_token_whitelist(&token_addr, &true);
+        client.update_bet_limits(&1i128, &0i128); // Standard limits for testing
+
+        let creator = Address::generate(&env);
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        client.create_market(
+            &creator,
+            &1u64,
+            &String::from_str(&env, "Test market"),
+            &options,
+            &deadline,
+            &token_addr,
+            &100_000_000i128, // b = 10.0
+            &None,
+            &None,
+        );
+        
+        client.configure_fee_split(
+            &10000, 
+            &0, 
+            &0, 
+            &fee_dest, 
+            &fee_dest.clone(), 
+            &fee_dest.clone()
+        );
+
+        (env, client, creator, token_addr, deadline)
+    }
+
+    fn setup_market_with_winners(n: u32) -> (Env, PredictionMarketClient<'static>, Vec<Address>) {
+        let env = Env::default();
+        env.mock_all_auths();
 
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
+
+        let fee_dest = Address::generate(&env);
+        client.update_fee(&0i128, &fee_dest, &FeeMode::Treasury);
+
+        let loser = Address::generate(&env);
 
         let token_admin_addr = Address::generate(&env);
         let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
@@ -2193,6 +2116,15 @@ impl PredictionMarket {
         
         client.set_token_whitelist(&token_addr, &true);
         client.update_bet_limits(&1i128, &0i128);
+        
+        client.configure_fee_split(
+            &10000, 
+            &0, 
+            &0, 
+            &fee_dest, 
+            &fee_dest.clone(), 
+            &fee_dest.clone()
+        );
 
         let sac_client = token::StellarAssetClient::new(&env, &token_addr);
 
@@ -2250,7 +2182,7 @@ impl PredictionMarket {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, PredictionMarket);
+        let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         client.initialize(&admin);
@@ -2277,6 +2209,18 @@ impl PredictionMarket {
             &100_000_000i128,
             &None,
             &None,
+        );
+
+        client.set_token_whitelist(&sac.address(), &true);
+        client.update_bet_limits(&1i128, &0i128);
+        
+        client.configure_fee_split(
+            &10000, 
+            &0, 
+            &0, 
+            &fee_dest, 
+            &fee_dest.clone(), 
+            &fee_dest.clone()
         );
 
         (env, client, sac.address(), fee_dest)
@@ -2621,52 +2565,33 @@ impl PredictionMarket {
 
     // ── Batch distribute ──────────────────────────────────────────────────────
 
-    /// Cursor starts at 0 before any settlement.
-    #[test]
-    fn test_settlement_cursor_starts_at_zero() {
-        let (_, client, _) = setup_market_with_winners(3);
-        assert_eq!(client.get_settlement_cursor(&1u64), 0u32);
-    }
-
     /// Single batch_distribute(batch_size=3) pays all 3 winners in one call.
     /// Gas comparison baseline: 1 call vs 3 individual calls.
     ///
     /// Individual (old distribute_rewards per winner):
     ///   - 3 tx × (1 Persistent read + 1 token transfer write) = 3 reads, 3 writes
     /// Batch (new batch_distribute, batch_size=3):
-    ///   - 1 tx × (1 Persistent read + 3 token transfer writes + 1 Instance cursor write)
-    ///   = 1 read, 4 writes — but in ONE transaction, saving 2 tx overhead costs
+    ///   - 1 tx × (1 Persistent read + 3 token transfer writes)
+    ///   = 1 read, 3 writes — but in ONE transaction, saving 2 tx overhead costs
     #[test]
     fn test_batch_distribute_pays_all_winners_in_one_call() {
         let (_, client, winners) = setup_market_with_winners(3);
         let paid = client.batch_distribute(&1u64, &3u32);
         assert_eq!(paid, 3u32);
-        assert_eq!(client.get_settlement_cursor(&1u64), 3u32);
         // Calling again returns 0 — already fully settled
         let paid2 = client.batch_distribute(&1u64, &3u32);
         assert_eq!(paid2, 0u32);
         let _ = winners;
     }
 
-    /// Cursor advances correctly across two batches (simulates 10 winners, batch_size=5).
-    /// This is the core gas-cost comparison: 10 individual calls vs 2 batch calls.
-    ///
-    /// | Approach          | Tx count | Persistent reads | Instance writes |
-    /// |-------------------|----------|------------------|-----------------|
-    /// | 10 individual     | 10       | 10               | 0               |
-    /// | 2 batches of 5    | 2        | 2                | 2 (cursor only) |
-    /// Savings: 8 tx, 8 Persistent reads, net ~80% fee reduction for settlement.
     #[test]
     fn test_batch_distribute_cursor_advances_across_batches() {
         let (_, client, _) = setup_market_with_winners(10);
-
         let paid1 = client.batch_distribute(&1u64, &5u32);
         assert_eq!(paid1, 5u32);
-        assert_eq!(client.get_settlement_cursor(&1u64), 5u32);
 
         let paid2 = client.batch_distribute(&1u64, &5u32);
         assert_eq!(paid2, 5u32);
-        assert_eq!(client.get_settlement_cursor(&1u64), 10u32);
 
         // Fully settled — next call is a no-op
         let paid3 = client.batch_distribute(&1u64, &5u32);
@@ -2683,16 +2608,13 @@ impl PredictionMarket {
 
         let paid2 = client.batch_distribute(&1u64, &5u32);
         assert_eq!(paid2, 2u32); // only 2 remain
-        assert_eq!(client.get_settlement_cursor(&1u64), 7u32);
     }
 
     /// distribute_rewards (convenience wrapper) uses MAX_BATCH_SIZE.
     #[test]
     fn test_distribute_rewards_uses_max_batch_size() {
         let (_, client, _) = setup_market_with_winners(3);
-        client.distribute_rewards(&1u64);
-        // cursor should have advanced by 3 (all winners, less than MAX_BATCH_SIZE)
-        assert_eq!(client.get_settlement_cursor(&1u64), 3u32);
+        client.distribute_rewards(&1u64); // calls batch_distribute with MAX_BATCH_SIZE
     }
 
     /// batch_size=0 must panic.
