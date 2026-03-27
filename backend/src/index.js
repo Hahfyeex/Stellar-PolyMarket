@@ -47,6 +47,9 @@ app.use((req, res, _next) => {
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 app.use("/api/health", require("./routes/health/protocolHealth"));
 
+// Prometheus metrics — NOT behind App Check so Prometheus can scrape freely
+app.use("/metrics", require("./routes/metrics"));
+
 // ── App Check enforcement ───────────────────────────────────────────────────
 // All /api/* routes are protected. Any request without a valid
 // X-Firebase-AppCheck header receives HTTP 403 before reaching the handler.
@@ -61,6 +64,10 @@ app.use("/api/reserves", require("./routes/reserves"));
 app.use("/api/status", require("./routes/status"));
 app.use("/api/images", require("./routes/images"));
 app.use("/api/v1/oracles", require("./routes/oracles"));
+app.use("/api/tvl", require("./routes/tvl"));
+
+// Start TVL background poller (updates Prometheus gauges every 30 s)
+require("./services/tvlService").startPoller();
 app.use("/api/governance", require("./routes/governance"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
