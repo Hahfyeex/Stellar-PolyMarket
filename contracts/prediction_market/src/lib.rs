@@ -55,6 +55,8 @@ pub struct FeeConfig {
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
 pub const MAX_BATCH_SIZE: u32 = 25;
 pub const EXIT_FEE_BPS: i128 = 50;
+/// #378: Minimum market duration in seconds (1 hour)
+pub const MIN_MARKET_DURATION_SECONDS: u64 = 3600;
 /// Liveness window: 1 hour in seconds. Resolution can only be finalised after this delay.
 
 /// Liveness window for disputes (approx 24 hours in ledgers/seconds)
@@ -324,7 +326,11 @@ impl PredictionMarket {
         );
         assert!(options.len() >= 2, "Need at least 2 options");
         assert!(options.len() <= 8, "Maximum 8 outcomes allowed");
-        assert!(deadline > env.ledger().timestamp(), "Deadline must be in the future");
+        // #378: Enforce minimum 1-hour deadline from current ledger timestamp
+        assert!(
+            deadline >= env.ledger().timestamp() + MIN_MARKET_DURATION_SECONDS,
+            "Deadline must be at least 1 hour in the future"
+        );
 
         // --- Creation fee collection ---
         // Read configured fee; default 0 means free market creation.
@@ -511,7 +517,15 @@ impl PredictionMarket {
             env.ledger().timestamp() <= market.deadline,
             "Market deadline has passed"
         );
-        assert!(option_index < market.options.len(), "Invalid option index");
+        // #375: Validate market has at least 2 options at bet time
+        assert!(market.options.len() >= 2, "Market has insufficient options");
+        // #375: Improved error message with descriptive details
+        assert!(
+            option_index < market.options.len(),
+            "option_index {} exceeds market option count {}",
+            option_index,
+            market.options.len()
+        );
 
         // Check if token is whitelisted
         check_whitelisted_token(&env, &market.token);
