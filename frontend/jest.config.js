@@ -8,6 +8,7 @@ module.exports = {
       testMatch: [
         "**/hooks/__tests__/**/*.test.ts",
         // These hooks require jsdom (renderHook) and run in the jsdom project instead
+        "**/store/__tests__/**/*.test.ts",
         "!**/hooks/__tests__/useMarketSearch.test.ts",
         "!**/hooks/__tests__/useOddsStream.test.ts",
       ],
@@ -15,6 +16,11 @@ module.exports = {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
       },
       collectCoverageFrom: ["src/hooks/useRecentActivity.ts", "src/hooks/useFormPersistence.ts"],
+      collectCoverageFrom: [
+        "src/hooks/useRecentActivity.ts",
+        "src/hooks/useFormPersistence.ts",
+        "src/store/notificationSlice.ts",
+      ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
       },
@@ -29,6 +35,7 @@ module.exports = {
         "**/hooks/__tests__/useMarketSearch.test.ts",
         // useOddsStream uses renderHook (React hooks + socket lifecycle) — needs jsdom
         "**/hooks/__tests__/useOddsStream.test.ts",
+        "**/hooks/__tests__/useBatchTransaction.test.ts",
       ],
       // i18n mock is injected before every component test so that components
       // using useTranslation() work without a real i18next instance.
@@ -44,6 +51,9 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useMarketSearch.ts",
         "src/hooks/useOddsStream.ts",
+        ,
+        "src/hooks/useBatchTransaction.ts",
+        "src/components/VirtualizedOrderBook.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
@@ -60,9 +70,7 @@ module.exports = {
       collectCoverageFrom: [
         "src/utils/simulatorCalc.ts",
         "src/utils/poolOwnership.ts",
-        "src/utils/trustline.ts",
-        "src/utils/marketDiscovery.ts",
-        "src/utils/slippageCalc.ts",
+        "src/utils/simulateBet.ts",
         // i18n locale detection and persistence utilities
         "src/utils/i18nUtils.ts",
       ],

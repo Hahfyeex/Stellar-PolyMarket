@@ -11,6 +11,7 @@ soroban-sdk = { version = "25.3.0", features = ["alloc"] }
 
 [dev-dependencies]
 soroban-sdk = { version = "25.3.0", features = ["testutils"] }
+proptest     = { version = "1.4", default-features = false, features = ["alloc"] }
 
 [profile.release]
 opt-level = "z"

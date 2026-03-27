@@ -13,6 +13,59 @@ Set `NEXT_PUBLIC_API_URL` in `.env.local` to point at the backend (default: `htt
 
 ---
 
+## Reputation Badges (Issue #118)
+
+Users who consistently make accurate predictions are recognized with a tiered badge system. Badges appear on the profile page header (96px) and as small icons (24px) in leaderboard rows.
+
+### Tier Thresholds
+
+| Tier    | Min Markets | Min Accuracy | Glow Color |
+|---------|-------------|--------------|------------|
+| 🥉 Bronze  | 10+         | —            | `#cd7f32` (copper)    |
+| 🥈 Silver  | 50+         | 55%+         | `#c0c0c0` (silver)    |
+| 🥇 Gold    | 100+        | 65%+         | `#ffd700` (gold)      |
+| 💎 Diamond | 200+        | 75%+         | `#38bdf8` (ice blue)  |
+
+Tiers are evaluated from highest to lowest — the first matching tier wins. Both conditions (markets AND accuracy) must be satisfied. Bronze has no accuracy gate.
+
+### Adding a New Tier
+
+1. Add a new entry to `BADGE_TIERS` in `src/utils/badgeTier.ts` (keep sorted highest-first by `minMarkets`).
+2. Add the corresponding SVG to `/public/badges/<tier>.svg` — include an `aria-label` attribute.
+3. Add the glow hex color to `BADGE_GLOW_COLORS` in the same file.
+4. Add the new `BadgeTier` union type value in `badgeTier.ts`.
+
+### Components & Files
+
+| File | Purpose |
+|------|---------|
+| `src/utils/badgeTier.ts` | `getBadgeTier(marketsCount, accuracyPct)` — pure tier computation + constants |
+| `src/utils/__tests__/badgeTier.test.ts` | Unit tests (>90% coverage, all tiers + edge cases) |
+| `src/components/ReputationBadge.tsx` | `ReputationBadge` (icon only) + `ReputationBadgeWithLabel` (icon + tier name) |
+| `src/hooks/useUserBadge.ts` | Fetches `GET /api/users/:wallet/stats`, computes tier |
+| `src/app/profile/page.tsx` | Profile page — badge at 96px, tier progression, recent predictions |
+| `src/app/leaderboard/page.tsx` | Leaderboard table with badge icons at 24px per row |
+| `src/components/LeaderboardRow.tsx` | Single leaderboard row component |
+| `public/badges/bronze.svg` | Bronze badge SVG asset |
+| `public/badges/silver.svg` | Silver badge SVG asset |
+| `public/badges/gold.svg` | Gold badge SVG asset |
+| `public/badges/diamond.svg` | Diamond badge SVG asset |
+
+### API Contract
+
+```
+GET /api/users/:wallet/stats
+Response: { markets_count: number, accuracy_pct: number }
+```
+
+### Running Tests
+
+```bash
+npm test -- --testPathPattern="badgeTier"
+```
+
+---
+
 ## Live Activity Feed (Issue #13)
 
 ### What it does
