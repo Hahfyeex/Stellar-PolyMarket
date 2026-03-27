@@ -3,6 +3,9 @@ import { useRef, useState, useEffect } from "react";
 import { trackEvent } from "../../lib/firebase";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
+import StakePresets from "../StakePresets";
+
+const HORIZON = "https://horizon-testnet.stellar.org";
 
 interface Market {
   id: number;
@@ -43,6 +46,19 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [xlmBalance, setXlmBalance] = useState<string | null>(null);
+
+  // Fetch XLM balance when wallet connects
+  useEffect(() => {
+    if (!walletAddress) { setXlmBalance(null); return; }
+    fetch(`${HORIZON}/accounts/${encodeURIComponent(walletAddress)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const native = (data.balances ?? []).find((b: any) => b.asset_type === "native");
+        setXlmBalance(native ? parseFloat(native.balance).toFixed(2) : null);
+      })
+      .catch(() => {});
+  }, [walletAddress]);
 
   // Reset drag when drawer opens/closes
   useEffect(() => {
@@ -213,6 +229,12 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                       {loading ? "..." : "Bet"}
                     </button>
                   </div>
+                  <StakePresets
+                    amount={amount}
+                    onSelect={setAmount}
+                    walletBalance={xlmBalance}
+                    disabled={loading}
+                  />
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">

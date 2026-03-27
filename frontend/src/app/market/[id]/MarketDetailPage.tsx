@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useWallet } from "../../../hooks/useWallet";
 import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
+import StakePresets from "../../../components/StakePresets";
 
 // =============================================================================
 // Types
@@ -352,12 +353,27 @@ interface BettingPanelProps {
   onBetPlaced: () => void;
 }
 
+const HORIZON = "https://horizon-testnet.stellar.org";
+
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const { publicKey, connecting, connect } = useWallet();
   const queryClient = useQueryClient();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [xlmBalance, setXlmBalance] = useState<string | null>(null);
+
+  // Fetch XLM balance when wallet connects
+  useEffect(() => {
+    if (!publicKey) { setXlmBalance(null); return; }
+    fetch(`${HORIZON}/accounts/${encodeURIComponent(publicKey)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const native = (data.balances ?? []).find((b: any) => b.asset_type === "native");
+        setXlmBalance(native ? parseFloat(native.balance).toFixed(2) : null);
+      })
+      .catch(() => {});
+  }, [publicKey]);
 
   const betMutation = useMutation({
     mutationFn: placeBetAPI,
@@ -456,6 +472,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           />
           <span className="flex items-center px-3 text-gray-400 font-medium">XLM</span>
         </div>
+        <StakePresets
+          amount={amount}
+          onSelect={setAmount}
+          walletBalance={xlmBalance}
+          disabled={!canBet}
+        />
 
         {/* Potential Payout */}
         {selectedOutcome !== null && amount && parseFloat(amount) > 0 && (
