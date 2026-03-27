@@ -162,11 +162,18 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
-        <button onClick={handleShareMarket} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
-              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
-            </svg>
-        </button>
+        <div className="flex items-center gap-2">
+          {market.resolved && (
+            <span className="badge-fade-in inline-block px-2 py-1 rounded-full text-xs font-medium bg-green-800 text-green-300">
+              Resolved
+            </span>
+          )}
+          <button onClick={handleShareMarket} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
+                <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
+              </svg>
+          </button>
+        </div>
       </div>
 
       <p className="text-gray-400 text-sm">
