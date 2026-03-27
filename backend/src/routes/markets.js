@@ -11,14 +11,57 @@ const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
 const eventBus = require("../bots/eventBus");
 
-// GET /api/markets — list all markets
+// GET /api/markets — list all markets with pagination
 router.get("/", async (req, res) => {
   try {
+    // Parse and validate pagination parameters
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = parseInt(req.query.offset) || 0;
+
+    // Validate limit and offset are non-negative integers
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return res.status(400).json({
+        error: "Invalid limit parameter",
+        details: "limit must be an integer between 1 and 100",
+      });
+    }
+
+    if (!Number.isInteger(offset) || offset < 0) {
+      return res.status(400).json({
+        error: "Invalid offset parameter",
+        details: "offset must be a non-negative integer",
+      });
+    }
+
+    // Get total count of markets
+    const countResult = await db.query("SELECT COUNT(*) as total FROM markets");
+    const total = parseInt(countResult.rows[0].total);
+
+    // Fetch paginated results
     const result = await db.query(
-      "SELECT * FROM markets ORDER BY created_at DESC"
+      "SELECT * FROM markets ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+      [limit, offset]
     );
-    logger.debug({ market_count: result.rows.length }, "Markets fetched");
-    res.json({ markets: result.rows });
+
+    const hasMore = offset + limit < total;
+
+    logger.debug({
+      market_count: result.rows.length,
+      total,
+      limit,
+      offset,
+      has_more: hasMore,
+    }, "Markets fetched with pagination");
+
+    res.json({
+      markets: result.rows,
+      meta: {
+        total,
+        limit,
+        offset,
+        hasMore,
+      },
+    });
   } catch (err) {
     logger.error({ err }, "Failed to fetch markets");
     res.status(500).json({ error: err.message });
