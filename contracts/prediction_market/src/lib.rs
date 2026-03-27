@@ -123,6 +123,8 @@ pub enum DataKey {
     GlobalStatus,
     /// Transient: mutex flag to prevent reentrancy in batch_distribute
     Busy,
+    /// Persistent: individual pool balance per outcome (market_id, outcome_index)
+    OutcomePool(u64, u32),
 }
 
 #[contracttype]
@@ -376,17 +378,16 @@ impl PredictionMarket {
         }
         env.storage().instance().set(&DataKey::OutcomeShares(id), &shares);
         
-        // Initialize per-outcome pool balances to 0 for each option
-        let mut pool_balances: Map<u32, i128> = Map::new(&env);
+        // Initialize per-outcome pool balances (individual Persistent keys)
         for i in 0..n {
-            pool_balances.set(i as u32, 0i128);
+            let pool_key = DataKey::OutcomePool(id, i as u32);
+            env.storage().persistent().set(&pool_key, &0i128);
+            env.storage().persistent().extend_ttl(&pool_key, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::OutcomePoolBalances(id), &pool_balances);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::OutcomePoolBalances(id), LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+        
+        // Removed redundant OutcomePoolBalances map (Requirement #382: O(1) individual keys)
+        
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
 
@@ -547,6 +548,12 @@ impl PredictionMarket {
 
         // Position recording via position_token sub-module (Map-based)
         position_token::mint(&env, market_id, option_index, &bettor, amount);
+
+        // Update individual OutcomePool tracking (Persistent O(1))
+        let pool_key = DataKey::OutcomePool(market_id, option_index);
+        let current_pool: i128 = env.storage().persistent().get(&pool_key).unwrap_or(0);
+        env.storage().persistent().set(&pool_key, &(current_pool + amount));
+        env.storage().persistent().extend_ttl(&pool_key, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
 
         // Accumulate user's cost investment for future refunds (if voided)
         let cost_key = DataKey::UserCost(market_id, bettor.clone());
@@ -1776,12 +1783,7 @@ mod tests {
             .instance()
             .get(&DataKey::TotalShares(market_id))
             .unwrap_or(0);
-        let winning_stake: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::OutcomeShares(market_id))
-            .map(|v: Vec<i128>| v.get(market.winning_outcome).unwrap_or(0))
-            .unwrap_or(0);
+        let winning_stake = env.storage().persistent().get(&DataKey::OutcomePool(market_id, market.winning_outcome)).unwrap_or(0);
 
         if winning_stake == 0 {
             return 0;
@@ -1900,12 +1902,8 @@ mod tests {
             assert!(!dispute.active, "Payouts paused during an active dispute");
         }
 
-        // Calculate winning stake from the winning outcome's balances
-        let winners_map = position_token::get_balances(&env, market_id, market.winning_outcome);
-        let mut winning_stake: i128 = 0;
-        for (_, amount) in winners_map.iter() {
-            winning_stake += amount;
-        }
+        // O(1) winning stake lookup using per-outcome pool tracking
+        let winning_stake = env.storage().persistent().get(&DataKey::OutcomePool(market_id, market.winning_outcome)).unwrap_or(0);
 
         let total_pool: i128 = env
             .storage()
@@ -1970,6 +1968,75 @@ mod tests {
         paid_count
     }
 
+    /// User-initiated payout claim for a resolved market.
+    /// Calculates payout in O(1) using per-outcome pool tracking.
+    pub fn claim_payout(env: Env, market_id: u64, claimant: Address) -> i128 {
+        claimant.require_auth();
+
+        // Acquire re-entrancy lock
+        acquire_reentrancy_lock(&env);
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+
+        // Double-payout guard: check if already paid
+        let already_paid: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PayoutClaimed(market_id, claimant.clone()))
+            .unwrap_or(false);
+        assert!(!already_paid, "Payout already claimed");
+
+        // O(1) winning stake lookup
+        let winning_stake = env.storage().persistent().get(&DataKey::OutcomePool(market_id, market.winning_outcome)).unwrap_or(0);
+        assert!(winning_stake > 0, "No winners for this market");
+
+        // Find claimant's stake in winning outcome
+        let user_stake = position_token::balance_of(&env, market_id, market.winning_outcome, &claimant);
+        assert!(user_stake > 0, "No winning position found");
+
+        let total_pool: i128 = env.storage().instance().get(&DataKey::TotalShares(market_id)).unwrap_or(0);
+        let fee_bps = calculate_dynamic_fee(total_pool);
+        let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
+        let fee_amount = (total_pool * fee_bps as i128) / 10000;
+
+        // Calculate payout using checked arithmetic
+        let payout = cmuldiv(user_stake, payout_pool, winning_stake, "claim payout calc");
+        assert!(payout > 0, "Calculated payout is zero");
+
+        // Transfer tokens
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&env.current_contract_address(), &claimant, &payout);
+
+        // Mark as paid
+        env.storage()
+            .persistent()
+            .set(&DataKey::PayoutClaimed(market_id, claimant.clone()), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::PayoutClaimed(market_id, claimant.clone()), 100, 1_000_000);
+
+        // Burn position token on claim
+        position_token::burn(&env, market_id, market.winning_outcome, &claimant);
+
+        // Distribute protocol fee using configured split (only on first successful processing)
+        let fee_flag = DataKey::SettlementFeePaid(market_id);
+        if !env.storage().persistent().has(&fee_flag) && fee_amount > 0 {
+            Self::distribute_fee_split(&env, fee_amount, &market.token);
+            env.storage().persistent().set(&fee_flag, &true);
+            env.storage().persistent().extend_ttl(&fee_flag, 100, 1_000_000);
+        }
+
+        // Release lock
+        release_reentrancy_lock(&env);
+
+        payout
+    }
+
     /// Check if a recipient has been paid for a specific market.
     /// Returns true if payout has been claimed/processed.
     pub fn is_payout_claimed(env: Env, market_id: u64, recipient: Address) -> bool {
@@ -2032,12 +2099,7 @@ mod tests {
             }
 
             // Calculate winning stake
-            let winning_stake: i128 = env
-                .storage()
-                .instance()
-                .get(&DataKey::OutcomeShares(market_id))
-                .and_then(|v: Vec<i128>| v.get(market.winning_outcome))
-                .unwrap_or(0);
+            let winning_stake = env.storage().persistent().get(&DataKey::OutcomePool(market_id, market.winning_outcome)).unwrap_or(0);
 
             if winning_stake == 0 {
                 continue;
@@ -2213,22 +2275,25 @@ mod tests {
 
     /// Get per-outcome pool balances for a multi-outcome market.
     /// Returns a Map of outcome_index → total stake in that outcome.
+    /// Get per-outcome pool balances for a multi-outcome market.
+    /// Returns a Map of outcome_index → total stake by reconstructing from individual O(1) keys.
     pub fn get_outcome_pool_balances(env: Env, market_id: u64) -> Map<u32, i128> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::OutcomePoolBalances(market_id))
-            .unwrap_or(Map::new(&env))
+        let market: Market = env.storage().persistent().get(&DataKey::Market(market_id)).unwrap();
+        let mut pool_balances: Map<u32, i128> = Map::new(&env);
+        for i in 0..market.options.len() {
+            let balance = env.storage().persistent().get(&DataKey::OutcomePool(market_id, i as u32)).unwrap_or(0);
+            pool_balances.set(i as u32, balance);
+        }
+        pool_balances
     }
 
     /// Get pool balance for a specific outcome.
-    /// Returns the total stake placed on the specified outcome.
+    /// Returns the total stake placed on the specified outcome in O(1).
     pub fn get_outcome_pool_balance(env: Env, market_id: u64, outcome_index: u32) -> i128 {
-        let pool_balances: Map<u32, i128> = env
-            .storage()
+        env.storage()
             .persistent()
-            .get(&DataKey::OutcomePoolBalances(market_id))
-            .unwrap_or(Map::new(&env));
-        pool_balances.get(outcome_index).unwrap_or(0)
+            .get(&DataKey::OutcomePool(market_id, outcome_index))
+            .unwrap_or(0)
     }
 
     /// Get outcome count for a market.
