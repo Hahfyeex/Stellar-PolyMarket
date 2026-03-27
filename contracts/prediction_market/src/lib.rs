@@ -8,6 +8,10 @@ use soroban_sdk::{
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
 pub const MAX_BATCH_SIZE: u32 = 25;
 
+/// Maximum allowed drift (in seconds) between the source data timestamp and the ledger timestamp.
+/// Source: Fast-moving crypto markets require fresh data to prevent "Old News" exploits.
+pub const MAX_ORACLE_DRIFT: u64 = 1800;
+
 #[contracttype]
 pub enum DataKey {
     Initialized,
@@ -217,9 +221,19 @@ impl PredictionMarket {
     }
 
     /// Propose market resolution — only admin (oracle-triggered).
-    pub fn propose_resolution(env: Env, market_id: u64, winning_outcome: u32) {
+    /// Enforces a 30-minute drift limit to prevent stale data exploits.
+    pub fn propose_resolution(env: Env, market_id: u64, winning_outcome: u32, source_timestamp: u64) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
+
+        // CHECK: Data freshness - must not be older than 30 minutes (1800s)
+        let ledger_timestamp = env.ledger().timestamp();
+        assert!(
+            ledger_timestamp <= source_timestamp + MAX_ORACLE_DRIFT,
+            "ERR_STALE_DATA"
+        );
+        // Also ensure the timestamp is not from the future (logical consistency)
+        assert!(source_timestamp <= ledger_timestamp, "ERR_STALE_DATA");
 
         let mut market: Market = env
             .storage()
@@ -558,7 +572,7 @@ mod tests {
             client.place_bet(&1u64, &0u32, &bettor, &100i128);
         }
         client.place_bet(&1u64, &1u32, &loser, &100i128);
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         client.resolve_market(&1u64, &0u32);
 
         (env, client, bettors)
@@ -749,7 +763,7 @@ mod tests {
     #[test]
     fn test_resolve_market_flow() {
         let (_, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         client.resolve_market(&1u64, &0u32);
         let market = client.get_market(&1u64);
         assert_eq!(market.status, MarketStatus::Resolved);
@@ -851,7 +865,7 @@ mod tests {
     #[should_panic(expected = "Market not active")]
     fn test_bet_on_proposed_market_panics() {
         let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
     }
@@ -1038,7 +1052,7 @@ mod tests {
     fn test_resolve_market_allowed_during_shutdown() {
         let (_, client, _, _, _) = setup();
         client.set_global_status(&false);
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         client.resolve_market(&1u64, &0u32);
         assert_eq!(client.get_market(&1u64).status, MarketStatus::Resolved);
     }
@@ -1075,7 +1089,7 @@ mod tests {
         let disputer = Address::generate(&env);
         
         // 1. Propose something
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         assert_eq!(client.get_market(&1u64).status, MarketStatus::Proposed);
 
         // 2. Dispute it
@@ -1094,7 +1108,7 @@ mod tests {
     #[should_panic(expected = "Market not resolved yet")]
     fn test_payout_frozen_when_disputed() {
         let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         client.dispute(&1u64, &Address::generate(&env), &100i128);
         client.batch_distribute(&1u64, &5u32);
     }
@@ -1161,5 +1175,37 @@ mod tests {
         
         let _ = winners;
     }
+
+    // ── Oracle Freshness Tests ──────────────────────────────────────────────
+
+    /// Proposal with fresh data (drift < 1800s) should succeed.
+    #[test]
+    fn test_propose_resolution_fresh_data_succeeds() {
+        let (env, client, _, _, _) = setup();
+        let now = env.ledger().timestamp();
+        // 10 minutes ago
+        client.propose_resolution(&1u64, &0u32, &(now - 600));
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::Proposed);
+    }
+
+    /// Proposal with stale data (drift > 1800s) should revert with ERR_STALE_DATA.
+    #[test]
+    #[should_panic(expected = "ERR_STALE_DATA")]
+    fn test_propose_resolution_stale_data_reverts() {
+        let (env, client, _, _, _) = setup();
+        let now = env.ledger().timestamp();
+        // 31 minutes ago (1860s)
+        client.propose_resolution(&1u64, &0u32, &(now - 1860));
+    }
+
+    /// Proposal with future data (logical error) should revert with ERR_STALE_DATA.
+    #[test]
+    #[should_panic(expected = "ERR_STALE_DATA")]
+    fn test_propose_resolution_future_data_reverts() {
+        let (env, client, _, _, _) = setup();
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&1u64, &0u32, &(now + 1));
+    }
 }
+
 
