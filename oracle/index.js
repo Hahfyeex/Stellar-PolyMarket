@@ -35,7 +35,21 @@ async function resolveMarket(market) {
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     console.log(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
-    console.error(`[Oracle] Failed to resolve market #${market.id}:`, err.message);
+    if (err.message && err.message.startsWith("No resolver matched")) {
+      console.error(`[Oracle] Unresolvable market #${market.id}: ${err.message}`);
+      await markUnresolvable(market.id, err.message);
+    } else {
+      console.error(`[Oracle] Failed to resolve market #${market.id}:`, err.message);
+    }
+  }
+}
+
+async function markUnresolvable(marketId, reason) {
+  try {
+    await axios.post(`${API_URL}/api/markets/${marketId}/unresolvable`, { reason });
+    console.warn(`[Oracle] Market #${marketId} marked unresolvable: ${reason}`);
+  } catch (err) {
+    console.error(`[Oracle] Failed to mark market #${marketId} as unresolvable:`, err.message);
   }
 }
 
@@ -54,9 +68,8 @@ async function fetchOutcome(question, outcomes) {
     return await resolveFinancial(question, outcomes);
   }
 
-  // Default: return 0 (first outcome) — replace with real logic
-  console.warn(`[Oracle] No resolver matched for: "${question}" — defaulting to outcome 0`);
-  return 0;
+  // No resolver matched — never default to outcome 0
+  throw new Error(`No resolver matched for: "${question}"`);
 }
 
 async function resolveCryptoPrice(question, outcomes) {
@@ -83,6 +96,71 @@ async function resolveFinancial(question, outcomes) {
   return 0;
 }
 
-// Run oracle every 60 seconds
-runOracle();
-setInterval(runOracle, 60 * 1000);
+// ── Graceful shutdown (#223) ──────────────────────────────────────────────────
+let isRunning = false;
+let currentRun = Promise.resolve();
+
+async function runOracleGuarded() {
+  if (isRunning) {
+    console.warn("[Oracle] Skipping run — previous cycle still in progress");
+    return;
+  }
+  isRunning = true;
+  try {
+    await runOracle();
+  } finally {
+    isRunning = false;
+  }
+}
+
+const intervalHandle = setInterval(runOracleGuarded, 60 * 1000);
+
+function shutdown(signal) {
+  console.log(`[Oracle] ${signal} received — Oracle shutting down gracefully`);
+  clearInterval(intervalHandle);
+  currentRun.then(() => process.exit(0));
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Kick off first run and track the promise for shutdown coordination
+currentRun = runOracleGuarded();
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};
+
+module.exports = { runOracle, runOracleGuarded, resolveMarket, fetchOutcome, markUnresolvable, shutdown, _getIsRunning: () => isRunning, _getIntervalHandle: () => intervalHandle };
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};
