@@ -19,6 +19,7 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
+        "src/hooks/useOnboarding.ts",
         "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
@@ -31,6 +32,7 @@ module.exports = {
       testEnvironment: "jest-environment-jsdom",
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
+        "**/app/**/__tests__/**/*.test.tsx"
         "**/context/__tests__/**/*.test.tsx",
         "**/hooks/__tests__/useMarketSearch.test.ts",
         // useOddsStream uses renderHook (React hooks + socket lifecycle) — needs jsdom
