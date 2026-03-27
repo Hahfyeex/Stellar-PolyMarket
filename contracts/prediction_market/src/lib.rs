@@ -1055,6 +1055,10 @@ impl PredictionMarket {
             "Market must be proposed or disputed to resolve"
         );
         assert!(
+            env.ledger().timestamp() >= market.deadline,
+            "Market deadline not reached"
+        );
+        assert!(
             env.ledger().timestamp() >= market.proposal_timestamp + LIVENESS_WINDOW,
             "Liveness window has not elapsed"
         );
@@ -3616,5 +3620,91 @@ mod tests {
         let cost_key = DataKey::UserCost(1u64, bettor.clone());
         let has_cost = env.storage().persistent().has(&cost_key);
         assert!(has_cost, "User cost should exist in persistent storage");
+    }
+
+    #[test]
+    #[should_panic(expected = "Market deadline not reached")]
+    fn test_resolve_market_before_deadline_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000_000);
+
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+        let resolver = Address::generate(&env);
+        
+        client.initialize(&admin);
+        client.assign_role(&admin, &resolver, &Role::Resolver);
+        
+        let sac = env.register_stellar_asset_contract(admin.clone());
+        client.whitelist_token(&admin, &sac.address());
+        
+        // Deadline is 86400 seconds in the future
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        
+        client.create_market(&creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None);
+        client.propose_resolution(&1u64, &0u32);
+        
+        // Advance time past liveness window but NOT past deadline
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        
+        // This should panic because deadline hasn't been reached
+        client.resolve_market(&resolver, &1u64, &0u32);
+    }
+
+    #[test]
+    fn test_resolve_market_after_deadline_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000_000);
+
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+        let resolver = Address::generate(&env);
+        
+        client.initialize(&admin);
+        client.assign_role(&admin, &resolver, &Role::Resolver);
+        
+        let sac = env.register_stellar_asset_contract(admin.clone());
+        client.whitelist_token(&admin, &sac.address());
+        
+        // Deadline is 86400 seconds in the future
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        
+        client.create_market(&creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None);
+        client.propose_resolution(&1u64, &0u32);
+        
+        // Advance time past both liveness window AND deadline
+        env.ledger().with_mut(|l| l.timestamp += 86400 + LIVENESS_WINDOW + 1);
+        
+        // This should succeed
+        client.resolve_market(&resolver, &1u64, &0u32);
+        
+        // Verify market is resolved
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(1u64))
+            .unwrap();
+        assert_eq!(market.status, MarketStatus::Resolved);
+        assert_eq!(market.winning_outcome, 0u32);
     }
 }
