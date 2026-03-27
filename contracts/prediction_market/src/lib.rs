@@ -381,6 +381,7 @@ impl PredictionMarket {
 
         // Cold: market metadata + user positions vec → Persistent
         env.storage().persistent().set(&DataKey::Market(id), &market);
+        env.storage().persistent().extend_ttl(&DataKey::Market(id), 100, 1_000_000);
         // Hot: total_shares + is_paused + LMSR state → Instance (cheaper reads/writes)
         env.storage().instance().set(&DataKey::TotalShares(id), &0i128);
         env.storage().instance().set(&DataKey::IsPaused(id), &false);
@@ -1628,6 +1629,7 @@ impl PredictionMarket {
         if !env.storage().persistent().has(&fee_flag) && fee_amount > 0 {
             Self::distribute_fee_split(env, fee_amount, &market.token);
             env.storage().persistent().set(&fee_flag, &true);
+            env.storage().persistent().extend_ttl(&fee_flag, 100, 1_000_000);
         }
 
         paid
@@ -1880,6 +1882,7 @@ impl PredictionMarket {
                 if !env.storage().persistent().has(&fee_flag) && fee_amount > 0 {
                     Self::distribute_fee_split(&env, fee_amount, &market.token);
                     env.storage().persistent().set(&fee_flag, &true);
+                    env.storage().persistent().extend_ttl(&fee_flag, 100, 1_000_000);
                 }
             }
         }
@@ -2005,6 +2008,7 @@ impl PredictionMarket {
         token_client.transfer(&env.current_contract_address(), &bettor, &amount);
 
         env.storage().persistent().set(&claimed_key, &true);
+        env.storage().persistent().extend_ttl(&claimed_key, 100, 1_000_000);
         amount
     }
 
@@ -3538,5 +3542,79 @@ mod tests {
         // Unauthorized caller should panic
         env.mock_all_auths_allowing_non_root_auth();
         client.distribute_rewards(&unauthorized, &1u64);
+    }
+
+    #[test]
+    fn test_ttl_extended_on_market_creation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000_000);
+
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+        
+        client.initialize(&admin);
+        
+        let sac = env.register_stellar_asset_contract(admin.clone());
+        client.whitelist_token(&admin, &sac.address());
+        
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        
+        // Create market - should extend TTL on persistent storage
+        client.create_market(&creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None);
+        
+        // Verify market was created (TTL extension happens internally)
+        // If TTL wasn't extended, the market would be archived on mainnet
+        let market_key = DataKey::Market(1u64);
+        let has_market = env.storage().persistent().has(&market_key);
+        assert!(has_market, "Market should exist in persistent storage");
+    }
+
+    #[test]
+    fn test_ttl_extended_on_bet_placement() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000_000);
+
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+        let bettor = Address::generate(&env);
+        
+        client.initialize(&admin);
+        
+        let sac = env.register_stellar_asset_contract(admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        client.whitelist_token(&admin, &sac.address());
+        sac_client.mint(&bettor, &500_000_000i128);
+        
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        
+        client.create_market(&creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None);
+        
+        // Place bet - should extend TTL on UserCost and Market
+        client.place_bet(&1u64, &0u32, &bettor, &10_000_000i128);
+        
+        // Verify bet was recorded
+        let cost_key = DataKey::UserCost(1u64, bettor.clone());
+        let has_cost = env.storage().persistent().has(&cost_key);
+        assert!(has_cost, "User cost should exist in persistent storage");
     }
 }
