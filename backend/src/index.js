@@ -102,6 +102,12 @@ app.use((err, req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+const http = require("http");
+const httpServer = http.createServer(app);
+
+// Attach graphql-ws WebSocket server (subscriptions at /graphql)
+require("./graphql/wsServer").attach(httpServer, schema);
+
+httpServer.listen(PORT, () => {
   logger.info({ port: PORT, environment: process.env.NODE_ENV || "development" }, "Server started");
 });

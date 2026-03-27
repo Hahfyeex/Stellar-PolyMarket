@@ -5,8 +5,8 @@
  * Covers: markets, bets, users, events.
  */
 
-const { createSchema } = require('graphql-yoga');
-const resolvers = require('./resolvers');
+const { createSchema } = require("graphql-yoga");
+const resolvers = require("./resolvers");
 
 const typeDefs = /* GraphQL */ `
   type Market {
@@ -97,6 +97,35 @@ const typeDefs = /* GraphQL */ `
 
     # Raw event log, filterable by topic
     events(contract_id: String, topic: String, limit: Int, offset: Int): [Event!]!
+  }
+
+  # ── Real-time subscription payloads ────────────────────────────────────────
+
+  type BetPlacedEvent {
+    market_id: Int!
+    wallet_address: String!
+    outcome_index: Int!
+    # Amount in stroops (i128 serialised as String — zero-float)
+    amount: String!
+  }
+
+  type MarketResolvedEvent {
+    market_id: Int!
+    winning_outcome: Int!
+    # Total pool in stroops (i128 serialised as String — zero-float)
+    total_pool: String!
+  }
+
+  type OddsChangedEvent {
+    market_id: Int!
+    # Odds per outcome in basis-points (i128 array — zero-float)
+    odds_bps: [String!]!
+  }
+
+  type Subscription {
+    onBetPlaced(marketId: Int!): BetPlacedEvent!
+    onMarketResolved(marketId: Int!): MarketResolvedEvent!
+    onOddsChanged(marketId: Int!): OddsChangedEvent!
   }
 `;
 

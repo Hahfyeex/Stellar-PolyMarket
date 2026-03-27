@@ -55,7 +55,21 @@ async function resolveMarket(market) {
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     console.log(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
-    console.error(`[Oracle] Failed to resolve market #${market.id}:`, err.message);
+    if (err.message && err.message.startsWith("No resolver matched")) {
+      console.error(`[Oracle] Unresolvable market #${market.id}: ${err.message}`);
+      await markUnresolvable(market.id, err.message);
+    } else {
+      console.error(`[Oracle] Failed to resolve market #${market.id}:`, err.message);
+    }
+  }
+}
+
+async function markUnresolvable(marketId, reason) {
+  try {
+    await axios.post(`${API_URL}/api/markets/${marketId}/unresolvable`, { reason });
+    console.warn(`[Oracle] Market #${marketId} marked unresolvable: ${reason}`);
+  } catch (err) {
+    console.error(`[Oracle] Failed to mark market #${marketId} as unresolvable:`, err.message);
   }
 }
 
@@ -74,9 +88,8 @@ async function fetchOutcome(question, outcomes) {
     return await resolveFinancial(question, outcomes);
   }
 
-  // Default: return 0 (first outcome) — replace with real logic
-  console.warn(`[Oracle] No resolver matched for: "${question}" — defaulting to outcome 0`);
-  return 0;
+  // No resolver matched — never default to outcome 0
+  throw new Error(`No resolver matched for: "${question}"`);
 }
 
 async function resolveCryptoPrice(question, outcomes) {
@@ -103,61 +116,71 @@ async function resolveFinancial(question, outcomes) {
   return 0;
 }
 
-/**
- * Gracefully shutdown the oracle process.
- * Clears the interval, waits for any in-progress run to complete,
- * then exits cleanly.
- */
-async function gracefulShutdown(signal) {
-  console.log(`[Oracle] ${signal} received, shutting down gracefully...`);
-  isShuttingDown = true;
+// ── Graceful shutdown (#223) ──────────────────────────────────────────────────
+let isRunning = false;
+let currentRun = Promise.resolve();
 
-  // Stop scheduling new runs
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
-    console.log("[Oracle] Interval cleared");
-  }
-
-  // Wait for any in-progress run to complete
+async function runOracleGuarded() {
   if (isRunning) {
-    console.log("[Oracle] Waiting for current cycle to complete...");
-    // Poll until the current run finishes
-    while (isRunning) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    console.log("[Oracle] Current cycle completed");
+    console.warn("[Oracle] Skipping run — previous cycle still in progress");
+    return;
   }
-
-  console.log("[Oracle] Oracle shutting down gracefully");
-  process.exit(0);
+  isRunning = true;
+  try {
+    await runOracle();
+  } finally {
+    isRunning = false;
+  }
 }
 
-// ── Signal Handlers ───────────────────────────────────────────────────────────
+const intervalHandle = setInterval(runOracleGuarded, 60 * 1000);
 
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+function shutdown(signal) {
+  console.log(`[Oracle] ${signal} received — Oracle shutting down gracefully`);
+  clearInterval(intervalHandle);
+  currentRun.then(() => process.exit(0));
+}
 
-// ── Start Oracle ──────────────────────────────────────────────────────────────
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
-// Run oracle immediately on startup
-runOracle();
+// Kick off first run and track the promise for shutdown coordination
+currentRun = runOracleGuarded();
 
-// Run oracle every 60 seconds
-intervalHandle = setInterval(runOracle, 60 * 1000);
-
-// Export for testing
+// Exported for unit tests only
 module.exports = {
   runOracle,
+  runOracleGuarded,
   resolveMarket,
   fetchOutcome,
-  resolveCryptoPrice,
-  resolveFinancial,
-  gracefulShutdown,
-  getState: () => ({ isRunning, isShuttingDown, intervalHandle }),
-  _resetState: () => {
-    intervalHandle = null;
-    isRunning = false;
-    isShuttingDown = false;
-  },
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};
+
+module.exports = { runOracle, runOracleGuarded, resolveMarket, fetchOutcome, markUnresolvable, shutdown, _getIsRunning: () => isRunning, _getIntervalHandle: () => intervalHandle };
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
 };
