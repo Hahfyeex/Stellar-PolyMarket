@@ -9,6 +9,8 @@ module.exports = {
         "**/hooks/__tests__/**/*.test.ts",
         "**/store/__tests__/**/*.test.ts",
         "!**/hooks/__tests__/useMarketSearch.test.ts",
+        "!**/hooks/__tests__/useBatchTransaction.test.ts",
+        "!**/hooks/__tests__/useMarkets.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -33,6 +35,7 @@ module.exports = {
         "**/context/__tests__/**/*.test.tsx",
         "**/hooks/__tests__/useMarketSearch.test.ts",
         "**/hooks/__tests__/useBatchTransaction.test.ts",
+        "**/hooks/__tests__/useMarkets.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -45,6 +48,9 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useMarketSearch.ts",
         "src/hooks/useBatchTransaction.ts",
+        "src/hooks/useMarkets.ts",
+        "src/hooks/useMarket.ts",
+        "src/hooks/usePlaceBet.ts",
         "src/components/VirtualizedOrderBook.tsx",
       ],
       coverageThreshold: {
