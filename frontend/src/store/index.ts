@@ -5,10 +5,12 @@
  */
 import { configureStore } from "@reduxjs/toolkit";
 import contractErrorReducer from "./contractErrorSlice";
+import notificationReducer from "./notificationSlice";
 
 export const store = configureStore({
   reducer: {
     contractError: contractErrorReducer,
+    notifications: notificationReducer,
   },
 });
 
