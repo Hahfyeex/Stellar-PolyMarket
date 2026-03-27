@@ -148,6 +148,16 @@ pub struct EventDisputeRaised {
     pub ledger_timestamp: u64,
 }
 
+/// Emitted by `set_fee_rate` on every successful update.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventFeeRateUpdated {
+    pub version: u32,
+    pub old_rate_bps: u32,
+    pub new_rate_bps: u32,
+    pub ledger_timestamp: u64,
+}
+
 /// Emitted by `create_market` when a non-zero creation fee is collected.
 #[contracttype]
 #[derive(Clone)]
@@ -333,6 +343,18 @@ pub fn emit_dispute_raised(
             market_id,
             disputer: disputer.clone(),
             bond_amount,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_fee_rate_updated(env: &Env, old_rate_bps: u32, new_rate_bps: u32) {
+    env.events().publish(
+        (symbol_short!("FeeRateUp"),),
+        EventFeeRateUpdated {
+            version: EVENT_VERSION,
+            old_rate_bps,
+            new_rate_bps,
             ledger_timestamp: env.ledger().timestamp(),
         },
     );
