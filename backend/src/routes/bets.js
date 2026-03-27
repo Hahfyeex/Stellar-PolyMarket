@@ -2,6 +2,9 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 const logger = require("../utils/logger");
+const eventBus = require("../bots/eventBus");
+
+const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
 // POST /api/bets — place a bet
 router.post("/", async (req, res) => {
@@ -39,6 +42,13 @@ router.post("/", async (req, res) => {
       outcome_index: outcomeIndex,
       amount,
     }, "Bet placed");
+
+    // Fetch updated pool and emit pool.low if depth has fallen below threshold
+    const poolResult = await db.query("SELECT total_pool FROM markets WHERE id = $1", [marketId]);
+    const totalPool = parseFloat(poolResult.rows[0]?.total_pool ?? 0);
+    if (totalPool < POOL_LOW_THRESHOLD) {
+      eventBus.emit("pool.low", { marketId, totalPool, threshold: POOL_LOW_THRESHOLD });
+    }
 
     res.status(201).json({ bet: bet.rows[0] });
   } catch (err) {
