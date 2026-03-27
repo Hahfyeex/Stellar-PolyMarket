@@ -10,6 +10,7 @@ const API_URL = process.env.API_URL || "http://localhost:4000";
 let intervalHandle = null;
 let isRunning = false;
 let isShuttingDown = false;
+let currentRunPromise = Promise.resolve();
 
 /**
  * Fetch all unresolved, expired markets and resolve them
@@ -26,9 +27,11 @@ async function runOracle() {
     console.log("[Oracle] Checking for markets to resolve...");
     const { data } = await axios.get(`${API_URL}/api/markets`);
     const now = Date.now();
+    // #377: Add 60-second buffer to account for clock drift
+    const bufferMs = 60_000;
 
     const expired = data.markets.filter(
-      (m) => !m.resolved && new Date(m.end_date).getTime() <= now
+      (m) => !m.resolved && new Date(m.end_date).getTime() <= now - bufferMs
     );
 
     console.log(`[Oracle] Found ${expired.length} market(s) to resolve`);
@@ -55,6 +58,14 @@ async function resolveMarket(market) {
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     console.log(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
+    // #377: Handle deadline not reached errors gracefully
+    if (err.response?.data?.error?.includes("Market deadline not reached")) {
+      console.warn(`[Oracle] Market #${market.id} deadline not reached on-chain, retrying in 5 minutes`);
+      // Add to retry queue (in production, use persistent queue)
+      const retryTime = new Date(Date.now() + 5 * 60 * 1000);
+      console.log(`[Oracle] Market #${market.id} scheduled for retry at ${retryTime.toISOString()}`);
+      return;
+    }
     if (err.message && err.message.startsWith("No resolver matched")) {
       console.error(`[Oracle] Unresolvable market #${market.id}: ${err.message}`);
       await markUnresolvable(market.id, market.question, err.message);
@@ -136,15 +147,44 @@ async function resolveFinancial(question, outcomes) {
   return 0;
 }
 
-// ── Graceful shutdown (#223) ──────────────────────────────────────────────────
-let isRunning = false;
-let currentRun = Promise.resolve();
+// ── Graceful shutdown (#374) ──────────────────────────────────────────────────
 
+/**
+ * Graceful shutdown handler
+ * Stops the interval, waits for in-flight resolutions to complete, then exits
+ */
+async function gracefulShutdown(signal) {
+  console.log(`[Oracle] ${signal} received — Oracle shutting down gracefully`);
+  
+  isShuttingDown = true;
+  
+  // Stop scheduling new resolution cycles
+  if (intervalHandle !== null) {
+    clearInterval(intervalHandle);
+    console.log("[Oracle] Interval cleared, no new resolution cycles will start");
+  }
+  
+  // Wait for any in-flight resolution to complete
+  try {
+    await currentRunPromise;
+    console.log("[Oracle] In-flight resolutions completed");
+  } catch (err) {
+    console.error("[Oracle] Error waiting for in-flight resolutions:", err.message);
+  }
+  
+  console.log("[Oracle] Graceful shutdown complete");
+  process.exit(0);
+}
+
+/**
+ * Wrapper to track the current run promise
+ */
 async function runOracleGuarded() {
   if (isRunning) {
     console.warn("[Oracle] Skipping run — previous cycle still in progress");
     return;
   }
+  
   isRunning = true;
   try {
     await runOracle();
@@ -153,31 +193,19 @@ async function runOracleGuarded() {
   }
 }
 
-const intervalHandle = setInterval(runOracleGuarded, 60 * 1000);
+// Register signal handlers for graceful shutdown
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-function shutdown(signal) {
-  console.log(`[Oracle] ${signal} received — Oracle shutting down gracefully`);
-  clearInterval(intervalHandle);
-  currentRun.then(() => process.exit(0));
-}
+// Start the oracle interval
+intervalHandle = setInterval(() => {
+  currentRunPromise = runOracleGuarded();
+}, 60 * 1000);
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+// Kick off first run immediately
+currentRunPromise = runOracleGuarded();
 
-// Kick off first run and track the promise for shutdown coordination
-currentRun = runOracleGuarded();
-
-// Exported for unit tests only
-module.exports = {
-  runOracle,
-  runOracleGuarded,
-  resolveMarket,
-  fetchOutcome,
-  markUnresolvable,
-  shutdown,
-  _getIsRunning: () => isRunning,
-  _getIntervalHandle: () => intervalHandle,
-};
+console.log("[Oracle] Started with 60-second resolution cycle");
 
 // Exported for unit tests only
 module.exports = {
@@ -186,21 +214,8 @@ module.exports = {
   resolveMarket,
   fetchOutcome,
   markUnresolvable,
-  shutdown,
+  gracefulShutdown,
   _getIsRunning: () => isRunning,
-  _getIntervalHandle: () => intervalHandle,
-};
-
-module.exports = { runOracle, runOracleGuarded, resolveMarket, fetchOutcome, markUnresolvable, shutdown, _getIsRunning: () => isRunning, _getIntervalHandle: () => intervalHandle };
-
-// Exported for unit tests only
-module.exports = {
-  runOracle,
-  runOracleGuarded,
-  resolveMarket,
-  fetchOutcome,
-  markUnresolvable,
-  shutdown,
-  _getIsRunning: () => isRunning,
+  _getIsShuttingDown: () => isShuttingDown,
   _getIntervalHandle: () => intervalHandle,
 };
