@@ -3,7 +3,30 @@ const express = require("express");
 const cors = require("cors");
 
 const app = express();
-app.use(cors());
+
+// ── CORS ────────────────────────────────────────────────────────────────────
+// Restrict allowed origins to the official frontend domain.
+// Set ALLOWED_ORIGINS as a comma-separated list in production env vars.
+// Falls back to localhost:3000 in development.
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+  : ["http://localhost:3000"];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow server-to-server requests (no Origin header) and listed origins
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin '${origin}' not allowed`));
+      }
+    },
+    credentials: true,
+  })
+);
+// ────────────────────────────────────────────────────────────────────────────
+
 app.use(express.json());
 
 // Health check
