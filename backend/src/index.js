@@ -71,6 +71,7 @@ require("./services/tvlService").startPoller();
 app.use("/api/governance", require("./routes/governance"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
+app.use("/api/archive", require("./routes/archive"));
 
 // GraphQL endpoint (graphql-yoga as Express middleware)
 const { createYoga } = require("graphql-yoga");
@@ -83,6 +84,9 @@ require("./bots/registry");
 
 // Start automated market resolver cron (every 5 minutes)
 require("./workers/resolver").start();
+
+// Start nightly market archival cron (02:00 UTC)
+require("./workers/archive-worker").start();
 
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
