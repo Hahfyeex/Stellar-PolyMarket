@@ -1,14 +1,29 @@
 require("dotenv").config();
 const axios = require("axios");
+const { OracleMedianizer } = require("./medianizer");
+const { btcSources } = require("./sources");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
+
+// ── Graceful Shutdown State ───────────────────────────────────────────────────
+
+let intervalHandle = null;
+let isRunning = false;
+let isShuttingDown = false;
 
 /**
  * Fetch all unresolved, expired markets and resolve them
  */
 async function runOracle() {
-  console.log("[Oracle] Checking for markets to resolve...");
+  // Prevent concurrent oracle runs
+  if (isRunning) {
+    console.log("[Oracle] Oracle is already running, skipping this cycle");
+    return;
+  }
+
+  isRunning = true;
   try {
+    console.log("[Oracle] Checking for markets to resolve...");
     const { data } = await axios.get(`${API_URL}/api/markets`);
     const now = Date.now();
 
@@ -19,10 +34,17 @@ async function runOracle() {
     console.log(`[Oracle] Found ${expired.length} market(s) to resolve`);
 
     for (const market of expired) {
+      // Check if shutdown was requested during resolution
+      if (isShuttingDown) {
+        console.log("[Oracle] Shutdown requested, stopping market resolution");
+        break;
+      }
       await resolveMarket(market);
     }
   } catch (err) {
     console.error("[Oracle] Error:", err.message);
+  } finally {
+    isRunning = false;
   }
 }
 
@@ -33,7 +55,21 @@ async function resolveMarket(market) {
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     console.log(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
-    console.error(`[Oracle] Failed to resolve market #${market.id}:`, err.message);
+    if (err.message && err.message.startsWith("No resolver matched")) {
+      console.error(`[Oracle] Unresolvable market #${market.id}: ${err.message}`);
+      await markUnresolvable(market.id, err.message);
+    } else {
+      console.error(`[Oracle] Failed to resolve market #${market.id}:`, err.message);
+    }
+  }
+}
+
+async function markUnresolvable(marketId, reason) {
+  try {
+    await axios.post(`${API_URL}/api/markets/${marketId}/unresolvable`, { reason });
+    console.warn(`[Oracle] Market #${marketId} marked unresolvable: ${reason}`);
+  } catch (err) {
+    console.error(`[Oracle] Failed to mark market #${marketId} as unresolvable:`, err.message);
   }
 }
 
@@ -52,26 +88,24 @@ async function fetchOutcome(question, outcomes) {
     return await resolveFinancial(question, outcomes);
   }
 
-  // Default: return 0 (first outcome) — replace with real logic
-  console.warn(`[Oracle] No resolver matched for: "${question}" — defaulting to outcome 0`);
-  return 0;
+  // No resolver matched — never default to outcome 0
+  throw new Error(`No resolver matched for: "${question}"`);
 }
 
 async function resolveCryptoPrice(question, outcomes) {
   try {
-    const { data } = await axios.get(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-    );
-    const btcPrice = data.bitcoin.usd;
-    console.log(`[Oracle] BTC price: $${btcPrice}`);
+    // Use medianizer to aggregate 4 independent BTC/USD sources in parallel,
+    // filter outliers, and return a manipulation-resistant median price.
+    const medianizer = new OracleMedianizer(btcSources);
+    const btcPrice = await medianizer.aggregate();
+    console.log(`[Oracle] BTC median price: ${btcPrice}`);
 
-    // Example: "Will Bitcoin reach $100k?" → Yes=0, No=1
     if (question.toLowerCase().includes("100k") || question.includes("100,000")) {
       return btcPrice >= 100000 ? 0 : 1;
     }
     return 0;
   } catch (err) {
-    console.error("[Oracle] Crypto price fetch failed:", err.message);
+    console.error("[Oracle] Crypto price aggregation failed:", err.message);
     return 0;
   }
 }
@@ -82,6 +116,71 @@ async function resolveFinancial(question, outcomes) {
   return 0;
 }
 
-// Run oracle every 60 seconds
-runOracle();
-setInterval(runOracle, 60 * 1000);
+// ── Graceful shutdown (#223) ──────────────────────────────────────────────────
+let isRunning = false;
+let currentRun = Promise.resolve();
+
+async function runOracleGuarded() {
+  if (isRunning) {
+    console.warn("[Oracle] Skipping run — previous cycle still in progress");
+    return;
+  }
+  isRunning = true;
+  try {
+    await runOracle();
+  } finally {
+    isRunning = false;
+  }
+}
+
+const intervalHandle = setInterval(runOracleGuarded, 60 * 1000);
+
+function shutdown(signal) {
+  console.log(`[Oracle] ${signal} received — Oracle shutting down gracefully`);
+  clearInterval(intervalHandle);
+  currentRun.then(() => process.exit(0));
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Kick off first run and track the promise for shutdown coordination
+currentRun = runOracleGuarded();
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};
+
+module.exports = { runOracle, runOracleGuarded, resolveMarket, fetchOutcome, markUnresolvable, shutdown, _getIsRunning: () => isRunning, _getIntervalHandle: () => intervalHandle };
+
+// Exported for unit tests only
+module.exports = {
+  runOracle,
+  runOracleGuarded,
+  resolveMarket,
+  fetchOutcome,
+  markUnresolvable,
+  shutdown,
+  _getIsRunning: () => isRunning,
+  _getIntervalHandle: () => intervalHandle,
+};

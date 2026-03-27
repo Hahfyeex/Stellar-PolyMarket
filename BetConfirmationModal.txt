@@ -1,0 +1,56 @@
+Based on the "Tenant Overview" dashboard provided in the image, here is a concise breakdown of the copy used for each section.
+
+Navigation & Header
+Logo: RentalPlatform
+
+Nav Menu: Dashboard, Properties, Agents, Payments
+
+Search Placeholder: Search properties...
+
+Main Greeting: Tenant Overview
+
+Sub-heading: Welcome back, Alex. Here's what's happening with your rentals today.
+
+Primary CTA: Make a Payment
+
+Key Performance Indicators (Cards)
+Current Balance: $1,250.00 (Next due in 4 days)
+
+Properties Viewed: 14 (+5% from last month)
+
+Inspections Booked: 2 (Upcoming this week)
+
+Recent Transactions
+Headers: DATE, DESCRIPTION, AMOUNT, STATUS
+
+Row 1: Oct 24, 2023 | Monthly Rent Payment (Property: #RT-10029) | $1,250.00 | Completed
+
+Row 2: Oct 15, 2023 | Security Deposit Refund (Property: #RT-09921) | +$2,400.00 | Completed
+
+Row 3: Oct 02, 2023 | Maintenance Fee (Plumbing Service Call) | $85.00 | Processing
+
+Row 4: Sep 24, 2023 | Monthly Rent Payment (Property: #RT-10029) | $1,250.00 | Completed
+
+Action Link: View All History
+
+Sidebar Components
+Upcoming Inspections
+Highland Apartment A4: 1280 Sunset Blvd, LA | 10:30 AM | Agent: Sarah K. (Status: TOMORROW)
+
+Downtown Modern Loft: 452 Industrial Way, LA | Oct 29, 2:00 PM | Agent: Mike R.
+
+Action Button: Book New Inspection
+
+Support Widget
+Headline: Need help with your rental?
+
+Body: Contact your dedicated agent for assistance with maintenance or payments.
+
+Secondary CTA: Message Agent
+
+Footer
+Links: Support Center, Privacy Policy, Terms of Service, Accessibility
+
+Copyright: © 2023 RentalPlatform Inc. All rights reserved.
+
+https://www.figma.com/design/xJG4OAaFgDgyecChF6P0vq/Bet-Confirmation-Modal?m=auto&t=QrjNwxCErMxFMafP-6

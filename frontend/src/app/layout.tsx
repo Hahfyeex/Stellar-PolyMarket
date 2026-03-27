@@ -1,5 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { BettingSlipProvider } from "../context/BettingSlipContext";
+import { WalletProvider } from "../context/WalletContext";
+import BettingSlipWrapper from "../components/BettingSlipWrapper";
+import ReduxProvider from "../components/ReduxProvider";
+import SkipLink from "../components/SkipLink";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
@@ -9,7 +14,21 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <SkipLink />
+        <ReduxProvider>
+          {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
+          <WalletProvider>
+            <BettingSlipProvider>
+              <main id="main-content" role="main">
+                {children}
+              </main>
+              {/* BettingSlip mounted globally — persists across all pages */}
+              <BettingSlipWrapper />
+            </BettingSlipProvider>
+          </WalletProvider>
+        </ReduxProvider>
+      </body>
     </html>
   );
 }

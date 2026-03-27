@@ -1,0 +1,361 @@
+{
+    "__inputs": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "description": "Stella Polymarket Prometheus datasource",
+        "type": "datasource",
+        "pluginId": "prometheus",
+        "pluginName": "Prometheus"
+      }
+    ],
+    "__requires": [
+      { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+      { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+      { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+      { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" }
+    ],
+    "annotations": { "list": [] },
+    "description": "Real-time protocol health for Stella Polymarket — TVL, active markets, 24h volume, staking ratio",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "decimals": 7,
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 10000000000 },
+                { "color": "red", "value": 100000000000 }
+              ]
+            },
+            "unit": "none",
+            "displayName": "TVL (stroops)"
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+        "id": 1,
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "auto"
+        },
+        "pluginVersion": "10.0.0",
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_tvl_stroops",
+            "legendFormat": "TVL (stroops)",
+            "refId": "A"
+          }
+        ],
+        "title": "Total Value Locked (stroops)",
+        "type": "stat"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "blue", "value": null },
+                { "color": "green", "value": 10 },
+                { "color": "yellow", "value": 100 }
+              ]
+            },
+            "unit": "short",
+            "displayName": "Active Markets"
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+        "id": 2,
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "auto"
+        },
+        "pluginVersion": "10.0.0",
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_active_markets_total",
+            "legendFormat": "Active Markets",
+            "refId": "A"
+          }
+        ],
+        "title": "Active Markets",
+        "type": "stat"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "decimals": 7,
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 5000000000 },
+                { "color": "red", "value": 50000000000 }
+              ]
+            },
+            "unit": "none",
+            "displayName": "24h Volume (stroops)"
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+        "id": 3,
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "auto"
+        },
+        "pluginVersion": "10.0.0",
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_volume_24h_stroops",
+            "legendFormat": "24h Volume (stroops)",
+            "refId": "A"
+          }
+        ],
+        "title": "24h Volume (stroops)",
+        "type": "stat"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "decimals": 4,
+            "mappings": [],
+            "max": 10000000,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "yellow", "value": 2000000 },
+                { "color": "green", "value": 5000000 }
+              ]
+            },
+            "unit": "none",
+            "displayName": "Staking Ratio (fixed-point)"
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+        "id": 4,
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "auto"
+        },
+        "pluginVersion": "10.0.0",
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_staking_ratio_fixed",
+            "legendFormat": "Staking Ratio (fixed-point, 7 dec)",
+            "refId": "A"
+          }
+        ],
+        "title": "Staking Ratio (fixed-point × 10⁷)",
+        "type": "stat"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "Stroops",
+              "axisPlacement": "auto",
+              "fillOpacity": 20,
+              "gradientMode": "opacity",
+              "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": { "type": "linear" },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": { "group": "A", "mode": "none" },
+              "thresholdsStyle": { "mode": "off" }
+            },
+            "mappings": [],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+            "unit": "none"
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 0, "y": 6 },
+        "id": 5,
+        "options": {
+          "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+          "tooltip": { "mode": "single", "sort": "none" }
+        },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_tvl_stroops",
+            "legendFormat": "TVL",
+            "refId": "A"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_volume_24h_stroops",
+            "legendFormat": "24h Volume",
+            "refId": "B"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_total_staked_stroops",
+            "legendFormat": "Total Staked",
+            "refId": "C"
+          }
+        ],
+        "title": "TVL / Volume / Staked — Time Series (stroops)",
+        "type": "timeseries"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "Markets",
+              "axisPlacement": "auto",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+              "lineInterpolation": "stepAfter",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": { "type": "linear" },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": { "group": "A", "mode": "none" },
+              "thresholdsStyle": { "mode": "off" }
+            },
+            "mappings": [],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 10, "w": 12, "x": 12, "y": 6 },
+        "id": 6,
+        "options": {
+          "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+          "tooltip": { "mode": "single", "sort": "none" }
+        },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "stella_protocol_active_markets_total",
+            "legendFormat": "Active Markets",
+            "refId": "A"
+          }
+        ],
+        "title": "Active Markets — Time Series",
+        "type": "timeseries"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "Cache hits",
+              "axisPlacement": "auto",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": { "type": "linear" },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": { "group": "A", "mode": "none" },
+              "thresholdsStyle": { "mode": "off" }
+            },
+            "mappings": [],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+        "id": 7,
+        "options": {
+          "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+          "tooltip": { "mode": "single", "sort": "none" }
+        },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "rate(stella_health_cache_hits_total[5m])",
+            "legendFormat": "Cache Hits / sec",
+            "refId": "A"
+          },
+          {
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "expr": "rate(stella_health_cache_misses_total[5m])",
+            "legendFormat": "Cache Misses / sec",
+            "refId": "B"
+          }
+        ],
+        "title": "Redis Cache — Hit vs Miss Rate",
+        "type": "timeseries"
+      }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 38,
+    "style": "dark",
+    "tags": ["stella", "polymarket", "protocol", "health"],
+    "templating": { "list": [] },
+    "time": { "from": "now-6h", "to": "now" },
+    "timepicker": {},
+    "timezone": "utc",
+    "title": "Stella Polymarket — Protocol Health",
+    "uid": "stella-protocol-health-v1",
+    "version": 1
+  }

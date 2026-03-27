@@ -1,0 +1,28 @@
+groups:
+  - name: tvl_alerts
+    rules:
+      # Alert when TVL drops more than 20% within a 5-minute window.
+      # Formula: current TVL is less than 80% of the TVL 5 minutes ago.
+      # Threshold: 0.80 — configurable by editing this file (no code change needed).
+      - alert: TVLDropOver20Percent
+        expr: |
+          tvl_total_xlm
+          < 0.80 * tvl_total_xlm offset 5m
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TVL dropped more than 20% in 5 minutes"
+          description: >
+            Current TVL {{ $value }} XLM is more than 20% below the value
+            5 minutes ago. Possible exploit, mass withdrawal, or oracle error.
+
+      # Warn when a single market pool drops to zero (potential drain).
+      - alert: MarketPoolDrained
+        expr: tvl_per_market == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Market {{ $labels.market_id }} pool is empty"
+          description: "Market {{ $labels.market_id }} has a pool balance of 0 XLM."
