@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" aria-label="Gold badge — 100+ markets, 65%+ accuracy">
+  <!-- Shield background -->
+  <path d="M48 6 L82 20 L82 50 C82 68 66 82 48 90 C30 82 14 68 14 50 L14 20 Z" fill="#2a1f00" stroke="#b8860b" stroke-width="2"/>
+  <!-- Shield shine gradient effect -->
+  <path d="M48 10 L78 22 L78 50 C78 66 63 79 48 86" fill="none" stroke="#ffd700" stroke-width="1.5" opacity="0.5"/>
+  <!-- Medal inner circle -->
+  <circle cx="48" cy="48" r="22" fill="#3d2e00" stroke="#ffd700" stroke-width="2.5"/>
+  <circle cx="48" cy="48" r="18" fill="none" stroke="#ffe44d" stroke-width="1" opacity="0.6"/>
+  <!-- "G" letterform -->
+  <text x="48" y="56" text-anchor="middle" font-family="Georgia, serif" font-size="22" font-weight="bold" fill="#ffd700" letter-spacing="-1">G</text>
+  <!-- Top star accent (larger for gold) -->
+  <path d="M48 14 L50 20 L56 20 L51.5 23.5 L53.5 29.5 L48 26 L42.5 29.5 L44.5 23.5 L40 20 L46 20 Z" fill="#ffd700" opacity="0.95"/>
+  <!-- Side sparkle accents -->
+  <circle cx="22" cy="42" r="2" fill="#ffd700" opacity="0.4"/>
+  <circle cx="74" cy="42" r="2" fill="#ffd700" opacity="0.4"/>
+</svg>

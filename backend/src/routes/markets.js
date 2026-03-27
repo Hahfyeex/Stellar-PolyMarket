@@ -7,15 +7,61 @@ const {
   validateMarketCreation, 
   rateLimitMarketCreation 
 } = require("../middleware/marketValidation");
+const redis = require("../utils/redis");
+const { calculateOdds } = require("../utils/math");
+const eventBus = require("../bots/eventBus");
 
-// GET /api/markets — list all markets
+// GET /api/markets — list all markets with pagination
 router.get("/", async (req, res) => {
   try {
+    // Parse and validate pagination parameters
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = parseInt(req.query.offset) || 0;
+
+    // Validate limit and offset are non-negative integers
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return res.status(400).json({
+        error: "Invalid limit parameter",
+        details: "limit must be an integer between 1 and 100",
+      });
+    }
+
+    if (!Number.isInteger(offset) || offset < 0) {
+      return res.status(400).json({
+        error: "Invalid offset parameter",
+        details: "offset must be a non-negative integer",
+      });
+    }
+
+    // Get total count of markets
+    const countResult = await db.query("SELECT COUNT(*) as total FROM markets");
+    const total = parseInt(countResult.rows[0].total);
+
+    // Fetch paginated results
     const result = await db.query(
-      "SELECT * FROM markets ORDER BY created_at DESC"
+      "SELECT * FROM markets ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+      [limit, offset]
     );
-    logger.debug({ market_count: result.rows.length }, "Markets fetched");
-    res.json({ markets: result.rows });
+
+    const hasMore = offset + limit < total;
+
+    logger.debug({
+      market_count: result.rows.length,
+      total,
+      limit,
+      offset,
+      has_more: hasMore,
+    }, "Markets fetched with pagination");
+
+    res.json({
+      markets: result.rows,
+      meta: {
+        total,
+        limit,
+        offset,
+        hasMore,
+      },
+    });
   } catch (err) {
     logger.error({ err }, "Failed to fetch markets");
     res.status(500).json({ error: err.message });
@@ -66,6 +112,14 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
       market: result.rows[0],
       message: "Market created successfully and published immediately"
     });
+
+    // Emit market.created so registered bot strategies can seed initial liquidity
+    eventBus.emit("market.created", {
+      marketId: result.rows[0].id,
+      question,
+      outcomes: outcomes ?? [],
+      totalPool: 0,
+    });
   } catch (err) {
     logger.error({ err, question, wallet_address: walletAddress }, "Failed to create market");
     res.status(500).json({ 
@@ -107,6 +161,55 @@ router.get("/:id", async (req, res) => {
     });
   } catch (err) {
     logger.error({ err, market_id: req.params.id }, "Failed to fetch market details");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/markets/:id/odds — Cached "Market Odds" Snapshot
+router.get("/:id/odds", async (req, res) => {
+  const marketId = req.params.id;
+  const cacheKey = `market:${marketId}:odds`;
+
+  try {
+    const cachedOdds = await redis.get(cacheKey);
+    if (cachedOdds) {
+      logger.debug({ market_id: marketId }, "Returned odds from cache");
+      return res.json(JSON.parse(cachedOdds));
+    }
+
+    // Cache miss, calculate odds
+    const marketResult = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    if (!marketResult.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+    
+    // We assume there are multiple outcomes and we need to aggregate pools from 'bets'
+    // Alternatively, if markets table maintains 'yes_pool' and 'no_pool', we would use those.
+    // The previous implementation used total_pool. Let's calculate the pool per outcome index dynamically.
+    const betsResult = await db.query(
+      "SELECT outcome_index, SUM(amount) as pool FROM bets WHERE market_id = $1 GROUP BY outcome_index",
+      [marketId]
+    );
+
+    const outcomesCount = marketResult.rows[0].outcomes ? marketResult.rows[0].outcomes.length : 2;
+    const poolData = [];
+    for (let i = 0; i < outcomesCount; i++) {
+      const b = betsResult.rows.find(row => parseInt(row.outcome_index) === i);
+      poolData.push({ index: i, pool: b ? parseFloat(b.pool) : 0 });
+    }
+
+    const { total_pool } = marketResult.rows[0];
+    const odds = calculateOdds(poolData, total_pool);
+
+    const responseData = { market_id: marketId, odds };
+    
+    // Cache for 1 hour or until invalidated by a new bet
+    await redis.set(cacheKey, JSON.stringify(responseData), "EX", 3600);
+    logger.info({ market_id: marketId }, "Odds calculated and cached");
+
+    res.json(responseData);
+  } catch (err) {
+    logger.error({ err, market_id: marketId }, "Failed to fetch market odds");
     res.status(500).json({ error: err.message });
   }
 });

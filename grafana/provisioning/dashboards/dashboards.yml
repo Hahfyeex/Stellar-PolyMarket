@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: "Stella Polymarket"
+    orgId: 1
+    folder: "Stella Polymarket"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards

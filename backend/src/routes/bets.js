@@ -2,6 +2,9 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 const logger = require("../utils/logger");
+const eventBus = require("../bots/eventBus");
+
+const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
 // POST /api/bets — place a bet
 router.post("/", async (req, res) => {
@@ -18,6 +21,16 @@ router.post("/", async (req, res) => {
     if (!market.rows.length) {
       logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: market not found, resolved, or expired");
       return res.status(400).json({ error: "Market not found, already resolved, or expired" });
+    }
+
+    // #376: Check for duplicate bet from same wallet on same market
+    const existingBet = await db.query(
+      "SELECT id FROM bets WHERE market_id = $1 AND wallet_address = $2",
+      [marketId, walletAddress]
+    );
+    if (existingBet.rows.length > 0) {
+      logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: wallet has already placed a bet on this market");
+      return res.status(409).json({ error: "Wallet has already placed a bet on this market" });
     }
 
     // Record bet
@@ -39,6 +52,13 @@ router.post("/", async (req, res) => {
       outcome_index: outcomeIndex,
       amount,
     }, "Bet placed");
+
+    // Fetch updated pool and emit pool.low if depth has fallen below threshold
+    const poolResult = await db.query("SELECT total_pool FROM markets WHERE id = $1", [marketId]);
+    const totalPool = parseFloat(poolResult.rows[0]?.total_pool ?? 0);
+    if (totalPool < POOL_LOW_THRESHOLD) {
+      eventBus.emit("pool.low", { marketId, totalPool, threshold: POOL_LOW_THRESHOLD });
+    }
 
     res.status(201).json({ bet: bet.rows[0] });
   } catch (err) {
@@ -67,14 +87,47 @@ router.post("/payout/:marketId", async (req, res) => {
       [req.params.marketId, winning_outcome]
     );
 
-    // Get total winning stake
-    const winningStake = winners.rows.reduce((sum, b) => sum + parseFloat(b.amount), 0);
+    // Convert to stroops (7 decimal places = 10^7)
+    const STROOP_MULTIPLIER = 10_000_000n;
+    const totalPoolStroops = BigInt(Math.floor(parseFloat(total_pool) * 1e7));
+    
+    // Get total winning stake in stroops
+    const winningStakeStroops = winners.rows.reduce((sum, b) => {
+      return sum + BigInt(Math.floor(parseFloat(b.amount) * 1e7));
+    }, 0n);
 
+    if (winningStakeStroops === 0n) {
+      return res.status(400).json({ error: "No winning stake" });
+    }
+
+    // Calculate payout pool after 3% platform fee: pool * 97 / 100
+    const payoutPoolStroops = (totalPoolStroops * 97n) / 100n;
+
+    // Calculate payouts using BigInt arithmetic
     const payouts = winners.rows.map((bet) => {
-      const share = parseFloat(bet.amount) / winningStake;
-      const payout = share * parseFloat(total_pool) * 0.97; // 3% platform fee
-      return { wallet: bet.wallet_address, payout: payout.toFixed(7) };
+      const betAmountStroops = BigInt(Math.floor(parseFloat(bet.amount) * 1e7));
+      // payout = (betAmount * payoutPool) / winningStake
+      const payoutStroops = (betAmountStroops * payoutPoolStroops) / winningStakeStroops;
+      // Convert back to XLM (divide by 10^7)
+      const payoutXlm = Number(payoutStroops) / 1e7;
+      return { wallet: bet.wallet_address, payout: payoutXlm.toFixed(7) };
     });
+
+    // Verify sum of payouts doesn't exceed payout pool
+    let totalPayoutStroops = 0n;
+    for (const payout of payouts) {
+      const payoutStroops = BigInt(Math.round(parseFloat(payout.payout) * 10_000_000));
+      totalPayoutStroops += payoutStroops;
+    }
+
+    if (totalPayoutStroops > payoutPool) {
+      logger.error({
+        market_id: req.params.marketId,
+        total_payout_stroops: totalPayoutStroops.toString(),
+        payout_pool_stroops: payoutPool.toString(),
+      }, "Payout sum exceeds pool");
+      return res.status(500).json({ error: "Payout calculation error: sum exceeds pool" });
+    }
 
     // Mark bets as paid
     await db.query(
@@ -87,7 +140,7 @@ router.post("/payout/:marketId", async (req, res) => {
       winning_outcome,
       winners_count: winners.rows.length,
       total_pool,
-      winning_stake: winningStake,
+      winning_stake: Number(winningStakeStroops) / 1e7,
     }, "Payouts distributed");
 
     res.json({ payouts });
