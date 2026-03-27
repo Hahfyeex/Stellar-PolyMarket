@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1774551292869" clover="3.2.0">
+  <project timestamp="1774551292869" name="All files">
+    <metrics statements="7" coveredstatements="7" conditionals="3" coveredconditionals="3" methods="1" coveredmethods="1" elements="11" coveredelements="11" complexity="0" loc="7" ncloc="7" packages="1" files="1" classes="1"/>
+    <file name="badgeTier.ts" path="C:\Users\flori\Desktop\DRIPS\Stellar-PolyMarket\frontend\src\utils\badgeTier.ts">
+      <metrics statements="7" coveredstatements="7" conditionals="3" coveredconditionals="3" methods="1" coveredmethods="1"/>
+      <line num="30" count="1" type="stmt"/>
+      <line num="49" count="1" type="stmt"/>
+      <line num="70" count="1" type="stmt"/>
+      <line num="74" count="26" type="stmt"/>
+      <line num="75" count="77" type="cond" truecount="3" falsecount="0"/>
+      <line num="76" count="22" type="stmt"/>
+      <line num="79" count="4" type="stmt"/>
+    </file>
+  </project>
+</coverage>

@@ -9,6 +9,7 @@ const {
 } = require("../middleware/marketValidation");
 const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
+const eventBus = require("../bots/eventBus");
 
 // GET /api/markets — list all markets
 router.get("/", async (req, res) => {
@@ -67,6 +68,14 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
     res.status(201).json({ 
       market: result.rows[0],
       message: "Market created successfully and published immediately"
+    });
+
+    // Emit market.created so registered bot strategies can seed initial liquidity
+    eventBus.emit("market.created", {
+      marketId: result.rows[0].id,
+      question,
+      outcomes: outcomes ?? [],
+      totalPool: 0,
     });
   } catch (err) {
     logger.error({ err, question, wallet_address: walletAddress }, "Failed to create market");

@@ -1,15 +1,35 @@
 {
   "name": "stella-polymarket-oracle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start:sports": "node sports/index.js",
+    "dev": "nodemon index.js",
+    "dev:sports": "nodemon sports/index.js",
+    "test": "jest --coverage --runInBand",
+    "test:run": "jest --coverage --runInBand --forceExit"
   },
   "dependencies": {
+    "@stellar/stellar-sdk": "^12.3.0",
     "axios": "^1.6.0",
     "dotenv": "^16.0.0"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coverageThreshold": {
+      "global": {
+        "lines": 95,
+        "functions": 95,
+        "branches": 90,
+        "statements": 95
+      }
+    },
+    "coveragePathIgnorePatterns": [
+      "/node_modules/"
+    ]
   }
 }
