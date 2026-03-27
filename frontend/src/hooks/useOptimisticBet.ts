@@ -24,6 +24,7 @@ import {
   OptimisticBet,
 } from "../store/optimisticBetsSlice";
 import { RootState, AppDispatch } from "../store";
+import { validateStellarAddress } from "../lib/stellar";
 
 /** How long to show the confirmed state before removing the entry (ms) */
 const CONFIRM_DISPLAY_MS = 2_000;
@@ -63,6 +64,13 @@ export function useOptimisticBet(): UseOptimisticBetResult {
   const submitBet = useCallback(
     async (params: SubmitBetParams, onError?: (reason: string) => void): Promise<boolean> => {
       const { marketId, marketTitle, outcomeIndex, outcomeName, amount, walletAddress } = params;
+
+      // Validate wallet address before submission
+      if (!validateStellarAddress(walletAddress)) {
+        const reason = "Invalid wallet address detected. Please reconnect your wallet.";
+        onError?.(reason);
+        return false;
+      }
 
       // Generate a unique id for this optimistic entry
       const optimisticId = `${marketId}-${outcomeIndex}-${Date.now()}`;

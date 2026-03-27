@@ -355,3 +355,22 @@ body {
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.2);
   }
 }
+
+/**
+ * Badge fade-in animation for resolved market status.
+ * Fades in and scales from 0.95 to 1.0 over 0.4 seconds.
+ */
+@keyframes badgeFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.badge-fade-in {
+  animation: badgeFadeIn 0.4s ease-out;
+}

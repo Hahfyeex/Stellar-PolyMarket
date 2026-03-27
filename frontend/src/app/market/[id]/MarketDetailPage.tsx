@@ -208,6 +208,8 @@ function AboutTab({ market, poolSize }: AboutTabProps) {
             <p className="text-gray-400 text-sm">Status</p>
             <span
               className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+                market.resolved ? "badge-fade-in" : ""
+              } ${
                 market.resolved
                   ? "bg-green-800 text-green-300"
                   : new Date(market.end_date) <= new Date()

@@ -68,19 +68,39 @@ async function resolveMarket(market) {
     }
     if (err.message && err.message.startsWith("No resolver matched")) {
       console.error(`[Oracle] Unresolvable market #${market.id}: ${err.message}`);
-      await markUnresolvable(market.id, err.message);
+      await markUnresolvable(market.id, market.question, err.message);
     } else {
       console.error(`[Oracle] Failed to resolve market #${market.id}:`, err.message);
     }
   }
 }
 
-async function markUnresolvable(marketId, reason) {
+async function markUnresolvable(marketId, question, reason) {
   try {
-    await axios.post(`${API_URL}/api/markets/${marketId}/unresolvable`, { reason });
-    console.warn(`[Oracle] Market #${marketId} marked unresolvable: ${reason}`);
+    await axios.post(`${API_URL}/api/admin/pending-review`, { 
+      market_id: marketId, 
+      question,
+      error_message: reason 
+    });
+    console.warn(`[Oracle] Market #${marketId} marked for pending review: ${reason}`);
+    
+    // Send webhook alert if configured
+    const webhookUrl = process.env.ADMIN_ALERT_WEBHOOK_URL;
+    if (webhookUrl) {
+      try {
+        await axios.post(webhookUrl, {
+          type: 'market_pending_review',
+          market_id: marketId,
+          question,
+          error_message: reason,
+          timestamp: new Date().toISOString()
+        });
+      } catch (webhookErr) {
+        console.error(`[Oracle] Failed to send webhook alert:`, webhookErr.message);
+      }
+    }
   } catch (err) {
-    console.error(`[Oracle] Failed to mark market #${marketId} as unresolvable:`, err.message);
+    console.error(`[Oracle] Failed to mark market #${marketId} as pending review:`, err.message);
   }
 }
 
@@ -99,8 +119,8 @@ async function fetchOutcome(question, outcomes) {
     return await resolveFinancial(question, outcomes);
   }
 
-  // No resolver matched — never default to outcome 0
-  throw new Error(`No resolver matched for: "${question}"`);
+  // No resolver matched — throw descriptive error instead of defaulting
+  throw new Error(`No resolver matched for market question: "${question}"`);
 }
 
 async function resolveCryptoPrice(question, outcomes) {

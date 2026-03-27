@@ -62,6 +62,11 @@ pub const MIN_MARKET_DURATION_SECONDS: u64 = 3600;
 /// Liveness window for disputes (approx 24 hours in ledgers/seconds)
 pub const DISPUTE_WINDOW: u64 = 86_400;
 
+/// TTL extension for persistent storage: ~30 days at 5 seconds per ledger
+/// Threshold: 535_000 / 2 = 267_500 ledgers (~37 days)
+/// Extend to: 535_000 ledgers (~74 days)
+pub const LEDGER_TTL_EXTEND: u32 = 535_000;
+
 /// Calculates dynamic platform fee in Basis Points (BPS).
 /// Pure function: O(1) time complexity, O(1) space complexity.
 /// Logic: Fee = Max(0.5%, 2% - (Volume / Threshold))
@@ -254,6 +259,7 @@ impl PredictionMarket {
         check_initialized(&env);
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         // Bootstrap SuperAdmin in Persistent storage (new role system)
         bootstrap_super_admin(&env, &admin);
         // Legacy Instance write for backward-compat shim
@@ -265,7 +271,7 @@ impl PredictionMarket {
     /// Assign a role to an address. Only SuperAdmin may call this.
     pub fn assign_role(env: Env, caller: Address, role: Role, address: Address) {
         assign_role(&env, &caller, role, &address);
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
     /// Revoke a role (remove its mapping). Only SuperAdmin may call this.
@@ -387,7 +393,7 @@ impl PredictionMarket {
 
         // Cold: market metadata + user positions vec → Persistent
         env.storage().persistent().set(&DataKey::Market(id), &market);
-        env.storage().persistent().extend_ttl(&DataKey::Market(id), 100, 1_000_000);
+        env.storage().persistent().extend_ttl(&DataKey::Market(id), LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         // Hot: total_shares + is_paused + LMSR state → Instance (cheaper reads/writes)
         env.storage().instance().set(&DataKey::TotalShares(id), &0i128);
         env.storage().instance().set(&DataKey::IsPaused(id), &false);
@@ -410,9 +416,9 @@ impl PredictionMarket {
             .set(&DataKey::OutcomePoolBalances(id), &pool_balances);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::OutcomePoolBalances(id), 100, 1_000_000);
+            .extend_ttl(&DataKey::OutcomePoolBalances(id), LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
 
         emit_market_created(
             &env,
@@ -586,7 +592,7 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &cadd(shares, cost_delta, "total shares"));
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
 
         emit_bet_placed(&env, market_id, &bettor, option_index, cost_delta, amount);
     }
@@ -640,7 +646,7 @@ impl PredictionMarket {
         env.storage()
             .instance()
             .set(&DataKey::TotalShares(market_id), &cadd(shares, amount, "lp total shares"));
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
 
         env.events().publish(
             (symbol_short!("LpSeed"), market_id),
@@ -793,7 +799,7 @@ impl PredictionMarket {
         assert!(effective_max >= min_amount, "max must be >= min");
         env.storage().instance().set(&DataKey::MinBetAmount, &min_amount);
         env.storage().instance().set(&DataKey::MaxBetAmount, &effective_max);
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
     /// Get current bet limits. Returns (min_amount, max_amount).
@@ -839,7 +845,7 @@ impl PredictionMarket {
         env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
         env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
         env.storage().instance().set(&DataKey::BurnAddress, &burn_addr);
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
     /// Update fee distribution split (FeeSetter only).
@@ -855,7 +861,7 @@ impl PredictionMarket {
         assert!(total_bps == 10000, "BPS split must total 10000 (100%)");
         let config = FeeConfig { treasury_bps, lp_bps, burn_bps };
         env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
     /// Update fee destination addresses (FeeSetter only).
@@ -870,7 +876,7 @@ impl PredictionMarket {
         env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_addr);
         env.storage().instance().set(&DataKey::LPAddress, &lp_addr);
         env.storage().instance().set(&DataKey::BurnAddress, &burn_addr);
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
     /// Get current fee split configuration.
@@ -998,7 +1004,7 @@ impl PredictionMarket {
             (treasury_amount, lp_amount, burn_amount),
         );
         
-        env.storage().instance().extend_ttl(100, 1_000_000);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
     /// Propose market resolution — Resolver only.

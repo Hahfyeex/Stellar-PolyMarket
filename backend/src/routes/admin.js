@@ -57,4 +57,39 @@ router.get('/dead-letter', jwtAuth, async (req, res) => {
   }
 });
 
+// POST /api/admin/pending-review — add market to pending review queue
+router.post('/pending-review', async (req, res) => {
+  const { market_id, question, error_message } = req.body;
+
+  if (!market_id || !question || !error_message) {
+    return res.status(400).json({ error: 'market_id, question, and error_message required' });
+  }
+
+  try {
+    await db.query(
+      `INSERT INTO pending_review (market_id, question, error_message, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (market_id) DO UPDATE SET error_message = $3, created_at = NOW()`,
+      [market_id, question, error_message]
+    );
+    res.json({ success: true, market_id });
+  } catch (err) {
+    logger.error({ err: err.message }, 'Failed to add pending review');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/pending-review — list all pending review markets
+router.get('/pending-review', jwtAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM pending_review ORDER BY created_at DESC'
+    );
+    res.json({ items: rows });
+  } catch (err) {
+    logger.error({ err: err.message }, 'Failed to fetch pending review');
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
