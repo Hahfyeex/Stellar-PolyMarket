@@ -23,6 +23,16 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Market not found, already resolved, or expired" });
     }
 
+    // #376: Check for duplicate bet from same wallet on same market
+    const existingBet = await db.query(
+      "SELECT id FROM bets WHERE market_id = $1 AND wallet_address = $2",
+      [marketId, walletAddress]
+    );
+    if (existingBet.rows.length > 0) {
+      logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: wallet has already placed a bet on this market");
+      return res.status(409).json({ error: "Wallet has already placed a bet on this market" });
+    }
+
     // Record bet
     const bet = await db.query(
       "INSERT INTO bets (market_id, wallet_address, outcome_index, amount) VALUES ($1, $2, $3, $4) RETURNING *",
