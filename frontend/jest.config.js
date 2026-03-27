@@ -16,6 +16,7 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
+        "src/hooks/useOnboarding.ts",
         "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
@@ -29,6 +30,7 @@ module.exports = {
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
         "**/app/**/__tests__/**/*.test.tsx"
+        "**/app/**/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
         "**/hooks/__tests__/useMarketSearch.test.ts",
         "**/hooks/__tests__/useBatchTransaction.test.ts",

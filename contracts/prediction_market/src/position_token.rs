@@ -40,6 +40,7 @@ pub fn mint(env: &Env, market_id: u64, outcome_index: u32, owner: &Address, amou
     let prev = balances.get(owner.clone()).unwrap_or(0);
     balances.set(owner.clone(), prev + amount);
     env.storage().persistent().set(&key, &balances);
+    env.storage().persistent().extend_ttl(&key, super::LEDGER_TTL_EXTEND / 2, super::LEDGER_TTL_EXTEND);
 
     // Emit Mint event — visible in stellar-events log
     env.events().publish(
@@ -71,6 +72,7 @@ pub fn burn_partial(env: &Env, market_id: u64, outcome_index: u32, owner: &Addre
         balances.set(owner.clone(), new_bal);
     }
     env.storage().persistent().set(&key, &balances);
+    env.storage().persistent().extend_ttl(&key, super::LEDGER_TTL_EXTEND / 2, super::LEDGER_TTL_EXTEND);
 
     env.events().publish(
         (
@@ -101,6 +103,7 @@ pub fn burn(env: &Env, market_id: u64, outcome_index: u32, owner: &Address) -> i
 
     balances.remove(owner.clone());
     env.storage().persistent().set(&key, &balances);
+    env.storage().persistent().extend_ttl(&key, super::LEDGER_TTL_EXTEND / 2, super::LEDGER_TTL_EXTEND);
 
     env.events().publish(
         (

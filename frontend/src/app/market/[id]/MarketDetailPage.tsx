@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useWallet } from "../../../hooks/useWallet";
 import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
+import OddsTicker from "../../../components/OddsTicker";
+import BetConfirmationModal from "../../../components/BetConfirmationModal";
 
 // =============================================================================
 // Types
@@ -208,6 +210,8 @@ function AboutTab({ market, poolSize }: AboutTabProps) {
             <p className="text-gray-400 text-sm">Status</p>
             <span
               className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+                market.resolved ? "badge-fade-in" : ""
+              } ${
                 market.resolved
                   ? "bg-green-800 text-green-300"
                   : new Date(market.end_date) <= new Date()
@@ -358,6 +362,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
 
   const betMutation = useMutation({
     mutationFn: placeBetAPI,
@@ -366,6 +371,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       setSelectedOutcome(null);
       setAmount("");
       onBetPlaced();
+      setIsConfirmModalOpen(false);
       queryClient.invalidateQueries({ queryKey: ["market", market.id.toString()] });
     },
     onError: (error: Error) => {
@@ -380,6 +386,11 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       return;
     }
 
+    setIsConfirmModalOpen(true);
+  }
+
+  function handleConfirmBet() {
+    if (selectedOutcome === null || !amount || !publicKey) return;
     betMutation.mutate({
       marketId: market.id,
       outcomeIndex: selectedOutcome,
@@ -409,6 +420,8 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           <div className="text-gray-400 text-xs mb-1">YES</div>
           <div className="text-white text-2xl font-bold">
             {(odds.yes * 100).toFixed(0)}%
+          <div className="text-white text-2xl font-bold flex justify-center">
+            <OddsTicker value={odds.yes * 100} size="lg" />
           </div>
           <div className="text-gray-400 text-xs mt-1">
             ${(1 / odds.yes).toFixed(2)}
@@ -430,6 +443,8 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           <div className="text-gray-400 text-xs mb-1">NO</div>
           <div className="text-white text-2xl font-bold">
             {(odds.no * 100).toFixed(0)}%
+          <div className="text-white text-2xl font-bold flex justify-center">
+            <OddsTicker value={odds.no * 100} size="lg" />
           </div>
           <div className="text-gray-400 text-xs mt-1">
             ${(1 / odds.no).toFixed(2)}
@@ -502,6 +517,20 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         >
           {message.text}
         </div>
+      )}
+
+      {selectedOutcome !== null && (
+        <BetConfirmationModal
+          isOpen={isConfirmModalOpen}
+          onClose={() => setIsConfirmModalOpen(false)}
+          onConfirm={handleConfirmBet}
+          isLoading={betMutation.isPending}
+          error={betMutation.error ? (betMutation.error as Error).message : null}
+          market={market}
+          outcomeIndex={selectedOutcome}
+          amount={parseFloat(amount) || 0}
+          odds={selectedOutcome === 0 ? odds.yes : odds.no}
+        />
       )}
     </div>
   );
@@ -653,6 +682,10 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
                     <span className="text-green-400">{(odds.yes * 100).toFixed(0)}%</span>
                     {" / "}
                     <span className="text-red-400">{(odds.no * 100).toFixed(0)}%</span>
+                  <p className="text-white font-semibold flex items-center justify-end gap-1">
+                    <OddsTicker value={odds.yes * 100} size="sm" className="text-green-400" />
+                    <span className="text-gray-500">/</span>
+                    <OddsTicker value={odds.no * 100} size="sm" className="text-red-400" />
                   </p>
                 </div>
               </div>

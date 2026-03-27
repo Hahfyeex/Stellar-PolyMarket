@@ -1,0 +1,60 @@
+{
+  "title": "Stella Polymarket — TVL Dashboard",
+  "uid": "stella-tvl",
+  "schemaVersion": 36,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Value Locked (XLM)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "tvl_total_xlm",
+          "legendFormat": "TVL (XLM)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "displayName": "TVL XLM" }
+      }
+    },
+    {
+      "id": 2,
+      "title": "TVL per Market",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "tvl_per_market",
+          "legendFormat": "Market {{market_id}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "TVL 5-min Change %",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 16, "w": 8, "h": 4 },
+      "targets": [
+        {
+          "expr": "(tvl_total_xlm - tvl_total_xlm offset 5m) / tvl_total_xlm offset 5m * 100",
+          "legendFormat": "5m Change %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": -20 },
+              { "color": "yellow", "value": -5 },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s"
+}
