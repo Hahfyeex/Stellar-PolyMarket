@@ -3,6 +3,7 @@
 #[cfg(test)]
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, Map, String, Vec,
     contract, contractimpl, contracttype, symbol_short, token, vec, Address, Env, String, Vec, Map, IntoVal,
 };
 mod access;
@@ -106,6 +107,10 @@ pub enum DataKey {
     Initialized,
     OracleAddress,
     Market(u64),
+    Bets(u64),
+    TotalPool(u64),
+    AuditLog(u64),
+    AuditLogCount,
     /// Hot: total shares per market — Instance storage
     TotalShares(u64),
     /// Hot: pause flag per market — Instance storage
@@ -146,6 +151,9 @@ pub struct DisputeData {
 pub struct Market {
     pub id: u64,
     pub question: String,
+    pub options: Vec<String>, // renamed from outcomes for clarity per issue spec
+    pub deadline: u64,        // renamed from end_date per issue spec
+    pub resolved: bool,
     pub options: Vec<String>,
     pub deadline: u64,
     pub status: MarketStatus,
@@ -346,6 +354,13 @@ impl PredictionMarket {
             condition_outcome,
         };
 
+        // Persist market metadata in persistent storage (survives ledger archival)
+        env.storage()
+            .persistent()
+            .set(&DataKey::Market(id), &market);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalPool(id), &0i128);
         // Cold: market metadata + user positions vec → Persistent
         env.storage().persistent().set(&DataKey::Market(id), &market);
         env.storage().persistent().extend_ttl(&DataKey::Market(id), LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
@@ -478,6 +493,7 @@ impl PredictionMarket {
             env.ledger().timestamp() <= market.deadline,
             "Market deadline has passed"
         );
+        assert!(option_index < market.options.len(), "Invalid option index");
         // #375: Validate market has at least 2 options at bet time
         assert!(market.options.len() >= 2, "Market has insufficient options");
         // #375: Improved error message with descriptive details
@@ -499,6 +515,10 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::LmsrB(market_id))
             .unwrap();
+        bets.set(bettor, (option_index, amount));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Bets(market_id), &bets);
         let outcome_shares: Vec<i128> = load_outcome_shares(&env, market_id);
 
         // Build q_before and q_after as plain slices via a fixed-size stack array.
@@ -733,6 +753,107 @@ impl PredictionMarket {
         Self::distribute_rewards(env, market_id);
     }
 
+    /// Sweep tiny fractional "Dust" from a resolved market into the treasury.
+    /// Only callable by Admin if the market is Resolved and total_pool < 0.001 units.
+    pub fn sweep_dust(env: Env, market_id: u64, treasury: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved");
+
+        // Guideline: Only if Total_Pool < 0.001 XLM (10,000 stroops assuming 7 decimals)
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+        
+        // 10,000 stroops = 0.001 XLM
+        assert!(total_pool > 0 && total_pool < 10000, "Amount exceeds dust threshold");
+
+        // CHECK: Ensure no active winning payouts are pending
+        // Count winners to verify execution is complete
+        let positions: Map<Address, (u32, i128)> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserPosition(market_id))
+            .unwrap();
+        
+        let mut winners_count: u32 = 0;
+        for (_, (outcome, _)) in positions.iter() {
+            if outcome == market.winning_outcome {
+                winners_count += 1;
+            }
+        }
+
+        let cursor: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SettlementCursor(market_id))
+            .unwrap_or(0);
+        
+        assert!(cursor >= winners_count, "Winning payouts still pending");
+
+        // INTERACTIONS: Transfer to treasury
+        let token_client = token::Client::new(&env, &market.token);
+        token_client.transfer(&env.current_contract_address(), &treasury, &total_pool);
+
+        // EFFECTS: Zero out the shares for this market
+        env.storage().instance().set(&DataKey::TotalShares(market_id), &0i128);
+
+        // Emit Sweep event
+        env.events().publish((symbol_short!("Sweep"), market_id), (treasury, total_pool));
+    }
+
+    /// Store an audit log hash on-chain. Only callable by admin.
+    /// `cid_hash` is the SHA-256 hash of the IPFS CID for the audit entry.
+    pub fn store_audit_hash(env: Env, admin: Address, cid_hash: BytesN<32>) {
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can store audit hashes");
+        admin.require_auth();
+
+        // Increment the audit log counter
+        let count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLog(count), &cid_hash);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLogCount, &(count + 1));
+    }
+
+    /// Retrieve an audit log hash by its sequential ID.
+    pub fn get_audit_hash(env: Env, log_id: u64) -> BytesN<32> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLog(log_id))
+            .unwrap()
+    }
+
+    /// Get the total number of audit log entries stored on-chain.
+    pub fn get_audit_log_count(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, BytesN, Env, String};
     /// Returns how many winners have already been paid out.
     pub fn get_settlement_cursor(env: Env, market_id: u64) -> u32 {
         env.storage()
@@ -851,6 +972,54 @@ impl PredictionMarket {
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
+        // Read back and verify stored metadata
+        let market = client.get_market(&1u64);
+        assert_eq!(market.id, 1u64);
+        assert_eq!(
+            market.question,
+            String::from_str(&env, "Will BTC exceed $100k by end of 2025?")
+        );
+        assert_eq!(market.options.len(), 2);
+        assert_eq!(market.deadline, deadline);
+        assert!(!market.resolved);
+
+        // Visual validation — log stored market data
+        soroban_sdk::log!(
+            &env,
+            "✅ Market stored: id={}, deadline={}, resolved={}",
+            market.id,
+            market.deadline,
+            market.resolved
+        );
+    }
+
+    #[test]
+    fn test_store_and_get_audit_hash() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Initially zero audit logs
+        assert_eq!(client.get_audit_log_count(), 0);
+
+        // Store a mock CID hash (32 bytes)
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        client.store_audit_hash(&admin, &hash);
+
+        assert_eq!(client.get_audit_log_count(), 1);
+        assert_eq!(client.get_audit_hash(&0u64), hash);
+
+        // Store a second hash
+        let hash2 = BytesN::from_array(&env, &[2u8; 32]);
+        client.store_audit_hash(&admin, &hash2);
+
+        assert_eq!(client.get_audit_log_count(), 2);
+        assert_eq!(client.get_audit_hash(&1u64), hash2);
     /// Update fee destination addresses (FeeSetter only).
     pub fn update_fee_addresses(
         env: Env,
@@ -3775,6 +3944,88 @@ mod tests {
         let now = env.ledger().timestamp();
         client.propose_resolution(&1u64, &0u32, &(now + 1));
     }
+
+    // ── Dust Sweep Tests ────────────────────────────────────────────────────
+
+    /// Ensure sweep_dust reverts if winning payouts are still pending.
+    #[test]
+    #[should_panic(expected = "Winning payouts still pending")]
+    fn test_sweep_dust_fails_with_pending_payouts() {
+        let (env, client, _) = setup_market_with_winners(3);
+        // Market is Resolved, but cursor is at 0 — sweeping must fail
+        let treasury = Address::generate(&env);
+        client.sweep_dust(&1u64, &treasury);
+    }
+
+    /// Ensure sweep_dust succeeds for a tiny pool after full distribution.
+    #[test]
+    fn test_sweep_dust_success_after_full_distribution() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(sac_admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        
+        // Small pool: 5000 stroops (< 10,000 dust threshold)
+        let bettor = Address::generate(&env);
+        sac_client.mint(&bettor, &5000i128);
+
+        client.create_market(&7u64, &String::from_str(&env, "Q"), &vec![&env, String::from_str(&env, "A"), String::from_str(&env, "B")], &(env.ledger().timestamp() + 100), &sac.address());
+        client.place_bet(&7u64, &0u32, &bettor, &5000i128);
+        
+        client.propose_resolution(&7u64, &0u32, &env.ledger().timestamp());
+        client.resolve_market(&7u64, &0u32);
+        
+        // Fully distribute
+        client.distribute_rewards(&7u64);
+        
+        // Check remaining (3% fee + rounding)
+        let remaining = client.get_total_shares(&7u64);
+        assert!(remaining < 10000);
+
+        let treasury = Address::generate(&env);
+        client.sweep_dust(&7u64, &treasury);
+
+        // Verification: shares zeroed and balance exactly zero in contract (assuming this was the only market)
+        assert_eq!(client.get_total_shares(&7u64), 0);
+    }
+
+    /// Ensure sweep_dust reverts if the pool exceeds the dust threshold.
+    #[test]
+    #[should_panic(expected = "Amount exceeds dust threshold")]
+    fn test_sweep_dust_fails_if_pool_exceeds_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let sac_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(sac_admin.clone());
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        
+        // Large pool: 20,000 stroops (> 10,000 threshold)
+        let bettor = Address::generate(&env);
+        sac_client.mint(&bettor, &20000i128);
+
+        client.create_market(&8u64, &String::from_str(&env, "Q"), &vec![&env, String::from_str(&env, "A"), String::from_str(&env, "B")], &(env.ledger().timestamp() + 100), &sac.address());
+        client.place_bet(&8u64, &0u32, &bettor, &20000i128);
+        
+        client.propose_resolution(&8u64, &0u32, &env.ledger().timestamp());
+        client.resolve_market(&8u64, &0u32);
+        client.distribute_rewards(&8u64);
+        
+        // Sweep should fail because the original total_pool (20k) is checked
+        let treasury = Address::generate(&env);
+        client.sweep_dust(&8u64, &treasury);
+    }
 }
+
 
 

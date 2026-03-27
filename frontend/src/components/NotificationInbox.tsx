@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { useRouter } from "next/navigation";
 import { RootState } from "../store";
 import {
   addNotification,
@@ -35,6 +36,7 @@ interface Props {
 
 export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
   const dispatch = useDispatch();
+  const router = useRouter();
   const items = useSelector((s: RootState) => s.notifications.items);
   const unreadCount = items.filter((n) => !n.read).length;
 
@@ -78,9 +80,17 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
     return () => document.removeEventListener("mousedown", handleOutside);
   }, []);
 
-  function handleItemClick(id: string) {
-    // Transition: unread → read
-    dispatch(markRead(id));
+  function handleItemClick(item: Notification) {
+    dispatch(markRead(item.id));
+    setOpen(false);
+    // Deep-link: MARKET_RESOLVED / MARKET_ENDING_SOON → market page; PAYOUT_AVAILABLE → portfolio
+    const withMarket = item as Notification & { marketId?: string };
+    const url = withMarket.marketId
+      ? `/market/${withMarket.marketId}`
+      : item.type === "PAYOUT_AVAILABLE"
+        ? "/profile"
+        : "/";
+    router.push(url);
   }
 
   function handleClearAll() {
@@ -151,7 +161,7 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
               items.map((item) => (
                 <li
                   key={item.id}
-                  onClick={() => handleItemClick(item.id)}
+                  onClick={() => handleItemClick(item)}
                   className={`flex gap-3 px-4 py-3 cursor-pointer transition-colors hover:bg-gray-800 ${
                     item.read ? "opacity-60" : "bg-blue-950/20"
                   }`}
