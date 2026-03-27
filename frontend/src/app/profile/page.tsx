@@ -12,6 +12,7 @@ import { ReputationBadgeWithLabel, ReputationBadge } from "../../components/Repu
 import { BADGE_TIERS } from "../../utils/badgeTier";
 import WalletActivityTimeline from "../../components/timeline/WalletActivityTimeline";
 import NotificationPreferencesPanel from "../../components/NotificationPreferencesPanel";
+import BetHistoryTable from "../../components/BetHistoryTable";
 
 // ── Mock data — replace with real API calls ──────────────────────────────────
 const MOCK_RECENT_PREDICTIONS = [
@@ -254,6 +255,14 @@ export default function ProfilePage() {
               </div>
             ))}
           </div>
+        </section>
+
+        {/* Bet History */}
+        <section>
+          <BetHistoryTable
+            walletAddress={publicKey}
+            apiUrl={process.env.NEXT_PUBLIC_API_URL ?? ""}
+          />
         </section>
 
         {/* Activity Timeline */}
