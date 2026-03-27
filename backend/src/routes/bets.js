@@ -77,30 +77,30 @@ router.post("/payout/:marketId", async (req, res) => {
       [req.params.marketId, winning_outcome]
     );
 
-    // Convert all monetary values to BigInt stroops (1 XLM = 10,000,000 stroops)
-    const totalPoolStroops = BigInt(Math.round(parseFloat(total_pool) * 10_000_000));
+    // Convert to stroops (7 decimal places = 10^7)
+    const STROOP_MULTIPLIER = 10_000_000n;
+    const totalPoolStroops = BigInt(Math.floor(parseFloat(total_pool) * 1e7));
     
-    // Calculate payout pool after 3% fee (97% of total)
-    const payoutPool = (totalPoolStroops * 97n) / 100n;
-
-    // Calculate total winning stake in stroops
-    let winningStakeStroops = 0n;
-    for (const bet of winners.rows) {
-      const betStroops = BigInt(Math.round(parseFloat(bet.amount) * 10_000_000));
-      winningStakeStroops += betStroops;
-    }
+    // Get total winning stake in stroops
+    const winningStakeStroops = winners.rows.reduce((sum, b) => {
+      return sum + BigInt(Math.floor(parseFloat(b.amount) * 1e7));
+    }, 0n);
 
     if (winningStakeStroops === 0n) {
-      logger.warn({ market_id: req.params.marketId }, "No winning stake found");
-      return res.status(400).json({ error: "No winning stake found" });
+      return res.status(400).json({ error: "No winning stake" });
     }
+
+    // Calculate payout pool after 3% platform fee: pool * 97 / 100
+    const payoutPoolStroops = (totalPoolStroops * 97n) / 100n;
 
     // Calculate payouts using BigInt arithmetic
     const payouts = winners.rows.map((bet) => {
-      const betAmountStroops = BigInt(Math.round(parseFloat(bet.amount) * 10_000_000));
-      const payoutStroops = (betAmountStroops * payoutPool) / winningStakeStroops;
-      const payoutXlm = (Number(payoutStroops) / 10_000_000).toFixed(7);
-      return { wallet: bet.wallet_address, payout: payoutXlm };
+      const betAmountStroops = BigInt(Math.floor(parseFloat(bet.amount) * 1e7));
+      // payout = (betAmount * payoutPool) / winningStake
+      const payoutStroops = (betAmountStroops * payoutPoolStroops) / winningStakeStroops;
+      // Convert back to XLM (divide by 10^7)
+      const payoutXlm = Number(payoutStroops) / 1e7;
+      return { wallet: bet.wallet_address, payout: payoutXlm.toFixed(7) };
     });
 
     // Verify sum of payouts doesn't exceed payout pool
@@ -130,9 +130,7 @@ router.post("/payout/:marketId", async (req, res) => {
       winning_outcome,
       winners_count: winners.rows.length,
       total_pool,
-      winning_stake_stroops: winningStakeStroops.toString(),
-      payout_pool_stroops: payoutPool.toString(),
-      total_payout_stroops: totalPayoutStroops.toString(),
+      winning_stake: Number(winningStakeStroops) / 1e7,
     }, "Payouts distributed");
 
     res.json({ payouts });
