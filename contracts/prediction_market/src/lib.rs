@@ -1555,7 +1555,7 @@ impl PredictionMarket {
     /// than Map iteration for typical market sizes (<100 bettors).
     ///
     /// Returns the number of winners paid in this call.
-    pub fn batch_distribute(env: Env, market_id: u64, batch_size: u32) -> u32 {
+    pub fn batch_distribute(env: &Env, market_id: u64, batch_size: u32) -> u32 {
         // Acquire re-entrancy lock
         acquire_reentrancy_lock(&env);
 
@@ -1635,8 +1635,12 @@ impl PredictionMarket {
 
     /// Convenience: settle all winners in one call (capped at MAX_BATCH_SIZE).
     /// For markets with >MAX_BATCH_SIZE winners, call batch_distribute in a loop.
-    pub fn distribute_rewards(env: Env, market_id: u64) {
-        Self::batch_distribute(env, market_id, MAX_BATCH_SIZE);
+    /// 
+    /// # Authorization
+    /// Only the Resolver role can call this function. Unauthorized callers will panic.
+    pub fn distribute_rewards(env: Env, resolver: Address, market_id: u64) {
+        require_role(&env, &resolver, Role::Resolver);
+        Self::batch_distribute(&env, market_id, MAX_BATCH_SIZE);
     }
 
     /// Batch payout processor for distributing rewards to multiple winners in a single transaction.
@@ -3494,5 +3498,45 @@ mod tests {
         
         // This will reject and panic
         client.place_bet(&999u64, &0u32, &bettor, &10_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "not authorized")]
+    fn test_distribute_rewards_unauthorized_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000_000);
+
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+        let bettor = Address::generate(&env);
+        let unauthorized = Address::generate(&env);
+        
+        client.initialize(&admin);
+        
+        let sac = env.register_stellar_asset_contract(admin.clone());
+        client.whitelist_token(&admin, &sac.address());
+        
+        let deadline = env.ledger().timestamp() + 86400;
+        let options = vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ];
+        
+        client.create_market(&creator, &1u64, &String::from_str(&env, "Test"), &options,
+            &deadline, &sac.address(), &100_000_000i128, &None, &None);
+        client.place_bet(&1u64, &0u32, &bettor, &10_000_000i128);
+        client.propose_resolution(&1u64, &0u32);
+        
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+        
+        // Unauthorized caller should panic
+        env.mock_all_auths_allowing_non_root_auth();
+        client.distribute_rewards(&unauthorized, &1u64);
     }
 }
