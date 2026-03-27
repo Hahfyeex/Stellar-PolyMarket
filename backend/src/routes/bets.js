@@ -77,14 +77,47 @@ router.post("/payout/:marketId", async (req, res) => {
       [req.params.marketId, winning_outcome]
     );
 
-    // Get total winning stake
-    const winningStake = winners.rows.reduce((sum, b) => sum + parseFloat(b.amount), 0);
+    // Convert all monetary values to BigInt stroops (1 XLM = 10,000,000 stroops)
+    const totalPoolStroops = BigInt(Math.round(parseFloat(total_pool) * 10_000_000));
+    
+    // Calculate payout pool after 3% fee (97% of total)
+    const payoutPool = (totalPoolStroops * 97n) / 100n;
 
+    // Calculate total winning stake in stroops
+    let winningStakeStroops = 0n;
+    for (const bet of winners.rows) {
+      const betStroops = BigInt(Math.round(parseFloat(bet.amount) * 10_000_000));
+      winningStakeStroops += betStroops;
+    }
+
+    if (winningStakeStroops === 0n) {
+      logger.warn({ market_id: req.params.marketId }, "No winning stake found");
+      return res.status(400).json({ error: "No winning stake found" });
+    }
+
+    // Calculate payouts using BigInt arithmetic
     const payouts = winners.rows.map((bet) => {
-      const share = parseFloat(bet.amount) / winningStake;
-      const payout = share * parseFloat(total_pool) * 0.97; // 3% platform fee
-      return { wallet: bet.wallet_address, payout: payout.toFixed(7) };
+      const betAmountStroops = BigInt(Math.round(parseFloat(bet.amount) * 10_000_000));
+      const payoutStroops = (betAmountStroops * payoutPool) / winningStakeStroops;
+      const payoutXlm = (Number(payoutStroops) / 10_000_000).toFixed(7);
+      return { wallet: bet.wallet_address, payout: payoutXlm };
     });
+
+    // Verify sum of payouts doesn't exceed payout pool
+    let totalPayoutStroops = 0n;
+    for (const payout of payouts) {
+      const payoutStroops = BigInt(Math.round(parseFloat(payout.payout) * 10_000_000));
+      totalPayoutStroops += payoutStroops;
+    }
+
+    if (totalPayoutStroops > payoutPool) {
+      logger.error({
+        market_id: req.params.marketId,
+        total_payout_stroops: totalPayoutStroops.toString(),
+        payout_pool_stroops: payoutPool.toString(),
+      }, "Payout sum exceeds pool");
+      return res.status(500).json({ error: "Payout calculation error: sum exceeds pool" });
+    }
 
     // Mark bets as paid
     await db.query(
@@ -97,7 +130,9 @@ router.post("/payout/:marketId", async (req, res) => {
       winning_outcome,
       winners_count: winners.rows.length,
       total_pool,
-      winning_stake: winningStake,
+      winning_stake_stroops: winningStakeStroops.toString(),
+      payout_pool_stroops: payoutPool.toString(),
+      total_payout_stroops: totalPayoutStroops.toString(),
     }, "Payouts distributed");
 
     res.json({ payouts });
