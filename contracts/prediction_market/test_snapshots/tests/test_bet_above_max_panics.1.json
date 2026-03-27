@@ -216,16 +216,16 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "set_paused",
+              "function_name": "update_bet_limits",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "u64": "1"
+                  "i128": "1000000"
                 },
                 {
-                  "bool": true
+                  "i128": "10000000"
                 }
               ]
             }
@@ -731,7 +731,7 @@
                         ]
                       },
                       "val": {
-                        "bool": true
+                        "bool": false
                       }
                     },
                     {
@@ -770,7 +770,7 @@
                         ]
                       },
                       "val": {
-                        "i128": "170141183460469231731687303715884105727"
+                        "i128": "10000000"
                       }
                     },
                     {
@@ -782,7 +782,7 @@
                         ]
                       },
                       "val": {
-                        "i128": "1"
+                        "i128": "1000000"
                       }
                     },
                     {
