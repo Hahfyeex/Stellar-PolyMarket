@@ -93,6 +93,7 @@ router.post("/payout/:marketId", async (req, res) => {
     // Calculate payout pool after 3% platform fee: pool * 97 / 100
     const payoutPoolStroops = (totalPoolStroops * 97n) / 100n;
 
+    // Calculate payouts using BigInt arithmetic
     const payouts = winners.rows.map((bet) => {
       const betAmountStroops = BigInt(Math.floor(parseFloat(bet.amount) * 1e7));
       // payout = (betAmount * payoutPool) / winningStake
@@ -101,6 +102,22 @@ router.post("/payout/:marketId", async (req, res) => {
       const payoutXlm = Number(payoutStroops) / 1e7;
       return { wallet: bet.wallet_address, payout: payoutXlm.toFixed(7) };
     });
+
+    // Verify sum of payouts doesn't exceed payout pool
+    let totalPayoutStroops = 0n;
+    for (const payout of payouts) {
+      const payoutStroops = BigInt(Math.round(parseFloat(payout.payout) * 10_000_000));
+      totalPayoutStroops += payoutStroops;
+    }
+
+    if (totalPayoutStroops > payoutPool) {
+      logger.error({
+        market_id: req.params.marketId,
+        total_payout_stroops: totalPayoutStroops.toString(),
+        payout_pool_stroops: payoutPool.toString(),
+      }, "Payout sum exceeds pool");
+      return res.status(500).json({ error: "Payout calculation error: sum exceeds pool" });
+    }
 
     // Mark bets as paid
     await db.query(
