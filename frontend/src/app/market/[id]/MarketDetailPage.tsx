@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useWallet } from "../../../hooks/useWallet";
 import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
+import OddsTicker from "../../../components/OddsTicker";
 
 // =============================================================================
 // Types
@@ -409,8 +410,8 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
           <div className="text-gray-400 text-xs mb-1">YES</div>
-          <div className="text-white text-2xl font-bold">
-            {(odds.yes * 100).toFixed(0)}%
+          <div className="text-white text-2xl font-bold flex justify-center">
+            <OddsTicker value={odds.yes * 100} size="lg" />
           </div>
           <div className="text-gray-400 text-xs mt-1">
             ${(1 / odds.yes).toFixed(2)}
@@ -430,8 +431,8 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
           <div className="text-gray-400 text-xs mb-1">NO</div>
-          <div className="text-white text-2xl font-bold">
-            {(odds.no * 100).toFixed(0)}%
+          <div className="text-white text-2xl font-bold flex justify-center">
+            <OddsTicker value={odds.no * 100} size="lg" />
           </div>
           <div className="text-gray-400 text-xs mt-1">
             ${(1 / odds.no).toFixed(2)}
@@ -651,10 +652,10 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
                 </div>
                 <div className="text-right">
                   <p className="text-blue-300 text-sm">Live Odds</p>
-                  <p className="text-white font-semibold">
-                    <span className="text-green-400">{(odds.yes * 100).toFixed(0)}%</span>
-                    {" / "}
-                    <span className="text-red-400">{(odds.no * 100).toFixed(0)}%</span>
+                  <p className="text-white font-semibold flex items-center justify-end gap-1">
+                    <OddsTicker value={odds.yes * 100} size="sm" className="text-green-400" />
+                    <span className="text-gray-500">/</span>
+                    <OddsTicker value={odds.no * 100} size="sm" className="text-red-400" />
                   </p>
                 </div>
               </div>
