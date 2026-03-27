@@ -10,6 +10,7 @@ import { useWalletContext } from "../../context/WalletContext";
 import { useUserBadge } from "../../hooks/useUserBadge";
 import { ReputationBadgeWithLabel } from "../../components/ReputationBadge";
 import { BADGE_TIERS } from "../../utils/badgeTier";
+import WalletActivityTimeline from "../../components/timeline/WalletActivityTimeline";
 
 // ── Mock data — replace with real API calls ──────────────────────────────────
 const MOCK_RECENT_PREDICTIONS = [
@@ -207,6 +208,9 @@ export default function ProfilePage() {
             ))}
           </div>
         </section>
+
+        {/* Activity Timeline */}
+        <WalletActivityTimeline walletAddress={publicKey} />
       </div>
     </main>
   );
