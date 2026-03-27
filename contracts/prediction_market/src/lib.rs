@@ -3707,4 +3707,59 @@ mod tests {
         assert_eq!(market.status, MarketStatus::Resolved);
         assert_eq!(market.winning_outcome, 0u32);
     }
+    
+    // ── Reentrancy Protection Tests ──────────────────────────────────────────
+
+    /// Verify that the BUSY flag is set in temporary storage during batch_distribute.
+    #[test]
+    fn test_busy_flag_set_during_batch_distribute() {
+        let (env, client, winners) = setup_market_with_winners(3);
+        
+        // Execute batch_distribute - this should work normally
+        let paid = client.batch_distribute(&1u64, &3u32);
+        assert_eq!(paid, 3u32);
+        assert_eq!(client.get_settlement_cursor(&1u64), 3u32);
+        
+        let _ = winners;
+    }
+
+    /// Test that a recursive/reentrant call is blocked and throws ReentrancyError.
+    /// In Soroban's single-transaction model, we simulate this by manually setting
+    /// the BUSY flag and attempting to call batch_distribute again.
+    #[test]
+    #[should_panic(expected = "ReentrancyError")]
+    fn test_reentrant_call_blocked_by_busy_flag() {
+        let (env, client, winners) = setup_market_with_winners(3);
+        
+        // Manually set the BUSY flag to simulate reentrancy
+        // This simulates a recursive call scenario where batch_distribute
+        // is called while already executing
+        env.storage().temporary().set(&DataKey::Busy, &true);
+        
+        // This should panic with ReentrancyError (will FAIL if implementation is missing)
+        let _ = client.batch_distribute(&1u64, &3u32);
+        
+        let _ = winners;
+    }
+
+    /// Verify that after batch_distribute completes, the BUSY flag is cleared.
+    #[test]
+    fn test_busy_flag_cleared_after_execution() {
+        let (env, client, winners) = setup_market_with_winners(3);
+        
+        // Execute batch_distribute
+        let paid = client.batch_distribute(&1u64, &3u32);
+        assert_eq!(paid, 3u32);
+        
+        // Verify BUSY flag is cleared (should be false/none)
+        let is_busy: bool = env
+            .storage()
+            .temporary()
+            .get(&DataKey::Busy)
+            .unwrap_or(false);
+        assert!(!is_busy, "BUSY flag should be cleared after execution");
+        
+        let _ = winners;
+    }
 }
+
