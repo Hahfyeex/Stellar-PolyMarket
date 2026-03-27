@@ -5,12 +5,25 @@ const { btcSources } = require("./sources");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
 
+// ── Graceful Shutdown State ───────────────────────────────────────────────────
+
+let intervalHandle = null;
+let isRunning = false;
+let isShuttingDown = false;
+
 /**
  * Fetch all unresolved, expired markets and resolve them
  */
 async function runOracle() {
-  console.log("[Oracle] Checking for markets to resolve...");
+  // Prevent concurrent oracle runs
+  if (isRunning) {
+    console.log("[Oracle] Oracle is already running, skipping this cycle");
+    return;
+  }
+
+  isRunning = true;
   try {
+    console.log("[Oracle] Checking for markets to resolve...");
     const { data } = await axios.get(`${API_URL}/api/markets`);
     const now = Date.now();
 
@@ -21,10 +34,17 @@ async function runOracle() {
     console.log(`[Oracle] Found ${expired.length} market(s) to resolve`);
 
     for (const market of expired) {
+      // Check if shutdown was requested during resolution
+      if (isShuttingDown) {
+        console.log("[Oracle] Shutdown requested, stopping market resolution");
+        break;
+      }
       await resolveMarket(market);
     }
   } catch (err) {
     console.error("[Oracle] Error:", err.message);
+  } finally {
+    isRunning = false;
   }
 }
 
@@ -65,7 +85,7 @@ async function resolveCryptoPrice(question, outcomes) {
     // filter outliers, and return a manipulation-resistant median price.
     const medianizer = new OracleMedianizer(btcSources);
     const btcPrice = await medianizer.aggregate();
-    console.log(`[Oracle] BTC median price: $${btcPrice}`);
+    console.log(`[Oracle] BTC median price: ${btcPrice}`);
 
     if (question.toLowerCase().includes("100k") || question.includes("100,000")) {
       return btcPrice >= 100000 ? 0 : 1;
@@ -83,6 +103,61 @@ async function resolveFinancial(question, outcomes) {
   return 0;
 }
 
-// Run oracle every 60 seconds
+/**
+ * Gracefully shutdown the oracle process.
+ * Clears the interval, waits for any in-progress run to complete,
+ * then exits cleanly.
+ */
+async function gracefulShutdown(signal) {
+  console.log(`[Oracle] ${signal} received, shutting down gracefully...`);
+  isShuttingDown = true;
+
+  // Stop scheduling new runs
+  if (intervalHandle) {
+    clearInterval(intervalHandle);
+    intervalHandle = null;
+    console.log("[Oracle] Interval cleared");
+  }
+
+  // Wait for any in-progress run to complete
+  if (isRunning) {
+    console.log("[Oracle] Waiting for current cycle to complete...");
+    // Poll until the current run finishes
+    while (isRunning) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    console.log("[Oracle] Current cycle completed");
+  }
+
+  console.log("[Oracle] Oracle shutting down gracefully");
+  process.exit(0);
+}
+
+// ── Signal Handlers ───────────────────────────────────────────────────────────
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// ── Start Oracle ──────────────────────────────────────────────────────────────
+
+// Run oracle immediately on startup
 runOracle();
-setInterval(runOracle, 60 * 1000);
+
+// Run oracle every 60 seconds
+intervalHandle = setInterval(runOracle, 60 * 1000);
+
+// Export for testing
+module.exports = {
+  runOracle,
+  resolveMarket,
+  fetchOutcome,
+  resolveCryptoPrice,
+  resolveFinancial,
+  gracefulShutdown,
+  getState: () => ({ isRunning, isShuttingDown, intervalHandle }),
+  _resetState: () => {
+    intervalHandle = null;
+    isRunning = false;
+    isShuttingDown = false;
+  },
+};
