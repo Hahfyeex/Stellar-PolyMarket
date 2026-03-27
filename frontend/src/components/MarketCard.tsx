@@ -10,6 +10,8 @@ import TrustlineModal from "./TrustlineModal";
 import SlippageSettings from "./SlippageSettings";
 import SlippageWarningModal from "./SlippageWarningModal";
 import { useSlippageGuard } from "../hooks/useSlippageGuard";
+import { useOptimisticBet } from "../hooks/useOptimisticBet";
+import OptimisticBetIndicator from "./OptimisticBetIndicator";
 
 interface Market {
   id: number;
@@ -52,6 +54,8 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
           checkAndRun, confirmTrustline, dismiss: dismissTrustline, retry: retryTrustline } = useTrustline();
   const { snapshotOdds, checkSlippage } = useSlippageGuard();
+  const { submitBet: submitOptimisticBet, betsForMarket } = useOptimisticBet();
+  const pendingBets = betsForMarket(market.id);
   const isExpired = new Date(market.end_date) <= new Date();
 
   // Snapshot odds whenever the user selects an outcome or changes amount
@@ -124,26 +128,24 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     if (selectedOutcome === null || !amount || !walletAddress) return;
     setLoading(true);
     setMessage("");
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          marketId: market.id,
-          outcomeIndex: selectedOutcome,
-          amount: parseFloat(amount),
-          walletAddress,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+
+    const success = await submitOptimisticBet(
+      {
+        marketId: market.id,
+        marketTitle: market.question,
+        outcomeIndex: selectedOutcome,
+        outcomeName: market.outcomes[selectedOutcome],
+        amount: parseFloat(amount),
+        walletAddress,
+      },
+      (reason) => setMessage(`Error: ${reason}`)
+    );
+
+    setLoading(false);
+    if (success) {
       setMessage("Bet placed successfully!");
       clearForm();
       onBetPlaced?.();
-    } catch (err: any) {
-      setMessage(`Error: ${err.message}`);
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -299,6 +301,9 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           {message}
         </p>
       )}
+
+      {/* Optimistic bet status indicators */}
+      <OptimisticBetIndicator bets={pendingBets} />
 
       {/* Queue-full toast */}
       {showQueueFullToast && (
