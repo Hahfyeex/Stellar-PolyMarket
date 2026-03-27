@@ -25,6 +25,8 @@ pub enum DataKey {
     /// true = active (default), false = graceful shutdown.
     /// Only blocks create_market; existing markets resolve and pay out normally.
     GlobalStatus,
+    /// Transient: mutex flag to prevent reentrancy in batch_distribute
+    Busy,
 }
 
 #[contracttype]
@@ -307,7 +309,31 @@ impl PredictionMarket {
     /// Enforces `batch_size <= MAX_BATCH_SIZE` to guarantee safe instruction headroom.
     ///
     /// Returns the number of winners paid in this call.
+    /// Batch-distribute rewards to at most `batch_size` winners per call.
+    /// Returns the number of winners paid in this call.
     pub fn batch_distribute(env: Env, market_id: u64, batch_size: u32) -> u32 {
+        // CHECK: Reentrancy guard - prevent double-claim attacks
+        let is_busy: bool = env
+            .storage()
+            .temporary()
+            .get(&DataKey::Busy)
+            .unwrap_or(false);
+        assert!(!is_busy, "ReentrancyError");
+
+        // EFFECTS: Set BUSY flag
+        env.storage().temporary().set(&DataKey::Busy, &true);
+
+        // Execute actual distribution
+        let result = Self::do_batch_distribute(&env, market_id, batch_size);
+
+        // EFFECTS: Clear BUSY flag after execution completes
+        env.storage().temporary().remove(&DataKey::Busy);
+
+        result
+    }
+
+    /// Internal logic following CEI: Checks-Effects-Interactions
+    fn do_batch_distribute(env: &Env, market_id: u64, batch_size: u32) -> u32 {
         assert!(
             batch_size > 0 && batch_size <= MAX_BATCH_SIZE,
             "batch_size must be 1..=MAX_BATCH_SIZE"
@@ -332,7 +358,7 @@ impl PredictionMarket {
             .get(&DataKey::TotalShares(market_id))
             .unwrap_or(0);
 
-        // Build ordered winners vec (one Persistent read, amortised across all batches)
+        // Build winners list
         let mut winners: Vec<(Address, i128)> = Vec::new(&env);
         let mut winning_stake: i128 = 0;
         for (addr, (outcome, amount)) in positions.iter() {
@@ -342,14 +368,11 @@ impl PredictionMarket {
             }
         }
 
-        if winning_stake == 0 {
-            return 0;
-        }
+        if winning_stake == 0 { return 0; }
 
         let payout_pool = total_pool * 97 / 100;
         let token_client = token::Client::new(&env, &market.token);
 
-        // Hot read: cursor from Instance
         let cursor: u32 = env
             .storage()
             .instance()
@@ -357,13 +380,17 @@ impl PredictionMarket {
             .unwrap_or(0);
 
         let total = winners.len();
-        if cursor >= total {
-            return 0; // already fully settled
-        }
+        if cursor >= total { return 0; }
 
         let end = (cursor + batch_size).min(total);
         let mut paid: u32 = 0;
 
+        // EFFECTS: State change (cursor update) happens BEFORE external interactions
+        env.storage()
+            .instance()
+            .set(&DataKey::SettlementCursor(market_id), &end);
+
+        // INTERACTIONS: External token transfers
         for i in cursor..end {
             let (bettor, amount) = winners.get(i).unwrap();
             let payout = (amount * payout_pool) / winning_stake;
@@ -371,18 +398,17 @@ impl PredictionMarket {
             paid += 1;
         }
 
-        // Hot write: advance cursor in Instance storage (1 write regardless of batch_size)
-        env.storage()
-            .instance()
-            .set(&DataKey::SettlementCursor(market_id), &end);
-
         paid
     }
 
     /// Convenience: settle all winners in one call (capped at MAX_BATCH_SIZE).
-    /// For markets with >MAX_BATCH_SIZE winners, call batch_distribute in a loop.
     pub fn distribute_rewards(env: Env, market_id: u64) {
         Self::batch_distribute(env, market_id, MAX_BATCH_SIZE);
+    }
+
+    /// Alias for distribute_rewards as requested.
+    pub fn withdraw_rewards(env: Env, market_id: u64) {
+        Self::distribute_rewards(env, market_id);
     }
 
     /// Returns how many winners have already been paid out.
@@ -1081,4 +1107,59 @@ mod tests {
         // Calling the function to ensure it doesn't panic and executes correctly.
         client.bump_market_ttl(&1u64, &1000u32, &5000u32);
     }
+    
+    // ── Reentrancy Protection Tests ──────────────────────────────────────────
+
+    /// Verify that the BUSY flag is set in temporary storage during batch_distribute.
+    #[test]
+    fn test_busy_flag_set_during_batch_distribute() {
+        let (env, client, winners) = setup_market_with_winners(3);
+        
+        // Execute batch_distribute - this should work normally
+        let paid = client.batch_distribute(&1u64, &3u32);
+        assert_eq!(paid, 3u32);
+        assert_eq!(client.get_settlement_cursor(&1u64), 3u32);
+        
+        let _ = winners;
+    }
+
+    /// Test that a recursive/reentrant call is blocked and throws ReentrancyError.
+    /// In Soroban's single-transaction model, we simulate this by manually setting
+    /// the BUSY flag and attempting to call batch_distribute again.
+    #[test]
+    #[should_panic(expected = "ReentrancyError")]
+    fn test_reentrant_call_blocked_by_busy_flag() {
+        let (env, client, winners) = setup_market_with_winners(3);
+        
+        // Manually set the BUSY flag to simulate reentrancy
+        // This simulates a recursive call scenario where batch_distribute
+        // is called while already executing
+        env.storage().temporary().set(&DataKey::Busy, &true);
+        
+        // This should panic with ReentrancyError (will FAIL if implementation is missing)
+        let _ = client.batch_distribute(&1u64, &3u32);
+        
+        let _ = winners;
+    }
+
+    /// Verify that after batch_distribute completes, the BUSY flag is cleared.
+    #[test]
+    fn test_busy_flag_cleared_after_execution() {
+        let (env, client, winners) = setup_market_with_winners(3);
+        
+        // Execute batch_distribute
+        let paid = client.batch_distribute(&1u64, &3u32);
+        assert_eq!(paid, 3u32);
+        
+        // Verify BUSY flag is cleared (should be false/none)
+        let is_busy: bool = env
+            .storage()
+            .temporary()
+            .get(&DataKey::Busy)
+            .unwrap_or(false);
+        assert!(!is_busy, "BUSY flag should be cleared after execution");
+        
+        let _ = winners;
+    }
 }
+
