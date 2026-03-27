@@ -510,7 +510,15 @@ impl PredictionMarket {
             env.ledger().timestamp() <= market.deadline,
             "Market deadline has passed"
         );
-        assert!(option_index < market.options.len(), "Invalid option index");
+        // #375: Validate market has at least 2 options at bet time
+        assert!(market.options.len() >= 2, "Market has insufficient options");
+        // #375: Improved error message with descriptive details
+        assert!(
+            option_index < market.options.len(),
+            "option_index {} exceeds market option count {}",
+            option_index,
+            market.options.len()
+        );
 
         // Check if token is whitelisted
         check_whitelisted_token(&env, &market.token);
