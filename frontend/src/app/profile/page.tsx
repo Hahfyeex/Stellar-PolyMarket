@@ -8,17 +8,48 @@
  */
 import { useWalletContext } from "../../context/WalletContext";
 import { useUserBadge } from "../../hooks/useUserBadge";
-import { ReputationBadgeWithLabel } from "../../components/ReputationBadge";
+import { ReputationBadgeWithLabel, ReputationBadge } from "../../components/ReputationBadge";
 import { BADGE_TIERS } from "../../utils/badgeTier";
 import WalletActivityTimeline from "../../components/timeline/WalletActivityTimeline";
+import NotificationPreferencesPanel from "../../components/NotificationPreferencesPanel";
 
 // ── Mock data — replace with real API calls ──────────────────────────────────
 const MOCK_RECENT_PREDICTIONS = [
-  { id: 1, question: "Will XLM reach $0.50 by end of March 2026?", outcome: "Yes", result: "correct", payout: "12.50 XLM" },
-  { id: 2, question: "Will the Stellar Development Foundation release a new SDK?", outcome: "Yes", result: "correct", payout: "8.20 XLM" },
-  { id: 3, question: "Will BTC drop below $60K in Q1 2026?", outcome: "No", result: "incorrect", payout: "0 XLM" },
-  { id: 4, question: "Will global DEX volume exceed $5B in February?", outcome: "Yes", result: "correct", payout: "22.10 XLM" },
-  { id: 5, question: "Will ETH 2.0 staking APY drop below 3%?", outcome: "No", result: "correct", payout: "6.75 XLM" },
+  {
+    id: 1,
+    question: "Will XLM reach $0.50 by end of March 2026?",
+    outcome: "Yes",
+    result: "correct",
+    payout: "12.50 XLM",
+  },
+  {
+    id: 2,
+    question: "Will the Stellar Development Foundation release a new SDK?",
+    outcome: "Yes",
+    result: "correct",
+    payout: "8.20 XLM",
+  },
+  {
+    id: 3,
+    question: "Will BTC drop below $60K in Q1 2026?",
+    outcome: "No",
+    result: "incorrect",
+    payout: "0 XLM",
+  },
+  {
+    id: 4,
+    question: "Will global DEX volume exceed $5B in February?",
+    outcome: "Yes",
+    result: "correct",
+    payout: "22.10 XLM",
+  },
+  {
+    id: 5,
+    question: "Will ETH 2.0 staking APY drop below 3%?",
+    outcome: "No",
+    result: "correct",
+    payout: "6.75 XLM",
+  },
 ];
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -37,7 +68,13 @@ export default function ProfilePage() {
       <main className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-gray-900 border border-gray-700 rounded-2xl p-8 flex flex-col items-center gap-5 text-center">
           <div className="w-14 h-14 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 text-gray-400">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              className="w-7 h-7 text-gray-400"
+            >
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
@@ -94,11 +131,19 @@ export default function ProfilePage() {
             ) : (
               <div className="flex flex-col items-center gap-2">
                 <div className="w-24 h-24 rounded-full border-2 border-dashed border-gray-700 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="w-10 h-10 text-gray-600">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                    className="w-10 h-10 text-gray-600"
+                  >
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                   </svg>
                 </div>
-                <span className="text-xs text-gray-600 uppercase tracking-widest">No badge yet</span>
+                <span className="text-xs text-gray-600 uppercase tracking-widest">
+                  No badge yet
+                </span>
               </div>
             )}
           </div>
@@ -144,9 +189,11 @@ export default function ProfilePage() {
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[...BADGE_TIERS].reverse().map(({ tier: t, minMarkets, minAccuracy }) => {
-              const isUnlocked = tier === t || (stats
-                ? stats.marketsCount >= minMarkets && stats.accuracyPct >= minAccuracy
-                : false);
+              const isUnlocked =
+                tier === t ||
+                (stats
+                  ? stats.marketsCount >= minMarkets && stats.accuracyPct >= minAccuracy
+                  : false);
 
               return (
                 <div
@@ -155,8 +202,8 @@ export default function ProfilePage() {
                     tier === t
                       ? "border-indigo-600 bg-indigo-950/20"
                       : isUnlocked
-                      ? "border-gray-700"
-                      : "border-gray-800 opacity-50"
+                        ? "border-gray-700"
+                        : "border-gray-800 opacity-50"
                   }`}
                 >
                   <div className="flex justify-center">
@@ -211,6 +258,9 @@ export default function ProfilePage() {
 
         {/* Activity Timeline */}
         <WalletActivityTimeline walletAddress={publicKey} />
+
+        {/* Notification Preferences */}
+        <NotificationPreferencesPanel walletAddress={publicKey} />
       </div>
     </main>
   );
