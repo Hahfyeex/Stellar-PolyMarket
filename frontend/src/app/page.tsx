@@ -1,32 +1,22 @@
 "use client";
-import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useWalletContext } from "../context/WalletContext";
-import MarketCard from "../components/MarketCard";
-import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
-import MarketFilters from "../components/MarketFilters";
-import NotificationManager from "../components/NotificationManager";
+import { useEffect, useState } from "react";
+import ContractErrorBoundary from "../components/ContractErrorBoundary";
+import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 import LiveActivityFeed from "../components/LiveActivityFeed";
+import MarketCard from "../components/MarketCard";
+import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
+import MarketFilters from "../components/MarketFilters";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
-import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
-import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
-import ContractErrorBoundary from "../components/ContractErrorBoundary";
-import { store } from "../store";
-import { trackEvent } from "../lib/firebase";
+import NotificationManager from "../components/NotificationManager";
+import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+import { useWalletContext } from "../context/WalletContext";
+import { SearchFilters, SortKey, useMarketSearch } from "../hooks/useMarketSearch";
 import { useTheme } from "../hooks/useTheme";
-import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-  status: string;
-}
+import { trackEvent } from "../lib/firebase";
+import { store } from "../store";
+import type { Market } from "../types/market";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
@@ -282,25 +272,50 @@ const DEMO_MARKETS: Market[] = [
     winning_outcome: null,
     total_pool: "4200",
     status: "open",
+    resolution_notes:
+      "Trading is active. Once the market closes, this panel will show the proposed resolution path and any challenge or dispute windows.",
+    resolution_sources: [
+      { label: "Associated Press", url: "https://apnews.com/" },
+      { label: "Bloomberg", url: "https://www.bloomberg.com/" },
+    ],
   },
   {
     id: 2,
     question: "Will Nigeria inflation drop below 15% this year?",
-    end_date: "2026-12-31T00:00:00Z",
+    end_date: "2026-03-23T10:00:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
     winning_outcome: null,
     total_pool: "1800",
     status: "open",
+    resolution_state: "disputed",
+    proposed_outcome: 1,
+    proposed_at: "2026-03-23T12:00:00Z",
+    challenge_window_ends_at: "2026-03-24T12:00:00Z",
+    council_vote_ends_at: "2026-03-25T18:00:00Z",
+    resolution_notes:
+      "A dispute was filed after conflicting economic releases. Council review is active and the pool remains locked until the vote finalizes.",
+    resolution_sources: [
+      { label: "Bloomberg", url: "https://www.bloomberg.com/" },
+      { label: "National Bureau of Statistics", url: "https://nigerianstat.gov.ng/" },
+    ],
   },
   {
     id: 3,
     question: "Will Arsenal win the Premier League?",
-    end_date: "2026-05-30T00:00:00Z",
+    end_date: "2026-03-22T12:00:00Z",
     outcomes: ["Yes", "No"],
     resolved: false,
-    winning_outcome: null,
+    winning_outcome: 1,
     total_pool: "3100",
-    status: "open",
+    status: "RESOLVED",
+    resolution_state: "settled",
+    finalized_at: "2026-03-22T14:00:00Z",
+    resolution_notes:
+      "League standings were confirmed after the closing whistle and the market has fully settled.",
+    resolution_sources: [
+      { label: "Premier League", url: "https://www.premierleague.com/" },
+      { label: "Associated Press", url: "https://apnews.com/" },
+    ],
   },
 ];

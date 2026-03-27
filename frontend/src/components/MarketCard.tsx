@@ -1,15 +1,17 @@
-import { useState, useEffect } from "react";
-import { trackEvent } from "../lib/firebase";
-import WhatIfSimulator from "./WhatIfSimulator";
+import { useEffect, useState } from "react";
 import { useBettingSlip } from "../context/BettingSlipContext";
-import Toast from "./Toast";
-import PoolOwnershipChart from "./PoolOwnershipChart";
 import { useFormPersistence } from "../hooks/useFormPersistence";
+import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { useTrustline } from "../hooks/useTrustline";
-import TrustlineModal from "./TrustlineModal";
+import { trackEvent } from "../lib/firebase";
+import type { Market } from "../types/market";
+import PoolOwnershipChart from "./PoolOwnershipChart";
+import ResolutionCenter from "./ResolutionCenter";
 import SlippageSettings from "./SlippageSettings";
 import SlippageWarningModal from "./SlippageWarningModal";
-import { useSlippageGuard } from "../hooks/useSlippageGuard";
+import Toast from "./Toast";
+import TrustlineModal from "./TrustlineModal";
+import WhatIfSimulator from "./WhatIfSimulator";
 
 interface Market {
   id: number;
@@ -49,8 +51,15 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   } | null>(null);
 
   const { addBet } = useBettingSlip();
-  const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
-          checkAndRun, confirmTrustline, dismiss: dismissTrustline, retry: retryTrustline } = useTrustline();
+  const {
+    state: trustlineState,
+    pendingAsset,
+    errorMessage: trustlineError,
+    checkAndRun,
+    confirmTrustline,
+    dismiss: dismissTrustline,
+    retry: retryTrustline,
+  } = useTrustline();
   const { snapshotOdds, checkSlippage } = useSlippageGuard();
   const isExpired = new Date(market.end_date) <= new Date();
 
@@ -73,26 +82,28 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     try {
       if (navigator.share) {
         await navigator.share(shareData);
-        trackEvent('share_market', {
+        trackEvent("share_market", {
           market_id: market.id,
-          share_method: 'native_share_api',
+          share_method: "native_share_api",
           market_question: market.question.substring(0, 50), // Truncate for privacy
         });
       } else {
         // Fallback: copy to clipboard
-        await navigator.clipboard.writeText(`${shareData.title}\n${shareData.text}\n${shareData.url}`);
-        trackEvent('share_market', {
+        await navigator.clipboard.writeText(
+          `${shareData.title}\n${shareData.text}\n${shareData.url}`
+        );
+        trackEvent("share_market", {
           market_id: market.id,
-          share_method: 'clipboard',
+          share_method: "clipboard",
           market_question: market.question.substring(0, 50), // Truncate for privacy
         });
         setMessage("Market link copied to clipboard!");
         setTimeout(() => setMessage(""), 3000);
       }
     } catch (err) {
-      trackEvent('share_error', {
+      trackEvent("share_error", {
         market_id: market.id,
-        error_message: err instanceof Error ? err.message.substring(0, 100) : 'Unknown error',
+        error_message: err instanceof Error ? err.message.substring(0, 100) : "Unknown error",
       });
     }
   };
@@ -101,14 +112,12 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     if (selectedOutcome === null || !amount || !walletAddress) return;
 
     // Check slippage against current pool state before submitting
-    const check = checkSlippage(
-      parseFloat(amount),
-      outcomePool,
-      totalPool,
-      slippageTolerance
-    );
+    const check = checkSlippage(parseFloat(amount), outcomePool, totalPool, slippageTolerance);
     if (check.exceeded) {
-      setSlippageWarning({ expectedPayout: check.expectedPayout, currentPayout: check.currentPayout });
+      setSlippageWarning({
+        expectedPayout: check.expectedPayout,
+        currentPayout: check.currentPayout,
+      });
       return;
     }
 
@@ -148,7 +157,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800">
+    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-4 border border-gray-800">
       {/* Trustline modal — rendered at card level, portal-like via fixed positioning */}
       <TrustlineModal
         state={trustlineState}
@@ -185,14 +194,24 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
             title="Share market"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
-              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="w-4 h-4 text-gray-400"
+            >
+              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
             </svg>
           </button>
           {market.resolved ? (
-            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">Resolved</span>
+            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">
+              Resolved
+            </span>
           ) : isExpired ? (
-            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">Ended</span>
+            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">
+              Ended
+            </span>
           ) : (
             <span className="text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded-full">Live</span>
           )}
@@ -200,7 +219,10 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       </div>
 
       <p className="text-gray-400 text-sm">
-        Pool: <span className="text-white font-medium">{parseFloat(market.total_pool).toFixed(2)} XLM</span>
+        Pool:{" "}
+        <span className="text-white font-medium">
+          {parseFloat(market.total_pool).toFixed(2)} XLM
+        </span>
         &nbsp;·&nbsp;Ends: {new Date(market.end_date).toLocaleDateString()}
       </p>
 
@@ -215,11 +237,12 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             onClick={() => setSelectedOutcome(i)}
             disabled={market.resolved || isExpired}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-              ${market.resolved && market.winning_outcome === i
-                ? "bg-green-600 text-white"
-                : selectedOutcome === i
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              ${
+                market.resolved && market.winning_outcome === i
+                  ? "bg-green-600 text-white"
+                  : selectedOutcome === i
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-800 text-gray-300 hover:bg-gray-700"
               }`}
           >
             {outcome}
@@ -274,7 +297,10 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
             <button
               data-testid="clear-form"
-              onClick={() => { clearForm(); setMessage(""); }}
+              onClick={() => {
+                clearForm();
+                setMessage("");
+              }}
               className="text-xs text-gray-500 hover:text-red-400 transition-colors"
             >
               Clear form
@@ -305,6 +331,8 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           totalPool={parseFloat(market.total_pool)}
         />
       )}
+
+      <ResolutionCenter market={market} compact />
     </div>
   );
 }

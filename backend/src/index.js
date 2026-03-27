@@ -78,6 +78,11 @@ require("./workers/resolver").start();
 
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
+app.use("/api/audit-logs", require("./routes/audit"));
+
+const shortUrlRoutes = require("./routes/shorturl");
+app.use("/api/short-url", shortUrlRoutes);
+app.get("/s/:code", shortUrlRoutes.redirectHandler);
 
 // Global error handler
 app.use((err, req, res, next) => {

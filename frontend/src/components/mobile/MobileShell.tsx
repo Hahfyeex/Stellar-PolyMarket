@@ -3,16 +3,7 @@ import { useState } from "react";
 import BottomNavBar, { NavTab } from "./BottomNavBar";
 import FloatingBetButton from "./FloatingBetButton";
 import TradeDrawer from "./TradeDrawer";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-}
+import type { Market } from "../../types/market";
 
 interface Props {
   children: React.ReactNode;
