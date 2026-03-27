@@ -5,12 +5,25 @@ const { btcSources } = require("./sources");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
 
+// ── Graceful Shutdown State ───────────────────────────────────────────────────
+
+let intervalHandle = null;
+let isRunning = false;
+let isShuttingDown = false;
+
 /**
  * Fetch all unresolved, expired markets and resolve them
  */
 async function runOracle() {
-  console.log("[Oracle] Checking for markets to resolve...");
+  // Prevent concurrent oracle runs
+  if (isRunning) {
+    console.log("[Oracle] Oracle is already running, skipping this cycle");
+    return;
+  }
+
+  isRunning = true;
   try {
+    console.log("[Oracle] Checking for markets to resolve...");
     const { data } = await axios.get(`${API_URL}/api/markets`);
     const now = Date.now();
 
@@ -21,10 +34,17 @@ async function runOracle() {
     console.log(`[Oracle] Found ${expired.length} market(s) to resolve`);
 
     for (const market of expired) {
+      // Check if shutdown was requested during resolution
+      if (isShuttingDown) {
+        console.log("[Oracle] Shutdown requested, stopping market resolution");
+        break;
+      }
       await resolveMarket(market);
     }
   } catch (err) {
     console.error("[Oracle] Error:", err.message);
+  } finally {
+    isRunning = false;
   }
 }
 
@@ -78,7 +98,7 @@ async function resolveCryptoPrice(question, outcomes) {
     // filter outliers, and return a manipulation-resistant median price.
     const medianizer = new OracleMedianizer(btcSources);
     const btcPrice = await medianizer.aggregate();
-    console.log(`[Oracle] BTC median price: $${btcPrice}`);
+    console.log(`[Oracle] BTC median price: ${btcPrice}`);
 
     if (question.toLowerCase().includes("100k") || question.includes("100,000")) {
       return btcPrice >= 100000 ? 0 : 1;
