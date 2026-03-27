@@ -18,6 +18,7 @@ import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+import OnboardingWizard from "../components/onboarding/OnboardingWizard";
 
 interface Market {
   id: number;
@@ -266,6 +267,9 @@ export default function Home() {
 
   return (
     <>
+      {/* Onboarding wizard — shown once to new users, persisted in localStorage */}
+      <OnboardingWizard />
+
       {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell
