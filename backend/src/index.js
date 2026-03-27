@@ -91,6 +91,9 @@ require("./workers/archive-worker").start();
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
 
+// Initialize self-healing gap detection and recovery
+require("./indexer/gap-detector").initializeSelfHealing();
+
 // Global error handler
 app.use((err, req, res, _next) => {
   logger.error(
