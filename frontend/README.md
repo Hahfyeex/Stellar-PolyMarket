@@ -112,12 +112,49 @@ Coverage threshold: **95% lines/functions, 90% branches** on `useRecentActivity.
 
 ---
 
+## Market Detail Page (Issue #12)
+
+The `/market/[id]` route provides the individual market detail page ("Bet" view) with:
+
+- **Dynamic Market Loading**: Fetches market data by ID from the API
+- **Live Pool Size Updates**: Polls every 5 seconds for real-time pool data
+- **Odds Calculation**: Displays current odds based on bet distribution
+- **Responsive Tabs**: Three tabs for About, Positions, and Activity
+- **Betting Panel**: Stake XLM on Yes/No outcomes with potential payout display
+- **Wallet Integration**: Connects with Stellar wallet for betting
+
+### Market Detail Files
+
+| File | Description |
+|------|-------------|
+| `app/market/[id]/page.tsx` | Route wrapper with React Query provider |
+| `app/market/[id]/MarketDetailPage.tsx` | Main market detail component |
+| `app/market/[id]/__tests__/MarketDetailPage.test.tsx` | Comprehensive test suite |
+| `app/market/[id]/README.md` | Detailed component documentation |
+
+### Features
+
+- ✅ Mobile-perfect (iPhone 14 optimized)
+- ✅ High-contrast dark theme
+- ✅ Real-time odds calculation
+- ✅ Tabbed interface (About, Positions, Activity)
+- ✅ React Query for live data polling
+- ✅ Input validation
+- ✅ Error handling with fallbacks
+
+---
+
 ## Project Structure
 
 ```
 src/
   app/
     page.tsx          # Main page — markets grid + activity feed
+    market/
+      [id]/
+        page.tsx           # Market detail route
+        MarketDetailPage.tsx  # Market detail component
+        README.md          # Component documentation
     layout.tsx
     globals.css       # Tailwind base + activity-fade-in keyframe
   components/

@@ -5,6 +5,7 @@ import { WalletProvider } from "../context/WalletContext";
 import BettingSlipWrapper from "../components/BettingSlipWrapper";
 import ReduxProvider from "../components/ReduxProvider";
 import ReactQueryProvider from "../components/ReactQueryProvider";
+import SkipLink from "../components/SkipLink";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
@@ -15,13 +16,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <SkipLink />
         <ReduxProvider>
           {/* ReactQueryProvider enables useIPFSMetadata and future query hooks */}
           <ReactQueryProvider>
             {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
             <WalletProvider>
               <BettingSlipProvider>
-                {children}
+                <main id="main-content" role="main">
+                  {children}
+                </main>
                 {/* BettingSlip mounted globally — persists across all pages */}
                 <BettingSlipWrapper />
               </BettingSlipProvider>

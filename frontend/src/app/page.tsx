@@ -19,6 +19,7 @@ import { useTheme } from "../hooks/useTheme";
 import { trackEvent } from "../lib/firebase";
 import { store } from "../store";
 import type { Market } from "../types/market";
+import OnboardingWizard from "../components/onboarding/OnboardingWizard";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
@@ -54,7 +55,24 @@ export default function Home() {
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets`);
       const data = await res.json();
-      setMarkets(data.markets || []);
+      const newMarkets = data.markets || [];
+
+      // Detect resolution transitions
+      newMarkets.forEach((newMarket: Market) => {
+        const oldMarket = markets.find((m) => m.id === newMarket.id);
+        if (oldMarket && !oldMarket.resolved && newMarket.resolved) {
+          // Market just resolved - show toast notification
+          const event = new CustomEvent("showToast", {
+            detail: {
+              message: `Market "${newMarket.question}" has been resolved. Claim your payout now.`,
+              type: "success",
+            },
+          });
+          window.dispatchEvent(event);
+        }
+      });
+
+      setMarkets(newMarkets);
     } catch {
       setMarkets(DEMO_MARKETS);
     } finally {
@@ -64,6 +82,13 @@ export default function Home() {
 
   useEffect(() => {
     fetchMarkets();
+
+    // Poll for market updates every 30 seconds
+    const pollInterval = setInterval(() => {
+      fetchMarkets();
+    }, 30_000);
+
+    return () => clearInterval(pollInterval);
   }, []);
 
   // Auto-select first active market for the FAB
@@ -256,6 +281,9 @@ export default function Home() {
 
   return (
     <>
+      {/* Onboarding wizard — shown once to new users, persisted in localStorage */}
+      <OnboardingWizard />
+
       {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell

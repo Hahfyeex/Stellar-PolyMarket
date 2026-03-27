@@ -20,15 +20,16 @@
  *   FeeColl    → fee_collections table
  */
 
-'use strict';
+"use strict";
 
-const axios  = require('axios');
-const db     = require('../db');
-const logger = require('../utils/logger');
+const axios = require("axios");
+const db = require("../db");
+const logger = require("../utils/logger");
+const pubsub = require("../graphql/pubsub");
 
-const MERCURY_BASE  = process.env.MERCURY_URL        || 'https://api.mercurydata.app';
-const MERCURY_KEY   = process.env.MERCURY_API_KEY    || '';
-const CONTRACT_ID   = process.env.CONTRACT_ADDRESS   || '';
+const MERCURY_BASE = process.env.MERCURY_URL || "https://api.mercurydata.app";
+const MERCURY_KEY = process.env.MERCURY_API_KEY || "";
+const CONTRACT_ID = process.env.CONTRACT_ADDRESS || "";
 
 // Minimum schema version this parser understands.
 const MIN_SUPPORTED_VERSION = 1;
@@ -43,7 +44,7 @@ const MAX_SUPPORTED_VERSION = 1;
  */
 async function subscribe() {
   if (!CONTRACT_ID || !MERCURY_KEY) {
-    logger.warn('Mercury subscription skipped: CONTRACT_ADDRESS or MERCURY_API_KEY not set');
+    logger.warn("Mercury subscription skipped: CONTRACT_ADDRESS or MERCURY_API_KEY not set");
     return;
   }
   try {
@@ -52,9 +53,9 @@ async function subscribe() {
       { contract_id: CONTRACT_ID },
       { headers: { Authorization: `Bearer ${MERCURY_KEY}` } }
     );
-    logger.info({ contract_id: CONTRACT_ID }, 'Mercury subscription registered');
+    logger.info({ contract_id: CONTRACT_ID }, "Mercury subscription registered");
   } catch (err) {
-    logger.error({ err: err.message }, 'Mercury subscription failed');
+    logger.error({ err: err.message }, "Mercury subscription failed");
   }
 }
 
@@ -69,10 +70,10 @@ async function subscribe() {
  */
 function assertVersion(payload, topic) {
   const v = payload.version;
-  if (typeof v !== 'number' || v < MIN_SUPPORTED_VERSION || v > MAX_SUPPORTED_VERSION) {
+  if (typeof v !== "number" || v < MIN_SUPPORTED_VERSION || v > MAX_SUPPORTED_VERSION) {
     throw new Error(
       `Unsupported schema version ${v} for topic "${topic}". ` +
-      `Expected ${MIN_SUPPORTED_VERSION}–${MAX_SUPPORTED_VERSION}.`
+        `Expected ${MIN_SUPPORTED_VERSION}–${MAX_SUPPORTED_VERSION}.`
     );
   }
 }
@@ -87,11 +88,9 @@ function assertVersion(payload, topic) {
  *   deadline, token, lmsr_b, creation_fee, ledger_timestamp
  */
 async function handleMarketCreated(payload, meta) {
-  assertVersion(payload, 'MktCreate');
-  const {
-    market_id, creator, question, options_count,
-    deadline, token, lmsr_b, creation_fee,
-  } = payload;
+  assertVersion(payload, "MktCreate");
+  const { market_id, creator, question, options_count, deadline, token, lmsr_b, creation_fee } =
+    payload;
 
   await db.query(
     `INSERT INTO markets
@@ -100,8 +99,15 @@ async function handleMarketCreated(payload, meta) {
      VALUES ($1, $2, $3, to_timestamp($4), $5, $6, $7, $8, 'ACTIVE', $9)
      ON CONFLICT (id) DO NOTHING`,
     [
-      market_id, question, options_count, deadline, token,
-      creator, lmsr_b, creation_fee, meta.ledger_time,
+      market_id,
+      question,
+      options_count,
+      deadline,
+      token,
+      creator,
+      lmsr_b,
+      creation_fee,
+      meta.ledger_time,
     ]
   );
 }
@@ -116,7 +122,7 @@ async function handleMarketCreated(payload, meta) {
  * `shares` is the number of outcome shares purchased.
  */
 async function handleBetPlaced(payload, meta) {
-  assertVersion(payload, 'BetPlace');
+  assertVersion(payload, "BetPlace");
   const { market_id, bettor, option_index, cost, shares } = payload;
 
   await db.query(
@@ -137,6 +143,19 @@ async function handleBetPlaced(payload, meta) {
        last_seen    = EXCLUDED.last_seen`,
     [bettor, cost, meta.ledger_time]
   );
+
+  // Publish real-time subscription events (amounts as strings — zero-float)
+  pubsub.publish("betPlaced", market_id, {
+    market_id,
+    wallet_address: bettor,
+    outcome_index: option_index,
+    amount: String(cost),
+  });
+
+  // Recalculate and publish updated odds (basis-points per outcome, zero-float)
+  _publishOddsChanged(market_id).catch((err) =>
+    logger.warn({ err: err.message, market_id }, "Failed to publish oddsChanged")
+  );
 }
 
 /**
@@ -146,7 +165,7 @@ async function handleBetPlaced(payload, meta) {
  *   version, market_id, winning_outcome, total_pool, fee_bps, ledger_timestamp
  */
 async function handleMarketResolved(payload) {
-  assertVersion(payload, 'MktResolv');
+  assertVersion(payload, "MktResolv");
   const { market_id, winning_outcome, total_pool, fee_bps } = payload;
 
   await db.query(
@@ -171,6 +190,13 @@ async function handleMarketResolved(payload) {
        AND b.outcome_index  = $2`,
     [market_id, winning_outcome]
   );
+
+  // Publish real-time subscription event (amounts as strings — zero-float)
+  pubsub.publish("marketResolved", market_id, {
+    market_id,
+    winning_outcome,
+    total_pool: String(total_pool),
+  });
 }
 
 /**
@@ -180,7 +206,7 @@ async function handleMarketResolved(payload) {
  *   version, market_id, condition_market_id, condition_outcome_actual, ledger_timestamp
  */
 async function handleMarketVoided(payload) {
-  assertVersion(payload, 'MktVoid');
+  assertVersion(payload, "MktVoid");
   const { market_id, condition_market_id, condition_outcome_actual } = payload;
 
   await db.query(
@@ -200,13 +226,10 @@ async function handleMarketVoided(payload) {
  *   version, market_id, paused, ledger_timestamp
  */
 async function handleMarketPaused(payload) {
-  assertVersion(payload, 'MktPause');
+  assertVersion(payload, "MktPause");
   const { market_id, paused } = payload;
 
-  await db.query(
-    `UPDATE markets SET is_paused = $1 WHERE id = $2`,
-    [paused, market_id]
-  );
+  await db.query(`UPDATE markets SET is_paused = $1 WHERE id = $2`, [paused, market_id]);
 }
 
 /**
@@ -216,7 +239,7 @@ async function handleMarketPaused(payload) {
  *   version, market_id, recipients_paid, total_distributed, cursor, ledger_timestamp
  */
 async function handlePayoutClaimed(payload, meta) {
-  assertVersion(payload, 'Payout');
+  assertVersion(payload, "Payout");
   const { market_id, recipients_paid, total_distributed, cursor } = payload;
 
   await db.query(
@@ -234,7 +257,7 @@ async function handlePayoutClaimed(payload, meta) {
  *   version, market_id, provider, amount, ledger_timestamp
  */
 async function handleLiquidityProvided(payload, meta) {
-  assertVersion(payload, 'LpSeed');
+  assertVersion(payload, "LpSeed");
   const { market_id, provider, amount } = payload;
 
   await db.query(
@@ -253,7 +276,7 @@ async function handleLiquidityProvided(payload, meta) {
  *   version, market_id, lp, reward, ledger_timestamp
  */
 async function handleLpRewardClaimed(payload, meta) {
-  assertVersion(payload, 'LpClaim');
+  assertVersion(payload, "LpClaim");
   const { market_id, lp, reward } = payload;
 
   await db.query(
@@ -270,7 +293,7 @@ async function handleLpRewardClaimed(payload, meta) {
  *   version, market_id, disputer, bond_amount, ledger_timestamp
  */
 async function handleDisputeRaised(payload, meta) {
-  assertVersion(payload, 'Dispute');
+  assertVersion(payload, "Dispute");
   const { market_id, disputer, bond_amount } = payload;
 
   await db.query(
@@ -284,10 +307,7 @@ async function handleDisputeRaised(payload, meta) {
     [market_id, disputer, bond_amount, meta.ledger_time]
   );
 
-  await db.query(
-    `UPDATE markets SET status = 'DISPUTED' WHERE id = $1`,
-    [market_id]
-  );
+  await db.query(`UPDATE markets SET status = 'DISPUTED' WHERE id = $1`, [market_id]);
 }
 
 /**
@@ -297,7 +317,7 @@ async function handleDisputeRaised(payload, meta) {
  *   version, market_id, payer, fee_destination, amount, ledger_timestamp
  */
 async function handleFeeCollected(payload, meta) {
-  assertVersion(payload, 'FeeColl');
+  assertVersion(payload, "FeeColl");
   const { market_id, payer, fee_destination, amount } = payload;
 
   await db.query(
@@ -306,6 +326,33 @@ async function handleFeeCollected(payload, meta) {
      VALUES ($1, $2, $3, $4, $5)`,
     [market_id, payer, fee_destination, amount, meta.ledger_time]
   );
+}
+
+// ── Odds helper ───────────────────────────────────────────────────────────────
+
+/**
+ * Recalculate per-outcome odds in basis-points (integer, zero-float) and
+ * publish to the oddsChanged subscription channel.
+ *
+ * odds_bps[i] = (outcome_i_stake * 10_000) / total_stake
+ * All arithmetic uses BigInt to avoid floating-point.
+ */
+async function _publishOddsChanged(market_id) {
+  const { rows } = await db.query(
+    `SELECT outcome_index, COALESCE(SUM(cost), 0) AS stake
+     FROM bets WHERE market_id = $1
+     GROUP BY outcome_index ORDER BY outcome_index`,
+    [market_id]
+  );
+
+  if (rows.length === 0) return;
+
+  const total = rows.reduce((acc, r) => acc + BigInt(r.stake), 0n);
+  const odds_bps = rows.map((r) =>
+    total === 0n ? "0" : String((BigInt(r.stake) * 10_000n) / total)
+  );
+
+  pubsub.publish("oddsChanged", market_id, { market_id, odds_bps });
 }
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
@@ -337,21 +384,31 @@ async function processEvent(event) {
 
   try {
     switch (topic) {
-      case 'MktCreate': return await handleMarketCreated(payload, meta);
-      case 'BetPlace':  return await handleBetPlaced(payload, meta);
-      case 'MktResolv': return await handleMarketResolved(payload);
-      case 'MktVoid':   return await handleMarketVoided(payload);
-      case 'MktPause':  return await handleMarketPaused(payload);
-      case 'Payout':    return await handlePayoutClaimed(payload, meta);
-      case 'LpSeed':    return await handleLiquidityProvided(payload, meta);
-      case 'LpClaim':   return await handleLpRewardClaimed(payload, meta);
-      case 'Dispute':   return await handleDisputeRaised(payload, meta);
-      case 'FeeColl':   return await handleFeeCollected(payload, meta);
+      case "MktCreate":
+        return await handleMarketCreated(payload, meta);
+      case "BetPlace":
+        return await handleBetPlaced(payload, meta);
+      case "MktResolv":
+        return await handleMarketResolved(payload);
+      case "MktVoid":
+        return await handleMarketVoided(payload);
+      case "MktPause":
+        return await handleMarketPaused(payload);
+      case "Payout":
+        return await handlePayoutClaimed(payload, meta);
+      case "LpSeed":
+        return await handleLiquidityProvided(payload, meta);
+      case "LpClaim":
+        return await handleLpRewardClaimed(payload, meta);
+      case "Dispute":
+        return await handleDisputeRaised(payload, meta);
+      case "FeeColl":
+        return await handleFeeCollected(payload, meta);
       default:
-        logger.warn({ topic }, 'Unknown event topic — stored but not processed');
+        logger.warn({ topic }, "Unknown event topic — stored but not processed");
     }
   } catch (err) {
-    logger.error({ topic, tx_hash, err: err.message }, 'Event handler failed');
+    logger.error({ topic, tx_hash, err: err.message }, "Event handler failed");
     throw err; // re-throw so the caller can dead-letter or retry
   }
 }
@@ -370,4 +427,5 @@ module.exports = {
   handleLpRewardClaimed,
   handleDisputeRaised,
   handleFeeCollected,
+  _publishOddsChanged,
 };
