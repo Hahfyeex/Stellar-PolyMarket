@@ -6,7 +6,8 @@
  * Default limit is 50 rows; max is 200.
  */
 
-const db = require('../db');
+const db = require("../db");
+const pubsub = require("./pubsub");
 
 const clamp = (n, max = 200) => Math.min(Math.max(parseInt(n) || 50, 1), max);
 
@@ -15,7 +16,7 @@ const resolvers = {
     // ── market ──────────────────────────────────────────────────────────────
 
     async market(_, { id }) {
-      const { rows } = await db.query('SELECT * FROM markets WHERE id = $1', [id]);
+      const { rows } = await db.query("SELECT * FROM markets WHERE id = $1", [id]);
       return rows[0] ?? null;
     },
 
@@ -32,7 +33,7 @@ const resolvers = {
         conditions.push(`category = $${params.length}`);
       }
 
-      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+      const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
       params.push(clamp(limit));
       params.push(parseInt(offset) || 0);
 
@@ -101,10 +102,9 @@ const resolvers = {
     // ── user ──────────────────────────────────────────────────────────────────
 
     async user(_, { wallet_address }) {
-      const { rows } = await db.query(
-        'SELECT * FROM users WHERE wallet_address = $1',
-        [wallet_address]
-      );
+      const { rows } = await db.query("SELECT * FROM users WHERE wallet_address = $1", [
+        wallet_address,
+      ]);
       return rows[0] ?? null;
     },
 
@@ -123,7 +123,7 @@ const resolvers = {
         conditions.push(`topic = $${params.length}`);
       }
 
-      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+      const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
       params.push(clamp(limit));
       params.push(parseInt(offset) || 0);
 
@@ -142,23 +142,22 @@ const resolvers = {
   Market: {
     async bets(market) {
       const { rows } = await db.query(
-        'SELECT * FROM bets WHERE market_id = $1 ORDER BY created_at DESC LIMIT 50',
+        "SELECT * FROM bets WHERE market_id = $1 ORDER BY created_at DESC LIMIT 50",
         [market.id]
       );
       return rows;
     },
     async bet_count(market) {
-      const { rows } = await db.query(
-        'SELECT COUNT(*) FROM bets WHERE market_id = $1',
-        [market.id]
-      );
+      const { rows } = await db.query("SELECT COUNT(*) FROM bets WHERE market_id = $1", [
+        market.id,
+      ]);
       return parseInt(rows[0].count);
     },
   },
 
   Bet: {
     async market(bet) {
-      const { rows } = await db.query('SELECT * FROM markets WHERE id = $1', [bet.market_id]);
+      const { rows } = await db.query("SELECT * FROM markets WHERE id = $1", [bet.market_id]);
       return rows[0] ?? null;
     },
   },
@@ -166,10 +165,27 @@ const resolvers = {
   User: {
     async bets(user) {
       const { rows } = await db.query(
-        'SELECT * FROM bets WHERE wallet_address = $1 ORDER BY created_at DESC LIMIT 50',
+        "SELECT * FROM bets WHERE wallet_address = $1 ORDER BY created_at DESC LIMIT 50",
         [user.wallet_address]
       );
       return rows;
+    },
+  },
+
+  // ── Subscriptions ───────────────────────────────────────────────────────────
+
+  Subscription: {
+    onBetPlaced: {
+      subscribe: (_, { marketId }) => pubsub.subscribe("betPlaced", marketId),
+      resolve: (payload) => payload,
+    },
+    onMarketResolved: {
+      subscribe: (_, { marketId }) => pubsub.subscribe("marketResolved", marketId),
+      resolve: (payload) => payload,
+    },
+    onOddsChanged: {
+      subscribe: (_, { marketId }) => pubsub.subscribe("oddsChanged", marketId),
+      resolve: (payload) => payload,
     },
   },
 };
