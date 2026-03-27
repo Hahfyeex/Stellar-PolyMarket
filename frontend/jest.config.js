@@ -5,7 +5,12 @@ module.exports = {
       displayName: "node",
       preset: "ts-jest",
       testEnvironment: "node",
-      testMatch: ["**/hooks/__tests__/**/*.test.ts", "!**/hooks/__tests__/useMarketSearch.test.ts"],
+      testMatch: [
+        "**/hooks/__tests__/**/*.test.ts",
+        // These hooks require jsdom (renderHook) and run in the jsdom project instead
+        "!**/hooks/__tests__/useMarketSearch.test.ts",
+        "!**/hooks/__tests__/useOddsStream.test.ts",
+      ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
       },
@@ -22,6 +27,8 @@ module.exports = {
         "**/components/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
         "**/hooks/__tests__/useMarketSearch.test.ts",
+        // useOddsStream uses renderHook (React hooks + socket lifecycle) — needs jsdom
+        "**/hooks/__tests__/useOddsStream.test.ts",
       ],
       // i18n mock is injected before every component test so that components
       // using useTranslation() work without a real i18next instance.
@@ -34,7 +41,10 @@ module.exports = {
           },
         },
       },
-      collectCoverageFrom: ["src/hooks/useMarketSearch.ts"],
+      collectCoverageFrom: [
+        "src/hooks/useMarketSearch.ts",
+        "src/hooks/useOddsStream.ts",
+      ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
       },

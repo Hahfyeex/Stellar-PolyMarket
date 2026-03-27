@@ -12,6 +12,7 @@ import SlippageSettings from "./SlippageSettings";
 import SlippageWarningModal from "./SlippageWarningModal";
 import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { MAX_BETS } from "../context/BettingSlipContext";
+import { useOddsStream } from "../hooks/useOddsStream";
 
 interface Market {
   id: number;
@@ -63,6 +64,13 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   } = useTrustline();
   const { snapshotOdds, checkSlippage } = useSlippageGuard();
   const isExpired = new Date(market.end_date) <= new Date();
+  // Live odds stream — opens a WebSocket to the Mercury Indexer pipeline,
+  // re-fetches per-outcome odds on each 'oddsUpdate' event (debounced 500 ms),
+  // and tracks which outcome indices changed for yellow flash animation.
+  // Odds streaming is disabled for resolved/expired markets.
+  const { odds: liveOdds, flashingIndices, connected: oddsConnected } = useOddsStream(
+    market.resolved || isExpired ? null : market.id
+  );
 
   // Snapshot odds whenever the user selects an outcome or changes amount
   const outcomePool = parseFloat(market.total_pool) / market.outcomes.length;
@@ -252,6 +260,46 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           </button>
         ))}
       </div>
+
+      {/* Live odds — per-outcome probability bars, updated in real-time via Mercury Indexer.
+          The flash-update class triggers a yellow highlight animation (500 ms) whenever
+          an outcome's percentage changes. Uses inline rounded-full bars without layout shifts. */}
+      {liveOdds.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+              Live Odds
+            </span>
+            {oddsConnected && (
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+              </span>
+            )}
+          </div>
+          {liveOdds.map((o) => (
+            <div
+              key={o.outcomeIndex}
+              className={`flex items-center gap-2 px-2 py-1 rounded-lg transition-colors ${
+                flashingIndices.has(o.outcomeIndex) ? "flash-update" : ""
+              }`}
+            >
+              <span className="text-xs text-gray-400 w-20 truncate shrink-0">
+                {market.outcomes[o.outcomeIndex] ?? `#${o.outcomeIndex}`}
+              </span>
+              <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                  style={{ width: `${o.pct.toFixed(1)}%` }}
+                />
+              </div>
+              <span className="text-xs text-gray-300 tabular-nums w-10 text-right shrink-0">
+                {o.pct.toFixed(1)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Bet input */}
       {!market.resolved && !isExpired && walletAddress && (

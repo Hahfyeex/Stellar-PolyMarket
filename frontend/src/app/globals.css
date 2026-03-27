@@ -314,13 +314,24 @@ body {
 }
 
 /**
- * Market Discovery Card — hover lift effect.
- * Only activates on devices that support true hover (not touch).
- * This prevents the lift from firing during mobile scroll.
+ * Live Odds Flash Animation
+ *
+ * Applied to individual outcome odds displays when their value changes.
+ * Uses background-color transition (GPU-composited) rather than layout
+ * properties so there is zero layout shift (CLS impact = 0).
+ *
+ * Duration matches FLASH_DURATION_MS in useOddsStream (500 ms).
+ * The animation fades from a semi-transparent yellow to fully transparent,
+ * leaving the element's normal background unchanged after the flash.
+ *
+ * Usage: add class "flash-update" for 500 ms, then remove it.
+ * The hook (useOddsStream) manages this via the flashingIndices Set.
  */
-@media (hover: hover) and (pointer: fine) {
-  .hover-lift:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.2);
-  }
+@keyframes oddsFlash {
+  0%   { background-color: rgba(234, 179, 8, 0.35); } /* yellow-500 at 35% opacity */
+  100% { background-color: transparent; }
+}
+
+.flash-update {
+  animation: oddsFlash 500ms ease-out forwards;
 }
