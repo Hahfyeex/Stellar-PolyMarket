@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Market } from "../types/market";
-import ResolutionCenter from "./ResolutionCenter";
+import MarketResolutionTracker from "./MarketResolutionTracker";
 import Link from "next/link";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
@@ -250,7 +250,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
 
-      <ResolutionCenter market={market} compact />
+      <MarketResolutionTracker market={market} compact />
     </div>
   );
 }

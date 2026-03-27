@@ -7,6 +7,7 @@ import { useWallet } from "../../../hooks/useWallet";
 import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
 import OddsTicker from "../../../components/OddsTicker";
+import BetConfirmationModal from "../../../components/BetConfirmationModal";
 
 // =============================================================================
 // Types
@@ -361,6 +362,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
 
   const betMutation = useMutation({
     mutationFn: placeBetAPI,
@@ -369,6 +371,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       setSelectedOutcome(null);
       setAmount("");
       onBetPlaced();
+      setIsConfirmModalOpen(false);
       queryClient.invalidateQueries({ queryKey: ["market", market.id.toString()] });
     },
     onError: (error: Error) => {
@@ -382,7 +385,11 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       setMessage({ type: "error", text: "Please connect your wallet" });
       return;
     }
+    setIsConfirmModalOpen(true);
+  }
 
+  function handleConfirmBet() {
+    if (selectedOutcome === null || !amount || !publicKey) return;
     betMutation.mutate({
       marketId: market.id,
       outcomeIndex: selectedOutcome,
@@ -505,6 +512,20 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         >
           {message.text}
         </div>
+      )}
+
+      {selectedOutcome !== null && (
+        <BetConfirmationModal
+          isOpen={isConfirmModalOpen}
+          onClose={() => setIsConfirmModalOpen(false)}
+          onConfirm={handleConfirmBet}
+          isLoading={betMutation.isPending}
+          error={betMutation.error ? (betMutation.error as Error).message : null}
+          market={market}
+          outcomeIndex={selectedOutcome}
+          amount={parseFloat(amount) || 0}
+          odds={selectedOutcome === 0 ? odds.yes : odds.no}
+        />
       )}
     </div>
   );
