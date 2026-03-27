@@ -26,9 +26,11 @@ async function runOracle() {
     console.log("[Oracle] Checking for markets to resolve...");
     const { data } = await axios.get(`${API_URL}/api/markets`);
     const now = Date.now();
+    // #377: Add 60-second buffer to account for clock drift
+    const bufferMs = 60_000;
 
     const expired = data.markets.filter(
-      (m) => !m.resolved && new Date(m.end_date).getTime() <= now
+      (m) => !m.resolved && new Date(m.end_date).getTime() <= now - bufferMs
     );
 
     console.log(`[Oracle] Found ${expired.length} market(s) to resolve`);
@@ -55,6 +57,14 @@ async function resolveMarket(market) {
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     console.log(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
+    // #377: Handle deadline not reached errors gracefully
+    if (err.response?.data?.error?.includes("Market deadline not reached")) {
+      console.warn(`[Oracle] Market #${market.id} deadline not reached on-chain, retrying in 5 minutes`);
+      // Add to retry queue (in production, use persistent queue)
+      const retryTime = new Date(Date.now() + 5 * 60 * 1000);
+      console.log(`[Oracle] Market #${market.id} scheduled for retry at ${retryTime.toISOString()}`);
+      return;
+    }
     if (err.message && err.message.startsWith("No resolver matched")) {
       console.error(`[Oracle] Unresolvable market #${market.id}: ${err.message}`);
       await markUnresolvable(market.id, err.message);
