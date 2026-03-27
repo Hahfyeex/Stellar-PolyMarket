@@ -1,3 +1,6 @@
+import { useState } from "react";
+import type { Market } from "../types/market";
+import ResolutionCenter from "./ResolutionCenter";
 import { useState, useEffect } from "react";
 import Link from "next/link"; // Added missing Link import
 import { trackEvent } from "../lib/firebase";
@@ -137,6 +140,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   }
 
   return (
+    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-4 border border-gray-800">
     <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800">
       <TrustlineModal
         state={trustlineState}
@@ -253,6 +257,8 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       {!market.resolved && !isExpired && selectedOutcome !== null && (
         <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
+
+      <ResolutionCenter market={market} compact />
     </div>
   );
 }
