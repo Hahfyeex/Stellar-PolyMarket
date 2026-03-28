@@ -23,15 +23,29 @@ process.env = {
 // Mock fetch
 global.fetch = jest.fn();
 
-// Mock useWallet hook
+// Mock useWallet hook — mutable so individual suites can override
+const mockUseWallet = jest.fn(() => ({
+  publicKey: null as string | null,
+  connecting: false,
+  error: null,
+  connect: jest.fn(),
+  disconnect: jest.fn(),
+}));
 jest.mock("../../../../hooks/useWallet", () => ({
-  useWallet: () => ({
-    publicKey: null,
-    connecting: false,
-    error: null,
-    connect: jest.fn(),
-    disconnect: jest.fn(),
-  }),
+  useWallet: (...args: unknown[]) => mockUseWallet(...args),
+}));
+
+// Mock usePlaceBet hook — default idle state; overridden per test suite
+const mockMutate = jest.fn();
+const mockUsePlaceBet = jest.fn(() => ({
+  mutate: mockMutate,
+  isPending: false,
+  isSuccess: false,
+  isError: false,
+  error: null,
+}));
+jest.mock("../../../../hooks/usePlaceBet", () => ({
+  usePlaceBet: (...args: unknown[]) => mockUsePlaceBet(...args),
 }));
 
 // Mock MobileShell component
@@ -174,6 +188,53 @@ describe("MarketDetailPage", () => {
 
     it("should render back link", () => {
       expect(screen.getByText("← Back")).toBeInTheDocument();
+    });
+  });
+
+  describe("Outcome Data Handling", () => {
+    async function renderWithMarket(marketOverride: any) {
+      (fetch as jest.Mock).mockImplementation((url: string) => {
+        if (url.includes("/api/markets/")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ market: marketOverride, bets: DEMO_BETS }),
+          });
+        }
+        if (url.includes("/api/reserves")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ markets: [{ market_id: 1, xlm_balance: "4500" }] }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+
+      render(<MarketDetailPage marketId="1" />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByText(/Will Bitcoin reach/i)).toBeInTheDocument();
+      });
+    }
+
+    it("shows fallback when outcomes is null", async () => {
+      await renderWithMarket({ ...DEMO_MARKET, outcomes: null as any });
+      expect(screen.getByText("Outcome data unavailable")).toBeInTheDocument();
+    });
+
+    it("shows fallback when outcomes is undefined", async () => {
+      const market = { ...DEMO_MARKET } as any;
+      delete market.outcomes;
+      await renderWithMarket(market);
+      expect(screen.getByText("Outcome data unavailable")).toBeInTheDocument();
+    });
+
+    it("shows fallback when outcomes is empty", async () => {
+      await renderWithMarket({ ...DEMO_MARKET, outcomes: [] });
+      expect(screen.getByText("Outcome data unavailable")).toBeInTheDocument();
+    });
+
+    it("does not show fallback when outcomes is valid", async () => {
+      await renderWithMarket({ ...DEMO_MARKET, outcomes: ["Up", "Down"] });
+      expect(screen.queryByText("Outcome data unavailable")).not.toBeInTheDocument();
     });
   });
 
@@ -458,6 +519,75 @@ describe("MarketDetailPage", () => {
 
       // Without amount, potential payout should not show
       expect(screen.queryByText(/Potential payout:/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("isPending Disabled State", () => {
+    beforeEach(async () => {
+      // Simulate connected wallet
+      mockUseWallet.mockReturnValue({
+        publicKey: "GTEST1234WALLET",
+        connecting: false,
+        error: null,
+        connect: jest.fn(),
+        disconnect: jest.fn(),
+      });
+
+      // Simulate mutation in pending state
+      mockUsePlaceBet.mockReturnValue({
+        mutate: mockMutate,
+        isPending: true,
+        isSuccess: false,
+        isError: false,
+        error: null,
+      });
+
+      render(<MarketDetailPage marketId="1" />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByText(/Will Bitcoin reach/i)).toBeInTheDocument();
+      });
+    });
+
+    afterEach(() => {
+      // Restore defaults
+      mockUseWallet.mockReturnValue({
+        publicKey: null,
+        connecting: false,
+        error: null,
+        connect: jest.fn(),
+        disconnect: jest.fn(),
+      });
+      mockUsePlaceBet.mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+        isSuccess: false,
+        isError: false,
+        error: null,
+      });
+    });
+
+    it("should show Confirming... text and spinner when isPending is true", () => {
+      expect(screen.getByText("Confirming...")).toBeInTheDocument();
+    });
+
+    it("should disable the submit button when isPending is true", () => {
+      const button = screen.getByText("Confirming...").closest("button");
+      expect(button).toBeDisabled();
+    });
+
+    it("should disable the YES outcome button when isPending is true", () => {
+      const yesButton = screen.getByText("YES").closest("button");
+      expect(yesButton).toBeDisabled();
+    });
+
+    it("should disable the NO outcome button when isPending is true", () => {
+      const noButton = screen.getByText("NO").closest("button");
+      expect(noButton).toBeDisabled();
+    });
+
+    it("should disable the amount input when isPending is true", () => {
+      const input = screen.getByPlaceholderText("0.00");
+      expect(input).toBeDisabled();
     });
   });
 });

@@ -69,10 +69,7 @@ describe("GET /api/markets", () => {
       });
 
       // Verify the queries
-      expect(db.query).toHaveBeenNthCalledWith(
-        1,
-        "SELECT COUNT(*) as total FROM markets"
-      );
+      expect(db.query).toHaveBeenNthCalledWith(1, "SELECT COUNT(*) as total FROM markets");
       expect(db.query).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining("LIMIT $1 OFFSET $2"),
@@ -291,5 +288,65 @@ describe("GET /api/markets", () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Query timeout");
     });
+  });
+});
+
+// Shared valid body for endDate tests (question >= 50 chars, 2 outcomes, walletAddress)
+const validBase = {
+  question: "Will this test market resolve successfully by the end date?",
+  outcomes: ["Yes", "No"],
+  walletAddress: "GTEST123",
+};
+
+describe("POST /api/markets - endDate validation", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // No duplicate found
+    db.query.mockResolvedValue({ rows: [] });
+  });
+
+  it("rejects a past end date with 400", async () => {
+    const pastDate = new Date(Date.now() - 1000).toISOString();
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBase, endDate: pastDate });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_END_DATE");
+  });
+
+  it("rejects an end date less than 1 hour in the future with 400", async () => {
+    const underOneHour = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBase, endDate: underOneHour });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_END_DATE");
+  });
+
+  it("rejects an end date more than 1 year in the future with 400", async () => {
+    const overOneYear = new Date(Date.now() + 366 * 24 * 60 * 60 * 1000).toISOString();
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBase, endDate: overOneYear });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_END_DATE");
+  });
+
+  it("accepts a valid end date (2 hours from now) with 201", async () => {
+    const validDate = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2 hours
+    // duplicate check returns no rows, then INSERT returns the new market
+    db.query
+      .mockResolvedValueOnce({ rows: [] }) // duplicate check
+      .mockResolvedValueOnce({ rows: [{ id: 1, question: validBase.question }] }); // INSERT
+
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBase, endDate: validDate });
+
+    expect(res.status).toBe(201);
+    expect(res.body.market).toBeDefined();
   });
 });
