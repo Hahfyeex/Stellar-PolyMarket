@@ -3,8 +3,10 @@
 #[cfg(test)]
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, vec, Address, BytesN, Env, Map, String, Vec, IntoVal,
+    contract, contractimpl, contracttype, symbol_short, token, vec, Address, Bytes, BytesN, Env, Map, String, Vec, IntoVal,
 };
+use soroban_sdk::xdr::ToXdr;
+use stellar_strkey::Strkey;
 mod access;
 use crate::access::{
     check_platform_active, check_role, set_platform_status, set_role, AccessPlatformStatus,
@@ -18,6 +20,7 @@ use crate::events::{
     emit_bet_placed, emit_contract_initialized, emit_dispute_raised, emit_fee_collected,
     emit_fee_rate_updated, emit_lp_reward_claimed, emit_liquidity_provided, emit_market_created,
     emit_market_paused, emit_market_resolved, emit_market_voided, emit_payout_claimed,
+    emit_upgrade_cancelled, emit_upgrade_proposed, emit_upgraded,
 };
 mod lmsr;
 mod position_token;
@@ -26,9 +29,8 @@ use crate::lmsr::{lmsr_cost, lmsr_price};
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
 use math::normalize_scalar;
-mod lmsr;
-use lmsr::lmsr_cost;
-mod position_token;
+#[cfg(test)]
+mod upgrade_nonce_tests;
 
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
@@ -69,6 +71,7 @@ pub const DISPUTE_WINDOW: u64 = 86_400;
 /// Threshold: 535_000 / 2 = 267_500 ledgers (~37 days)
 /// Extend to: 535_000 ledgers (~74 days)
 pub const LEDGER_TTL_EXTEND: u32 = 535_000;
+pub const UPGRADE_TIMELOCK_LEDGERS: u32 = 17_280;
 
 /// Reads the stored platform fee rate in basis points from Instance storage.
 /// Falls back to 300 bps (3%) if not set (e.g., before first initialize).
@@ -190,6 +193,8 @@ pub enum DataKey {
     RefundClaimed(u64, Address),
     /// Platform fee rate in basis points (e.g. 300 = 3%). Stored in Instance storage.
     FeeRateBps,
+    /// Pending in-place WASM upgrade proposal.
+    UpgradeProposal,
 }
 
 #[contracttype]
@@ -230,6 +235,13 @@ pub struct Market {
     /// Otherwise the market is Voided and all stakes are refunded.
     pub condition_market_id: Option<u64>,
     pub condition_outcome: Option<u32>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct UpgradeProposal {
+    pub new_wasm_hash: BytesN<32>,
+    pub unlock_ledger: u32,
 }
 
 #[contract]
@@ -278,6 +290,55 @@ fn release_reentrancy_lock(env: &Env) {
     env.storage().instance().remove(&symbol_short!("locked"));
 }
 
+fn load_nonce(env: &Env, address: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Nonce(address.clone()))
+        .unwrap_or(0)
+}
+
+fn increment_nonce(env: &Env, address: &Address, current_nonce: u64) {
+    let next_nonce = current_nonce
+        .checked_add(1)
+        .unwrap_or_else(|| panic!("nonce overflow"));
+    let key = DataKey::Nonce(address.clone());
+    env.storage().persistent().set(&key, &next_nonce);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+}
+
+fn load_upgrade_proposal(env: &Env) -> UpgradeProposal {
+    env.storage()
+        .instance()
+        .get(&DataKey::UpgradeProposal)
+        .unwrap_or_else(|| panic!("no pending upgrade proposal"))
+}
+
+fn bet_signature_payload(
+    env: &Env,
+    market_id: u64,
+    option_index: u32,
+    bettor: &Address,
+    amount: i128,
+    nonce: u64,
+) -> Bytes {
+    (market_id, option_index, bettor.clone(), amount, nonce).to_xdr(env)
+}
+
+fn bettor_public_key(env: &Env, bettor: &Address) -> BytesN<32> {
+    let bettor_strkey = bettor.to_string();
+    let mut raw = [0u8; 56];
+    bettor_strkey.copy_into_slice(&mut raw);
+    let raw_str = core::str::from_utf8(&raw)
+        .unwrap_or_else(|_| panic!("bettor address must be valid UTF-8"));
+
+    match Strkey::from_string(raw_str).unwrap_or_else(|_| panic!("bettor must be a valid Stellar address")) {
+        Strkey::PublicKeyEd25519(pk) => BytesN::from_array(env, &pk.0),
+        _ => panic!("bettor must be an ed25519 account address"),
+    }
+}
+
 
 
 #[contractimpl]
@@ -312,6 +373,63 @@ impl PredictionMarket {
     /// Read the address currently assigned to a role (returns None if unset).
     pub fn get_role(env: Env, role: Role) -> Option<Address> {
         get_role_address(&env, role)
+    }
+
+    /// Returns the current replay-protection nonce for `address`.
+    pub fn get_nonce(env: Env, address: Address) -> u64 {
+        load_nonce(&env, &address)
+    }
+
+    /// Stage an in-place WASM upgrade behind a mandatory ledger timelock.
+    pub fn propose_upgrade(env: Env, caller: Address, new_wasm_hash: BytesN<32>) {
+        require_role(&env, &caller, Role::SuperAdmin);
+
+        let proposal = UpgradeProposal {
+            new_wasm_hash: new_wasm_hash.clone(),
+            unlock_ledger: env.ledger().sequence() + UPGRADE_TIMELOCK_LEDGERS,
+        };
+
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeProposal, &proposal);
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+
+        emit_upgrade_proposed(&env, &caller, &new_wasm_hash, proposal.unlock_ledger);
+    }
+
+    /// Execute a previously proposed in-place WASM upgrade after the timelock expires.
+    pub fn execute_upgrade(env: Env, caller: Address) {
+        require_role(&env, &caller, Role::SuperAdmin);
+
+        let proposal = load_upgrade_proposal(&env);
+        assert!(
+            env.ledger().sequence() >= proposal.unlock_ledger,
+            "upgrade timelock is still active"
+        );
+
+        env.storage().instance().remove(&DataKey::UpgradeProposal);
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+
+        emit_upgraded(&env, &caller, &proposal.new_wasm_hash);
+        env.deployer()
+            .update_current_contract_wasm(proposal.new_wasm_hash);
+    }
+
+    /// Cancel a pending in-place WASM upgrade proposal.
+    pub fn cancel_upgrade(env: Env, caller: Address) {
+        require_role(&env, &caller, Role::SuperAdmin);
+
+        let proposal = load_upgrade_proposal(&env);
+        env.storage().instance().remove(&DataKey::UpgradeProposal);
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+
+        emit_upgrade_cancelled(&env, &caller, &proposal.new_wasm_hash);
     }
 
     /// Update the whitelist status of a token (admin only).
@@ -499,28 +617,15 @@ impl PredictionMarket {
     ) {
         check_platform_active(&env);
 
-        // 1. Verify manual nonce (Replay Protection Requirement #209)
-        let stored_nonce: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Nonce(bettor.clone()))
-            .unwrap_or(0);
-        assert!(nonce == stored_nonce, "Invalid signature nonce");
+        let stored_nonce = load_nonce(&env, &bettor);
+        assert!(nonce == stored_nonce, "invalid nonce: replay detected");
 
-        // 2. Verify signature via Soroban auth
-        // We include the nonce and signature in the args to ensure they are signed.
-        bettor.require_auth_for_args((market_id, option_index, amount, nonce, signature.clone()).into_val(&env));
+        let public_key = bettor_public_key(&env, &bettor);
+        let payload = bet_signature_payload(&env, market_id, option_index, &bettor, amount, nonce);
+        env.crypto()
+            .ed25519_verify(&public_key, &payload, &signature);
 
-        // 3. Update nonce state
-        env.storage()
-            .persistent()
-            .set(&DataKey::Nonce(bettor.clone()), &(stored_nonce + 1));
-        // Extend TTL for nonce storage to manage rent
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Nonce(bettor.clone()), 100, 1_000_000);
-
-        // 4. Execute bet logic
+        increment_nonce(&env, &bettor, stored_nonce);
         Self::internal_place_bet(env, market_id, option_index, bettor, amount);
     }
 
@@ -4268,6 +4373,3 @@ mod tests {
         assert!(payout <= expected_pool + 1, "payout must not exceed 90% of pool");
     }
 }
-
-
-

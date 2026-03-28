@@ -993,6 +993,7 @@ dependencies = [
  "proptest",
  "soroban-sdk 21.7.7",
  "soroban-sdk 25.3.0",
+ "stellar-strkey 0.0.16",
 ]
 
 [[package]]
