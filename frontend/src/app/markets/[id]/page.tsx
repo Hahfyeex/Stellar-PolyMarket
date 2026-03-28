@@ -35,26 +35,9 @@ import MarketDetailSkeleton from "../../../components/skeletons/MarketDetailSkel
 interface Market {
   id: number;
   question: string;
-  description?: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
   total_pool: string;
-  status: string;
-  asset?: { code: string; issuer: string };
-  truth_source?: string;
-  rules?: string;
-}
-
-/** Skeleton for the chart area while loading */
-function ChartSkeleton() {
-  return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
-      <div className="skeleton h-5 w-48 rounded" />
-      <div className="skeleton h-72 w-full rounded-lg" />
-    </div>
-  );
+  outcomes: string[];
+  end_date: string;
 }
 
 export default function MarketDetailPage() {
@@ -81,31 +64,48 @@ export default function MarketDetailPage() {
       setLoading(false);
     }
   }
+}
 
-  useEffect(() => {
-    if (!marketId || isNaN(marketId)) {
-      setError("Invalid market ID");
-      setLoading(false);
-      return;
-    }
-    fetchMarket();
-  }, [marketId]);
+export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+  const market = await fetchMarket(params.id);
+  if (!market) return { title: "Market Not Found" };
 
-  const isExpired = market ? new Date(market.end_date) <= new Date() : false;
-  const daysLeft = market
-    ? Math.max(0, Math.ceil((new Date(market.end_date).getTime() - Date.now()) / 86_400_000))
-    : 0;
+  const pool = parseFloat(market.total_pool).toLocaleString(undefined, {
+    maximumFractionDigits: 0,
+  });
+  const odds = market.outcomes
+    .map((o) => `${o}: ${(100 / market.outcomes.length).toFixed(0)}%`)
+    .join(" · ");
+  const description = `${odds} · Pool: ${pool} XLM`;
+  const canonicalUrl = `${SITE_URL}/markets/${market.id}`;
+  const ogImage = `${SITE_URL}/api/og?id=${market.id}`;
 
-  if (error) {
-    return (
-      <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <p className="text-red-400 text-lg">{error}</p>
-          <Link href="/" className="text-blue-400 hover:underline text-sm">← Back to markets</Link>
-        </div>
-      </main>
-    );
-  }
+  return {
+    title: market.question,
+    description,
+    alternates: { canonical: canonicalUrl },
+    openGraph: {
+      title: market.question,
+      description,
+      url: canonicalUrl,
+      images: [{ url: ogImage }],
+      type: "website",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: market.question,
+      description,
+      images: [ogImage],
+    },
+  };
+}
+
+export default async function MarketsDetailPage({ params }: { params: { id: string } }) {
+  const market = await fetchMarket(params.id);
+  if (!market) notFound();
+
+  // MarketDetailPage is a client component — wrap with a fresh QueryClient
+  const queryClient = new QueryClient();
 
   if (loading) {
     return (
@@ -375,20 +375,3 @@ export default function MarketDetailPage() {
     </main>
   );
 }
-
-// Demo fallback when API is offline
-const DEMO_MARKET: Market = {
-  id: 1,
-  question: "Will Bitcoin reach $100k before 2027?",
-  description:
-    "This market resolves YES if Bitcoin (BTC) trades at or above $100,000 USD on any major exchange (Coinbase, Binance, Kraken) before January 1, 2027.",
-  end_date: "2026-12-31T00:00:00Z",
-  outcomes: ["Yes", "No"],
-  resolved: false,
-  winning_outcome: null,
-  total_pool: "4200",
-  status: "open",
-  truth_source: "https://coinmarketcap.com/currencies/bitcoin/",
-  rules:
-    "Resolves YES if BTC/USD price reaches $100,000 on any top-5 exchange by market cap before the end date. Uses the closing price of the day. In case of exchange discrepancies, the median price across Coinbase, Binance, and Kraken is used.",
-};
