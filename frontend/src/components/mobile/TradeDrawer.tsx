@@ -224,12 +224,13 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               </p>
 
               {/* Outcome buttons */}
-              <div className="flex gap-3 mb-5">
+              <div className="flex gap-3 mb-5" role="group" aria-label="Select outcome">
                 {market.outcomes.map((outcome, i) => (
                   <button
                     key={i}
                     onClick={() => setSelectedOutcome(i)}
                     disabled={market.resolved || isExpired}
+                    aria-pressed={selectedOutcome === i}
                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
                       ${market.resolved && market.winning_outcome === i
                         ? "bg-green-600 text-white"
@@ -247,16 +248,22 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               {walletAddress ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-3">
+                    <label htmlFor="trade-drawer-amount" className="sr-only">
+                      Stake amount in XLM
+                    </label>
                     <input
+                      id="trade-drawer-amount"
                       type="number"
                       placeholder="Amount (XLM)"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
+                      aria-label="Stake amount in XLM"
                     />
                     <button
                       onClick={placeBet}
                       disabled={loading || checking || selectedOutcome === null || !amount}
+                      aria-label="Place bet"
                       className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
                     >
                       {loading || checking ? "..." : "Bet"}
