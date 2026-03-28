@@ -26,6 +26,9 @@ use crate::lmsr::{lmsr_cost, lmsr_price};
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
 use math::normalize_scalar;
+mod lmsr;
+use lmsr::lmsr_cost;
+mod position_token;
 
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
