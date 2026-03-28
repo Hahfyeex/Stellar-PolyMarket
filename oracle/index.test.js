@@ -1,64 +1,82 @@
-const axios = require("axios");
-const { fetchOutcome, markUnresolvable, shutdown, _getIsRunning } = require("./index");
-
 jest.mock("axios");
+jest.mock("./medianizer", () => ({
+  OracleMedianizer: jest.fn().mockImplementation(() => ({
+    aggregate: jest.fn().mockResolvedValue(95000),
+  })),
+}));
+
+const axios = require("axios");
+
+// Shared module — reset state before each test to prevent bleed
+let oracle;
+beforeEach(() => {
+  oracle = require("./index");
+  oracle._resetState();
+  jest.clearAllMocks();
+});
+
+// ── Pre-existing suites ───────────────────────────────────────────────────────
 
 describe("Oracle Graceful Shutdown (#223)", () => {
-  test("shutdown logs graceful message", () => {
+  test("gracefulShutdown logs graceful message", async () => {
     const logSpy = jest.spyOn(console, "log").mockImplementation();
     const exitSpy = jest.spyOn(process, "exit").mockImplementation();
-    
-    shutdown("SIGTERM");
-    
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Oracle shutting down gracefully"));
-    
+
+    await oracle.gracefulShutdown("SIGTERM");
+
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Oracle shutting down gracefully")
+    );
+
     logSpy.mockRestore();
     exitSpy.mockRestore();
   });
 
   test("concurrent runs are prevented by isRunning flag", async () => {
+    // Make runOracle hang so the second call sees isRunning=true
+    axios.get.mockImplementation(() => new Promise(() => {}));
     const warnSpy = jest.spyOn(console, "warn").mockImplementation();
-    const { runOracleGuarded } = require("./index");
-    
-    // Simulate concurrent call
-    const promise1 = runOracleGuarded();
-    const promise2 = runOracleGuarded();
-    
-    await Promise.all([promise1, promise2]);
-    
-    // Second call should be skipped
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("previous cycle still in progress"));
-    
+
+    const p1 = oracle.runOracleGuarded();
+    const p2 = oracle.runOracleGuarded(); // should be skipped
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("previous cycle still in progress")
+    );
+
     warnSpy.mockRestore();
+    // Don't await p1 — it hangs intentionally; jest forceExit handles cleanup
   });
 });
 
 describe("Oracle Default Outcome (#218)", () => {
   test("fetchOutcome throws when no resolver matches", async () => {
-    await expect(fetchOutcome("Who will win the 2025 Ballon d'Or?", ["Messi", "Ronaldo"]))
-      .rejects
-      .toThrow("No resolver matched");
+    await expect(
+      oracle.fetchOutcome("Who will win the 2025 Ballon d'Or?", ["Messi", "Ronaldo"])
+    ).rejects.toThrow("No resolver matched");
   });
 
-  test("markUnresolvable calls backend endpoint", async () => {
+  test("markUnresolvable calls backend pending-review endpoint", async () => {
     axios.post.mockResolvedValue({ data: { success: true } });
-    
-    await markUnresolvable(123, "No resolver matched");
-    
+
+    await oracle.markUnresolvable(123, "some question", "No resolver matched");
+
     expect(axios.post).toHaveBeenCalledWith(
-      expect.stringContaining("/api/markets/123/unresolvable"),
-      { reason: "No resolver matched" }
+      expect.stringContaining("/api/admin/pending-review"),
+      expect.objectContaining({ market_id: 123, error_message: "No resolver matched" })
     );
   });
 
   test("markUnresolvable logs warning on success", async () => {
     axios.post.mockResolvedValue({ data: {} });
     const warnSpy = jest.spyOn(console, "warn").mockImplementation();
-    
-    await markUnresolvable(456, "test reason");
-    
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("marked unresolvable"));
-    
+
+    await oracle.markUnresolvable(456, "some question", "test reason");
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("marked for pending review")
+    );
+
     warnSpy.mockRestore();
   });
 });
@@ -66,70 +84,186 @@ describe("Oracle Default Outcome (#218)", () => {
 describe("Oracle Deadline Verification (#377)", () => {
   test("markets within 60-second buffer are not resolved", async () => {
     const now = Date.now();
-    const market = {
-      id: 1,
-      question: "Test market",
-      end_date: new Date(now + 30_000).toISOString(), // 30 seconds in future
-      resolved: false,
-      outcomes: ["Yes", "No"]
-    };
+    axios.get.mockResolvedValue({
+      data: {
+        markets: [
+          {
+            id: 1,
+            question: "Test market",
+            end_date: new Date(now + 30_000).toISOString(),
+            resolved: false,
+            outcomes: ["Yes", "No"],
+          },
+        ],
+      },
+    });
 
-    axios.get.mockResolvedValue({ data: { markets: [market] } });
-    const logSpy = jest.spyOn(console, "log").mockImplementation();
+    await oracle.runOracle();
 
-    const { runOracle } = require("./index");
-    await runOracle();
-
-    // Market should not be in the expired list due to 60-second buffer
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Found 0 market(s) to resolve"));
-
-    logSpy.mockRestore();
+    expect(axios.post).not.toHaveBeenCalled();
   });
 
   test("markets past 60-second buffer are resolved", async () => {
     const now = Date.now();
-    const market = {
-      id: 1,
-      question: "Test market",
-      end_date: new Date(now - 70_000).toISOString(), // 70 seconds in past
-      resolved: false,
-      outcomes: ["Yes", "No"]
-    };
-
-    axios.get.mockResolvedValue({ data: { markets: [market] } });
+    axios.get.mockResolvedValue({
+      data: {
+        markets: [
+          {
+            id: 1,
+            question: "BTC above 100k?",
+            end_date: new Date(now - 70_000).toISOString(),
+            resolved: false,
+            outcomes: ["Yes", "No"],
+          },
+        ],
+      },
+    });
+    // Mock the resolve POST to succeed
     axios.post.mockResolvedValue({ data: { success: true } });
     const logSpy = jest.spyOn(console, "log").mockImplementation();
 
-    const { runOracle } = require("./index");
-    await runOracle();
+    await oracle.runOracle();
 
-    // Market should be in the expired list
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Found 1 market(s) to resolve"));
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Market #1 resolved")
+    );
 
     logSpy.mockRestore();
   });
 
-  test("deadline not reached errors are logged as warnings and retried", async () => {
+  test("deadline not reached errors are logged as warnings", async () => {
     const market = {
       id: 1,
-      question: "Test market",
+      question: "BTC above 100k?",
       end_date: new Date(Date.now() - 70_000).toISOString(),
       resolved: false,
-      outcomes: ["Yes", "No"]
+      outcomes: ["Yes", "No"],
     };
-
     axios.get.mockResolvedValue({ data: { markets: [market] } });
     axios.post.mockRejectedValue({
-      response: { data: { error: "Market deadline not reached" } }
+      response: { data: { error: "Market deadline not reached" } },
     });
     const warnSpy = jest.spyOn(console, "warn").mockImplementation();
 
-    const { runOracle } = require("./index");
-    await runOracle();
+    await oracle.runOracle();
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("deadline not reached on-chain"));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("retrying in 5 minutes"));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("deadline not reached on-chain")
+    );
 
     warnSpy.mockRestore();
+  });
+});
+
+// ── Adaptive Polling (#440) ───────────────────────────────────────────────────
+
+describe("Oracle Adaptive Polling (#440)", () => {
+  function mockEmpty() {
+    axios.get.mockResolvedValue({ data: { markets: [] } });
+  }
+
+  function mockExpired() {
+    const now = Date.now();
+    axios.get.mockResolvedValue({
+      data: {
+        markets: [
+          {
+            id: 2,
+            question: "BTC above 100k?",
+            end_date: new Date(now - 70_000).toISOString(),
+            resolved: false,
+            outcomes: ["Yes", "No"],
+          },
+        ],
+      },
+    });
+    axios.post.mockResolvedValue({ data: { success: true } });
+  }
+
+  test("returns early with debug log when markets array is empty", async () => {
+    mockEmpty();
+    const debugSpy = jest.spyOn(console, "debug").mockImplementation();
+    const saved = process.env.LOG_LEVEL;
+    process.env.LOG_LEVEL = "debug";
+
+    await oracle.runOracle();
+
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.stringContaining("No expired markets to resolve")
+    );
+
+    process.env.LOG_LEVEL = saved;
+    debugSpy.mockRestore();
+  });
+
+  test("returns early without calling resolve when no expired markets", async () => {
+    const now = Date.now();
+    axios.get.mockResolvedValue({
+      data: {
+        markets: [
+          {
+            id: 1,
+            question: "Q",
+            end_date: new Date(now + 30_000).toISOString(),
+            resolved: false,
+            outcomes: ["Yes", "No"],
+          },
+        ],
+      },
+    });
+
+    await oracle.runOracle();
+
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test("consecutiveEmptyRuns increments on each empty run", async () => {
+    mockEmpty();
+
+    await oracle.runOracle();
+    expect(oracle._getConsecutiveEmptyRuns()).toBe(1);
+
+    await oracle.runOracle();
+    expect(oracle._getConsecutiveEmptyRuns()).toBe(2);
+  });
+
+  test("interval handle is replaced after 3 consecutive empty runs", async () => {
+    jest.useFakeTimers();
+    mockEmpty();
+
+    const handleBefore = oracle._getIntervalHandle();
+
+    await oracle.runOracle(); // 1
+    await oracle.runOracle(); // 2
+    await oracle.runOracle(); // 3 — triggers backoff reschedule
+
+    const handleAfter = oracle._getIntervalHandle();
+    // A new interval was created (different reference or null→set)
+    expect(handleAfter).not.toBe(handleBefore);
+
+    jest.useRealTimers();
+  });
+
+  test("consecutiveEmptyRuns resets to 0 when a market is found", async () => {
+    mockEmpty();
+    await oracle.runOracle();
+    await oracle.runOracle();
+    await oracle.runOracle(); // enter backoff
+
+    mockExpired();
+    await oracle.runOracle();
+
+    expect(oracle._getConsecutiveEmptyRuns()).toBe(0);
+  });
+
+  test("no backoff before threshold: consecutiveEmptyRuns stays below 3", async () => {
+    mockEmpty();
+
+    await oracle.runOracle(); // 1
+    await oracle.runOracle(); // 2
+
+    expect(oracle._getConsecutiveEmptyRuns()).toBe(2);
+    // Backoff threshold not yet reached
+    expect(oracle._getConsecutiveEmptyRuns()).toBeLessThan(oracle.BACKOFF_THRESHOLD);
   });
 });

@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
-import ResolutionCenter from "../ResolutionCenter";
+import MarketResolutionTracker from "../MarketResolutionTracker";
 import type { Market } from "../../types/market";
 
 const baseMarket: Market = {
@@ -16,9 +16,9 @@ const baseMarket: Market = {
   resolution_sources: [{ label: "Associated Press", url: "https://apnews.com/" }],
 };
 
-describe("ResolutionCenter", () => {
+describe("MarketResolutionTracker", () => {
   it("renders the lifecycle stepper labels", () => {
-    render(<ResolutionCenter market={{ ...baseMarket, resolution_state: "proposed" }} />);
+    render(<MarketResolutionTracker market={{ ...baseMarket, resolution_state: "proposed" }} />);
 
     expect(screen.getByText("Market Closed")).toBeInTheDocument();
     expect(screen.getByText("Outcome Proposed")).toBeInTheDocument();
@@ -28,7 +28,7 @@ describe("ResolutionCenter", () => {
 
   it("renders the dispute warning banner and council timer", () => {
     render(
-      <ResolutionCenter
+      <MarketResolutionTracker
         market={{
           ...baseMarket,
           resolution_state: "disputed",
@@ -43,7 +43,7 @@ describe("ResolutionCenter", () => {
   });
 
   it("renders official source links as buttons", () => {
-    render(<ResolutionCenter market={{ ...baseMarket, resolution_state: "settled", resolved: true }} />);
+    render(<MarketResolutionTracker market={{ ...baseMarket, resolution_state: "settled", resolved: true }} />);
 
     const link = screen.getByRole("link", { name: "Associated Press" });
     expect(link).toHaveAttribute("href", "https://apnews.com/");

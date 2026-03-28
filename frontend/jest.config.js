@@ -10,7 +10,13 @@ module.exports = {
         // These hooks require jsdom (renderHook) and run in the jsdom project instead
         "**/store/__tests__/**/*.test.ts",
         "!**/hooks/__tests__/useMarketSearch.test.ts",
+<<<<<<< HEAD
         "!**/hooks/__tests__/useOddsStream.test.ts",
+=======
+        "!**/hooks/__tests__/useBatchTransaction.test.ts",
+        "!**/hooks/__tests__/useMarkets.test.ts",
+        "!**/hooks/__tests__/useOnlineStatus.test.ts",
+>>>>>>> upstream/Default
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -20,6 +26,7 @@ module.exports = {
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
         "src/hooks/useOnboarding.ts",
+        "src/hooks/useTheme.ts",
         "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
@@ -38,6 +45,8 @@ module.exports = {
         // useOddsStream uses renderHook (React hooks + socket lifecycle) — needs jsdom
         "**/hooks/__tests__/useOddsStream.test.ts",
         "**/hooks/__tests__/useBatchTransaction.test.ts",
+        "**/hooks/__tests__/useMarkets.test.ts",
+        "**/hooks/__tests__/useOnlineStatus.test.ts",
       ],
       // i18n mock is injected before every component test so that components
       // using useTranslation() work without a real i18next instance.
@@ -55,7 +64,13 @@ module.exports = {
         "src/hooks/useOddsStream.ts",
         ,
         "src/hooks/useBatchTransaction.ts",
+        "src/hooks/useMarkets.ts",
+        "src/hooks/useMarket.ts",
+        "src/hooks/usePlaceBet.ts",
+        "src/hooks/useOnlineStatus.ts",
         "src/components/VirtualizedOrderBook.tsx",
+        "src/components/LiveActivityFeed.tsx",
+        "src/components/OfflineBanner.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
@@ -73,8 +88,12 @@ module.exports = {
         "src/utils/simulatorCalc.ts",
         "src/utils/poolOwnership.ts",
         "src/utils/simulateBet.ts",
+<<<<<<< HEAD
         // i18n locale detection and persistence utilities
         "src/utils/i18nUtils.ts",
+=======
+        "src/utils/slippageCalc.ts",
+>>>>>>> upstream/Default
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
