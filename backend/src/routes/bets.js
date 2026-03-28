@@ -70,14 +70,16 @@ router.post("/", async (req, res) => {
     }
   }
 
-  const { marketId, outcomeIndex, amount, walletAddress } = req.body;
-  if (!marketId || outcomeIndex === undefined || !amount || !walletAddress) {
+  const { marketId, outcomeIndex, amount, walletAddress, transaction_hash } = req.body;
+  if (!marketId || outcomeIndex === undefined || !amount || !walletAddress || !transaction_hash) {
     return res
       .status(400)
-      .json({ error: "marketId, outcomeIndex, amount, and walletAddress are required" });
+      .json({
+        error: "marketId, outcomeIndex, amount, walletAddress, and transaction_hash are required",
+      });
   }
 
-  // #488: Validate Stellar wallet address format
+  // Validate Stellar wallet address format
   const isValidAddress =
     walletAddress.length === 56 &&
     walletAddress.startsWith("G") &&
@@ -90,7 +92,34 @@ router.post("/", async (req, res) => {
     );
     return res.status(400).json({ error: "Invalid Stellar wallet address format" });
   }
+
   try {
+    // Verify transaction on Stellar Horizon API
+    const cachedTx = await redis.get(`tx:${transaction_hash}`);
+    let transaction;
+
+    if (cachedTx) {
+      transaction = JSON.parse(cachedTx);
+    } else {
+      const response = await axios.get(
+        `https://horizon-testnet.stellar.org/transactions/${transaction_hash}`
+      );
+      transaction = response.data;
+
+      // Cache transaction for 24 hours
+      await redis.set(`tx:${transaction_hash}`, JSON.stringify(transaction), "EX", 24 * 60 * 60);
+    }
+
+    // Validate transaction details
+    if (
+      transaction.source_account !== walletAddress ||
+      parseFloat(transaction.amount) !== parseFloat(amount)
+    ) {
+      return res
+        .status(400)
+        .json({ error: "On-chain transaction not found or does not match bet details" });
+    }
+
     // Check market exists and is not resolved
     const market = await db.query(
       "SELECT * FROM markets WHERE id = $1 AND resolved = FALSE AND end_date > NOW() AND deleted_at IS NULL",
@@ -105,6 +134,7 @@ router.post("/", async (req, res) => {
         .status(400)
         .json({ error: "Market not found, already resolved, expired, or deleted" });
     }
+
 
     const marketData = market.rows[0];
 
