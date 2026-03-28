@@ -12,6 +12,7 @@ module.exports = {
         "!**/hooks/__tests__/useBatchTransaction.test.ts",
         "!**/hooks/__tests__/useMarkets.test.ts",
         "!**/hooks/__tests__/useOnlineStatus.test.ts",
+        "!**/hooks/__tests__/useKeyboardShortcuts.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -39,6 +40,7 @@ module.exports = {
         "**/hooks/__tests__/useBatchTransaction.test.ts",
         "**/hooks/__tests__/useMarkets.test.ts",
         "**/hooks/__tests__/useOnlineStatus.test.ts",
+        "**/hooks/__tests__/useKeyboardShortcuts.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -55,6 +57,7 @@ module.exports = {
         "src/hooks/useMarket.ts",
         "src/hooks/usePlaceBet.ts",
         "src/hooks/useOnlineStatus.ts",
+        "src/hooks/useKeyboardShortcuts.ts",
         "src/components/VirtualizedOrderBook.tsx",
         "src/components/LiveActivityFeed.tsx",
         "src/components/OfflineBanner.tsx",
