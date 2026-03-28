@@ -119,6 +119,10 @@ jest.mock("next/link", () => {
   };
 });
 
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+}));
+
 jest.mock("../../lib/firebase", () => ({
   trackEvent: jest.fn(),
 }));
