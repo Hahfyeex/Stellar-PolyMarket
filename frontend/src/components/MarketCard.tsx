@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { Market } from "../types/market";
 import MarketResolutionTracker from "./MarketResolutionTracker";
 import Link from "next/link";
@@ -17,6 +17,7 @@ import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { useOptimisticBet } from "../hooks/useOptimisticBet";
 import OptimisticBetIndicator from "./OptimisticBetIndicator";
 import OddsTicker from "./OddsTicker";
+import { useVolatilityPulse } from "../hooks/useVolatilityPulse";
 
 interface Props {
   market: Market;
@@ -58,6 +59,10 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   
   // Default odds for display in the ticker (until real per-outcome pool data is available)
   const defaultOdds = 100 / market.outcomes.length;
+
+  // Volatility pulse animation state
+  const { isPulsing, direction } = useVolatilityPulse(defaultOdds);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   // Snapshot odds whenever the user selects an outcome or changes amount
   useEffect(() => {
@@ -136,7 +141,12 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800 card-ripple hover:border-gray-700 transition-all">
+    <div 
+      ref={cardRef}
+      className={`bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800 card-ripple hover:border-gray-700 transition-all ${
+        isPulsing ? (direction === "up" ? "pulse-green" : "pulse-red") : ""
+      }`}
+    >
 
       <TrustlineModal
         state={trustlineState}

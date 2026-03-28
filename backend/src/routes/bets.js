@@ -4,24 +4,63 @@ const db = require("../db");
 const redis = require("../utils/redis");
 const logger = require("../utils/logger");
 const eventBus = require("../bots/eventBus");
+const { StrKey } = require("@stellar/stellar-sdk");
+const { sanitizeError } = require("../utils/errors");
 
 const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
+const IDEMPOTENCY_TTL = 24 * 60 * 60; // 24 hours in seconds
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // POST /api/bets — place a bet
 router.post("/", async (req, res) => {
+  const idempotencyKey = req.headers["x-idempotency-key"];
+
+  if (idempotencyKey !== undefined) {
+    if (!UUID_RE.test(idempotencyKey)) {
+      return res.status(400).json({ error: "X-Idempotency-Key must be a valid UUID" });
+    }
+    const cached = await redis.get(`idem:${idempotencyKey}`);
+    if (cached) {
+      const { status, body } = JSON.parse(cached);
+      return res.status(status).json(body);
+    }
+  }
+
   const { marketId, outcomeIndex, amount, walletAddress } = req.body;
   if (!marketId || outcomeIndex === undefined || !amount || !walletAddress) {
-    return res.status(400).json({ error: "marketId, outcomeIndex, amount, and walletAddress are required" });
+    return res
+      .status(400)
+      .json({ error: "marketId, outcomeIndex, amount, and walletAddress are required" });
+  }
+
+  // #488: Validate Stellar wallet address format
+  const isValidAddress =
+    walletAddress.length === 56 &&
+    walletAddress.startsWith("G") &&
+    StrKey.isValidEd25519PublicKey(walletAddress);
+
+  if (!isValidAddress) {
+    logger.warn(
+      { wallet_address: walletAddress },
+      "Bet rejected: invalid Stellar wallet address format"
+    );
+    return res.status(400).json({ error: "Invalid Stellar wallet address format" });
   }
   try {
     // Check market exists and is not resolved
     const market = await db.query(
-      "SELECT * FROM markets WHERE id = $1 AND resolved = FALSE AND end_date > NOW()",
+      "SELECT * FROM markets WHERE id = $1 AND resolved = FALSE AND end_date > NOW() AND deleted_at IS NULL",
       [marketId]
     );
     if (!market.rows.length) {
-      logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: market not found, resolved, or expired");
-      return res.status(400).json({ error: "Market not found, already resolved, or expired" });
+      logger.warn(
+        { market_id: marketId, wallet_address: walletAddress },
+        "Bet rejected: market not found, resolved, expired, or deleted"
+      );
+      return res
+        .status(400)
+        .json({ error: "Market not found, already resolved, expired, or deleted" });
     }
 
     // #376: Check for duplicate bet from same wallet on same market
@@ -30,7 +69,10 @@ router.post("/", async (req, res) => {
       [marketId, walletAddress]
     );
     if (existingBet.rows.length > 0) {
-      logger.warn({ market_id: marketId, wallet_address: walletAddress }, "Bet rejected: wallet has already placed a bet on this market");
+      logger.warn(
+        { market_id: marketId, wallet_address: walletAddress },
+        "Bet rejected: wallet has already placed a bet on this market"
+      );
       return res.status(409).json({ error: "Wallet has already placed a bet on this market" });
     }
 
@@ -41,18 +83,21 @@ router.post("/", async (req, res) => {
     );
 
     // Update total pool
-    await db.query(
-      "UPDATE markets SET total_pool = total_pool + $1 WHERE id = $2",
-      [amount, marketId]
-    );
-
-    logger.info({
-      bet_id: bet.rows[0].id,
-      market_id: marketId,
-      wallet_address: walletAddress,
-      outcome_index: outcomeIndex,
+    await db.query("UPDATE markets SET total_pool = total_pool + $1 WHERE id = $2", [
       amount,
-    }, "Bet placed");
+      marketId,
+    ]);
+
+    logger.info(
+      {
+        bet_id: bet.rows[0].id,
+        market_id: marketId,
+        wallet_address: walletAddress,
+        outcome_index: outcomeIndex,
+        amount,
+      },
+      "Bet placed"
+    );
 
     // Fetch updated pool and emit pool.low if depth has fallen below threshold
     const poolResult = await db.query("SELECT total_pool FROM markets WHERE id = $1", [marketId]);
@@ -63,22 +108,28 @@ router.post("/", async (req, res) => {
 
     // Invalidate portfolio cache for this wallet
     await redis.del(`portfolio:${walletAddress}`);
-    
-    res.status(201).json({ bet: bet.rows[0] });
 
+    const responseBody = { bet: bet.rows[0] };
+    if (idempotencyKey) {
+      await redis.set(
+        `idem:${idempotencyKey}`,
+        JSON.stringify({ status: 201, body: responseBody }),
+        "EX",
+        IDEMPOTENCY_TTL
+      );
+    }
+    res.status(201).json(responseBody);
   } catch (err) {
-    logger.error({ err, market_id: marketId, wallet_address: walletAddress }, "Failed to place bet");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
 // POST /api/bets/payout/:marketId — distribute rewards to winners
 router.post("/payout/:marketId", async (req, res) => {
   try {
-    const market = await db.query(
-      "SELECT * FROM markets WHERE id = $1 AND resolved = TRUE",
-      [req.params.marketId]
-    );
+    const market = await db.query("SELECT * FROM markets WHERE id = $1 AND resolved = TRUE", [
+      req.params.marketId,
+    ]);
     if (!market.rows.length) {
       logger.warn({ market_id: req.params.marketId }, "Payout rejected: market not resolved");
       return res.status(400).json({ error: "Market not resolved yet" });
@@ -93,9 +144,8 @@ router.post("/payout/:marketId", async (req, res) => {
     );
 
     // Convert to stroops (7 decimal places = 10^7)
-    const STROOP_MULTIPLIER = 10_000_000n;
     const totalPoolStroops = BigInt(Math.floor(parseFloat(total_pool) * 1e7));
-    
+
     // Get total winning stake in stroops
     const winningStakeStroops = winners.rows.reduce((sum, b) => {
       return sum + BigInt(Math.floor(parseFloat(b.amount) * 1e7));
@@ -125,41 +175,51 @@ router.post("/payout/:marketId", async (req, res) => {
       totalPayoutStroops += payoutStroops;
     }
 
-    if (totalPayoutStroops > payoutPool) {
-      logger.error({
-        market_id: req.params.marketId,
-        total_payout_stroops: totalPayoutStroops.toString(),
-        payout_pool_stroops: payoutPool.toString(),
-      }, "Payout sum exceeds pool");
+    if (totalPayoutStroops > payoutPoolStroops) {
+      logger.error(
+        {
+          market_id: req.params.marketId,
+          total_payout_stroops: totalPayoutStroops.toString(),
+          payout_pool_stroops: payoutPoolStroops.toString(),
+        },
+        "Payout sum exceeds pool"
+      );
       return res.status(500).json({ error: "Payout calculation error: sum exceeds pool" });
     }
 
     // Mark bets as paid
-    await db.query(
-      "UPDATE bets SET paid_out = TRUE WHERE market_id = $1 AND outcome_index = $2",
-      [req.params.marketId, winning_outcome]
-    );
-
-    logger.info({
-      market_id: req.params.marketId,
+    await db.query("UPDATE bets SET paid_out = TRUE WHERE market_id = $1 AND outcome_index = $2", [
+      req.params.marketId,
       winning_outcome,
-      winners_count: winners.rows.length,
-      total_pool,
-      winning_stake: Number(winningStakeStroops) / 1e7,
-    }, "Payouts distributed");
+    ]);
+
+    logger.info(
+      {
+        market_id: req.params.marketId,
+        winning_outcome,
+        winners_count: winners.rows.length,
+        total_pool,
+        winning_stake: Number(winningStakeStroops) / 1e7,
+      },
+      "Payouts distributed"
+    );
 
     // Invalidate portfolio cache for all winners
     if (winners.rows.length > 0) {
-      const winnerAddresses = new Set(winners.rows.map(w => w.wallet_address));
-      const invalidationPromises = Array.from(winnerAddresses).map(addr => redis.del(`portfolio:${addr}`));
+      const winnerAddresses = new Set(winners.rows.map((w) => w.wallet_address));
+      const invalidationPromises = Array.from(winnerAddresses).map((addr) =>
+        redis.del(`portfolio:${addr}`)
+      );
       await Promise.all(invalidationPromises);
-      logger.info({ market_id: req.params.marketId, winners_count: winnerAddresses.size }, "[Cache] Invalidated portfolio cache for winners");
+      logger.info(
+        { market_id: req.params.marketId, winners_count: winnerAddresses.size },
+        "[Cache] Invalidated portfolio cache for winners"
+      );
     }
 
     res.json({ payouts });
   } catch (err) {
-    logger.error({ err, market_id: req.params.marketId }, "Failed to distribute payouts");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
@@ -179,8 +239,7 @@ router.get("/recent", async (req, res) => {
     logger.debug({ activity_count: result.rows.length, limit }, "Recent activity fetched");
     res.json({ activity: result.rows });
   } catch (err) {
-    logger.error({ err }, "Failed to fetch recent activity");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
@@ -210,11 +269,14 @@ router.get("/my-positions", async (req, res) => {
     const bets = result.rows;
     const nextCursor = bets.length > 0 ? bets[bets.length - 1].id : null;
 
-    logger.info({
-      wallet_address: walletAddress,
-      bets_count: bets.length,
-      next_cursor: nextCursor,
-    }, "User positions fetched");
+    logger.info(
+      {
+        wallet_address: walletAddress,
+        bets_count: bets.length,
+        next_cursor: nextCursor,
+      },
+      "User positions fetched"
+    );
 
     res.json({
       positions: bets,
@@ -222,8 +284,7 @@ router.get("/my-positions", async (req, res) => {
       limit,
     });
   } catch (err) {
-    logger.error({ err, wallet_address: walletAddress }, "Failed to fetch user positions");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
