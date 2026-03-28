@@ -26,6 +26,7 @@ import MarketComments from "../../../components/MarketComments";
 import PoolOwnershipChart from "../../../components/PoolOwnershipChart";
 import RelatedMarketsCarousel from "../../../components/RelatedMarketsCarousel";
 import ContractErrorBoundary from "../../../components/ContractErrorBoundary";
+import SocialSentiment from "../../../components/SocialSentiment";
 import { store } from "../../../store";
 
 interface Market {
@@ -195,7 +196,12 @@ export default function MarketDetailPage() {
               </ContractErrorBoundary>
             )}
 
-            {/* 4. Social sentiment / comments */}
+            {/* 4. Social sentiment */}
+            {!loading && market && (
+              <SocialSentiment outcomes={market.outcomes} totalPool={parseFloat(market.total_pool)} />
+            )}
+
+            {/* 5. Firebase-powered comments */}
             {!loading && market && (
               <MarketComments marketId={market.id} walletAddress={publicKey} />
             )}
