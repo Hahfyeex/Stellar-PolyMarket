@@ -22,22 +22,7 @@ const ValidationErrors = {
   },
   INVALID_END_DATE: {
     code: "INVALID_END_DATE",
-    message: "End date must be in the future and within 1 year",
-    statusCode: 400,
-  },
-  END_DATE_IN_PAST: {
-    code: "END_DATE_IN_PAST",
-    message: "endDate must be in the future",
-    statusCode: 400,
-  },
-  END_DATE_TOO_SOON: {
-    code: "END_DATE_TOO_SOON",
-    message: "Market must be open for at least 1 hour",
-    statusCode: 400,
-  },
-  END_DATE_TOO_FAR: {
-    code: "END_DATE_TOO_FAR",
-    message: "Market cannot be open for more than 1 year",
+    message: "End date must be at least 1 hour in the future and within 1 year",
     statusCode: 400,
   },
   DESCRIPTION_TOO_SHORT: {
@@ -114,37 +99,34 @@ async function validateMarket(metadata) {
   }
 
   // Validation 3: Check end date validity
+  // End date must be at least 1 hour in the future and not more than 1 year ahead
   const now = new Date();
   const endDateTime = new Date(endDate);
-  const oneYearFromNow = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+  const oneHourFromNow = new Date(now.getTime() + 3600_000);
+  const oneYearFromNow = new Date(now.getTime() + 365 * 24 * 3600_000);
 
-  if (isNaN(endDateTime.getTime()) || endDateTime <= now) {
+  if (
+    isNaN(endDateTime.getTime()) ||
+    endDateTime <= now ||
+    endDateTime < oneHourFromNow ||
+    endDateTime > oneYearFromNow
+  ) {
     logger.warn(
-      { end_date: endDate, validation: "END_DATE_IN_PAST" },
-      "Market validation failed: end date in past"
+      {
+        end_date: endDate,
+        parsed_date: endDateTime.toISOString(),
+        validation: "INVALID_END_DATE",
+      },
+      "Market validation failed: invalid end date"
     );
-    return { ...ValidationErrors.END_DATE_IN_PAST, details: { providedDate: endDate } };
-  }
 
-  if (endDateTime - now < 3_600_000) {
-    logger.warn(
-      { end_date: endDate, validation: "END_DATE_TOO_SOON" },
-      "Market validation failed: end date too soon"
-    );
     return {
-      ...ValidationErrors.END_DATE_TOO_SOON,
-      details: { providedDate: endDate, minimumDurationMs: 3_600_000 },
-    };
-  }
-
-  if (endDateTime > oneYearFromNow) {
-    logger.warn(
-      { end_date: endDate, validation: "END_DATE_TOO_FAR" },
-      "Market validation failed: end date too far"
-    );
-    return {
-      ...ValidationErrors.END_DATE_TOO_FAR,
-      details: { providedDate: endDate, maximumDate: oneYearFromNow.toISOString() },
+      ...ValidationErrors.INVALID_END_DATE,
+      details: {
+        providedDate: endDate,
+        minimumDate: oneHourFromNow.toISOString(),
+        maximumDate: oneYearFromNow.toISOString(),
+      },
     };
   }
 

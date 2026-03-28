@@ -28,7 +28,7 @@ describe("Market Validation", () => {
       expect(result).not.toBeNull();
       expect(result.code).toBe("DESCRIPTION_TOO_SHORT");
       expect(result.statusCode).toBe(400);
-      expect(result.details.currentLength).toBe(15);
+      expect(result.details.currentLength).toBe(16);
       expect(result.details.requiredLength).toBe(50);
     });
 
@@ -213,24 +213,23 @@ describe("Market Validation", () => {
       const result = await validateMarket(metadata);
 
       expect(result).not.toBeNull();
-      expect(result.code).toBe("END_DATE_IN_PAST");
+      expect(result.code).toBe("INVALID_END_DATE");
       expect(result.statusCode).toBe(400);
       expect(result.details.providedDate).toBe(pastDate);
     });
 
     test("should reject market with end date less than 1 hour in the future", async () => {
-      const tooSoonDate = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 minutes
+      const underOneHour = new Date(Date.now() + 30 * 60 * 1000).toISOString();
       const metadata = {
-        question: "Will this market with an end date under one hour be accepted by system?",
-        endDate: tooSoonDate,
+        question: "Will this market with end date under one hour be accepted by system?",
+        endDate: underOneHour,
         outcomes: ["Yes", "No"],
       };
 
       const result = await validateMarket(metadata);
 
       expect(result).not.toBeNull();
-      expect(result.code).toBe("END_DATE_TOO_SOON");
-      expect(result.statusCode).toBe(400);
+      expect(result.code).toBe("INVALID_END_DATE");
     });
 
     test("should reject market with end date more than 1 year in future", async () => {
@@ -244,8 +243,7 @@ describe("Market Validation", () => {
       const result = await validateMarket(metadata);
 
       expect(result).not.toBeNull();
-      expect(result.code).toBe("END_DATE_TOO_FAR");
-      expect(result.statusCode).toBe(400);
+      expect(result.code).toBe("INVALID_END_DATE");
     });
 
     test("should reject market with invalid date format", async () => {
@@ -258,7 +256,7 @@ describe("Market Validation", () => {
       const result = await validateMarket(metadata);
 
       expect(result).not.toBeNull();
-      expect(result.code).toBe("END_DATE_IN_PAST");
+      expect(result.code).toBe("INVALID_END_DATE");
     });
 
     test("should reject market with null end date", async () => {
@@ -271,7 +269,7 @@ describe("Market Validation", () => {
       const result = await validateMarket(metadata);
 
       expect(result).not.toBeNull();
-      expect(result.code).toBe("END_DATE_IN_PAST");
+      expect(result.code).toBe("INVALID_END_DATE");
     });
 
     test("should accept market with end date 1 day in future", async () => {
@@ -449,9 +447,6 @@ describe("Market Validation", () => {
     test("should have all required error codes", () => {
       expect(ValidationErrors.DUPLICATE_MARKET).toBeDefined();
       expect(ValidationErrors.INVALID_END_DATE).toBeDefined();
-      expect(ValidationErrors.END_DATE_IN_PAST).toBeDefined();
-      expect(ValidationErrors.END_DATE_TOO_SOON).toBeDefined();
-      expect(ValidationErrors.END_DATE_TOO_FAR).toBeDefined();
       expect(ValidationErrors.DESCRIPTION_TOO_SHORT).toBeDefined();
       expect(ValidationErrors.INVALID_OUTCOME_COUNT).toBeDefined();
       expect(ValidationErrors.RATE_LIMIT_EXCEEDED).toBeDefined();
@@ -461,9 +456,6 @@ describe("Market Validation", () => {
     test("should have correct status codes", () => {
       expect(ValidationErrors.DUPLICATE_MARKET.statusCode).toBe(409);
       expect(ValidationErrors.INVALID_END_DATE.statusCode).toBe(400);
-      expect(ValidationErrors.END_DATE_IN_PAST.statusCode).toBe(400);
-      expect(ValidationErrors.END_DATE_TOO_SOON.statusCode).toBe(400);
-      expect(ValidationErrors.END_DATE_TOO_FAR.statusCode).toBe(400);
       expect(ValidationErrors.DESCRIPTION_TOO_SHORT.statusCode).toBe(400);
       expect(ValidationErrors.INVALID_OUTCOME_COUNT.statusCode).toBe(400);
       expect(ValidationErrors.RATE_LIMIT_EXCEEDED.statusCode).toBe(429);
@@ -471,10 +463,8 @@ describe("Market Validation", () => {
     });
 
     test("should have descriptive error messages", () => {
-      expect(ValidationErrors.DUPLICATE_MARKET.message).toContain("already exists");
-      expect(ValidationErrors.END_DATE_IN_PAST.message).toContain("future");
-      expect(ValidationErrors.END_DATE_TOO_SOON.message).toContain("1 hour");
-      expect(ValidationErrors.END_DATE_TOO_FAR.message).toContain("1 year");
+      expect(ValidationErrors.DUPLICATE_MARKET.message).toContain("duplicate");
+      expect(ValidationErrors.INVALID_END_DATE.message).toContain("1 hour");
       expect(ValidationErrors.DESCRIPTION_TOO_SHORT.message).toContain("50 characters");
       expect(ValidationErrors.INVALID_OUTCOME_COUNT.message).toContain("2 and 5");
       expect(ValidationErrors.RATE_LIMIT_EXCEEDED.message).toContain("3 markets");

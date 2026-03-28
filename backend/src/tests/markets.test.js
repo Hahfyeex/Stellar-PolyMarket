@@ -25,6 +25,7 @@ jest.mock("../middleware/appCheck", () => (req, res, next) => next());
 const request = require("supertest");
 const express = require("express");
 const db = require("../db");
+const redis = require("../utils/redis");
 const marketsRouter = require("../routes/markets");
 
 const app = express();
@@ -69,10 +70,7 @@ describe("GET /api/markets", () => {
       });
 
       // Verify the queries
-      expect(db.query).toHaveBeenNthCalledWith(
-        1,
-        "SELECT COUNT(*) as total FROM markets"
-      );
+      expect(db.query).toHaveBeenNthCalledWith(1, "SELECT COUNT(*) as total FROM markets");
       expect(db.query).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining("LIMIT $1 OFFSET $2"),
@@ -291,5 +289,67 @@ describe("GET /api/markets", () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Query timeout");
     });
+  });
+});
+
+describe("POST /api/markets — endDate validation", () => {
+  const validBody = {
+    question: "Will this test market resolve successfully by the end of the year?",
+    outcomes: ["Yes", "No"],
+    walletAddress: "GTEST123",
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Redis mock for rate limiting: first call returns 1 (under limit)
+    redis.incr = jest.fn().mockResolvedValue(1);
+    redis.expire = jest.fn().mockResolvedValue(1);
+    redis.ttl = jest.fn().mockResolvedValue(86400);
+    // DB mock: no duplicate found, then INSERT returns a market row
+    db.query
+      .mockResolvedValueOnce({ rows: [] }) // duplicate check
+      .mockResolvedValueOnce({
+        rows: [{ id: 1, ...validBody, end_date: null, created_at: new Date().toISOString() }],
+      });
+  });
+
+  it("rejects a past end date with 400", async () => {
+    const pastDate = new Date(Date.now() - 1000).toISOString();
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBody, endDate: pastDate });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_END_DATE");
+  });
+
+  it("rejects an end date less than 1 hour in the future with 400", async () => {
+    const underOneHour = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBody, endDate: underOneHour });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_END_DATE");
+  });
+
+  it("rejects an end date more than 1 year in the future with 400", async () => {
+    const overOneYear = new Date(Date.now() + 366 * 24 * 3600_000).toISOString();
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBody, endDate: overOneYear });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_END_DATE");
+  });
+
+  it("accepts a valid end date exactly 2 hours in the future", async () => {
+    const validDate = new Date(Date.now() + 2 * 3600_000).toISOString();
+    const res = await request(app)
+      .post("/api/markets")
+      .send({ ...validBody, endDate: validDate });
+
+    expect(res.status).toBe(201);
+    expect(res.body.market).toBeDefined();
   });
 });
