@@ -19,6 +19,7 @@ module.exports = {
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
         "src/hooks/useOnboarding.ts",
+        "src/hooks/useTheme.ts",
         "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {

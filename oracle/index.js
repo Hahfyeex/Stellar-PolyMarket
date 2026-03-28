@@ -5,6 +5,22 @@ const { btcSources } = require("./sources");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
 
+// ── DB connection for audit logging ──────────────────────────────────────────
+// Lazy-require so the oracle can run without a DB in test environments.
+// The DB pool is only used for audit logging — resolution still works without it.
+let _db = null;
+function getDb() {
+  if (!_db && process.env.DATABASE_URL) {
+    try {
+      const { Pool } = require("pg");
+      _db = new Pool({ connectionString: process.env.DATABASE_URL });
+    } catch {
+      // pg not installed or DATABASE_URL invalid — audit logging disabled
+    }
+  }
+  return _db;
+}
+
 // ── Graceful Shutdown State ───────────────────────────────────────────────────
 
 let intervalHandle = null;
@@ -125,10 +141,11 @@ async function fetchOutcome(question, outcomes) {
 
 async function resolveCryptoPrice(question, outcomes) {
   try {
-    // Use medianizer to aggregate 4 independent BTC/USD sources in parallel,
-    // filter outliers, and return a manipulation-resistant median price.
-    const medianizer = new OracleMedianizer(btcSources);
-    const btcPrice = await medianizer.aggregate();
+    // Use medianizer to aggregate independent BTC/USD sources in parallel,
+    // filter outliers (>2σ), and return a manipulation-resistant median price.
+    // DB is injected for audit logging — null in test environments.
+    const medianizer = new OracleMedianizer(btcSources, console, getDb());
+    const btcPrice = await medianizer.aggregate("BTC/USD");
     console.log(`[Oracle] BTC median price: ${btcPrice}`);
 
     if (question.toLowerCase().includes("100k") || question.includes("100,000")) {
@@ -136,8 +153,13 @@ async function resolveCryptoPrice(question, outcomes) {
     }
     return 0;
   } catch (err) {
+    // Insufficient sources (< 2 valid) — push to pending review
+    if (err.message.includes("Insufficient valid sources") || err.message.includes("Too many outliers")) {
+      console.error(`[Oracle] Crypto price aggregation failed — pushing to pending review: ${err.message}`);
+      throw err; // bubble up so resolveMarket calls markUnresolvable
+    }
     console.error("[Oracle] Crypto price aggregation failed:", err.message);
-    return 0;
+    throw err;
   }
 }
 
