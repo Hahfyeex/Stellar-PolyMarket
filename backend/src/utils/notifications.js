@@ -1,26 +1,43 @@
-const axios = require("axios");
+const db = require("../db");
 const logger = require("./logger");
 
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || "http://localhost:5001/stellar-polymarket/us-central1/sendPushNotification";
-
 /**
- * Trigger a notification for a market status change
- * @param {number} marketId 
- * @param {string} newStatus - 'PROPOSED' or 'RESOLVED'
+ * Trigger a notification by inserting a row into the notifications table.
+ * @param {string} walletAddress
+ * @param {string} type - e.g. 'MARKET_PROPOSED' | 'MARKET_RESOLVED'
+ * @param {string} message
+ * @param {number|null} marketId
  */
-async function triggerNotification(marketId, newStatus) {
-  logger.info({ market_id: marketId, status: newStatus }, "Triggering notification");
+async function triggerNotification(walletAddress, type, message, marketId = null) {
   try {
-    // In a real cloud production environment, this would be an internal network call or a pub/sub event.
-    // For this implementation, we'll simulate it with a webhook-style POST request.
-    await axios.post(NOTIFICATION_SERVICE_URL, {
-      marketId,
-      status: newStatus,
-    });
-    logger.debug({ market_id: marketId, status: newStatus }, "Notification service called successfully");
+    logger.info(
+      { wallet_address: walletAddress, type, market_id: marketId },
+      "Triggering notification"
+    );
+    await db.query(
+      `INSERT INTO notifications (wallet_address, type, message, market_id) VALUES ($1, $2, $3, $4)`,
+      [walletAddress, type, message, marketId]
+    );
+    logger.debug({ wallet_address: walletAddress, type }, "Notification inserted");
   } catch (err) {
-    logger.warn({ market_id: marketId, status: newStatus, err: err.message }, "Failed to alert notification service");
-    // We don't want to fail the main transaction if notifications fail
+    logger.warn(
+      { err: err.message, market_id: marketId, type },
+      "Failed to insert notification"
+    );
+
+    // Dead-letter mechanism: persistence for later retry
+    try {
+      await db.query(
+        `INSERT INTO failed_notifications (wallet_address, type, message, market_id, error_message) VALUES ($1, $2, $3, $4, $5)`,
+        [walletAddress, type, message, marketId, err.message]
+      );
+    } catch (dlqErr) {
+      logger.error(
+        { err: dlqErr.message, original_err: err.message, market_id: marketId },
+        "Critical error: failed to insert into dead-letter queue"
+      );
+    }
+    // Non-blocking — do not re-throw error to avoid failing market resolution
   }
 }
 

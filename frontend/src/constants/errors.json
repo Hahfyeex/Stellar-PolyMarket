@@ -1,0 +1,106 @@
+{
+  "ERR_101": {
+    "en": "Contract already initialized",
+    "fr": "Contrat déjà initialisé"
+  },
+  "ERR_102": {
+    "en": "Contract paused",
+    "fr": "Contrat en pause"
+  },
+  "ERR_103": {
+    "en": "Platform is shut down",
+    "fr": "La plateforme est fermée"
+  },
+  "ERR_104": {
+    "en": "Market already exists",
+    "fr": "Le marché existe déjà"
+  },
+  "ERR_105": {
+    "en": "Need at least 2 options",
+    "fr": "Besoin d'au moins 2 options"
+  },
+  "ERR_106": {
+    "en": "Deadline must be in the future",
+    "fr": "La date limite doit être dans le futur"
+  },
+  "ERR_107": {
+    "en": "Fee destination not configured",
+    "fr": "Destination des frais non configurée"
+  },
+  "ERR_108": {
+    "en": "Insufficient fee balance",
+    "fr": "Solde des frais insuffisant"
+  },
+  "ERR_109": {
+    "en": "Amount must be positive",
+    "fr": "Le montant doit être positif"
+  },
+  "ERR_110": {
+    "en": "Market is paused",
+    "fr": "Le marché est en pause"
+  },
+  "ERR_111": {
+    "en": "Market not active",
+    "fr": "Marché inactif"
+  },
+  "ERR_112": {
+    "en": "Invalid option index",
+    "fr": "Index d'option invalide"
+  },
+  "ERR_113": {
+    "en": "Fee must be non-negative",
+    "fr": "Les frais doivent être positifs ou nuls"
+  },
+  "ERR_114": {
+    "en": "Invalid outcome index",
+    "fr": "Index de résultat invalide"
+  },
+  "ERR_115": {
+    "en": "Bond must be positive",
+    "fr": "La caution doit être positive"
+  },
+  "ERR_116": {
+    "en": "Market not in Proposed state",
+    "fr": "Le marché n'est pas dans l'état Proposé"
+  },
+  "ERR_117": {
+    "en": "Market must be proposed or disputed to resolve",
+    "fr": "Le marché doit être proposé ou contesté pour être résolu"
+  },
+  "ERR_118": {
+    "en": "Liveness window has not elapsed",
+    "fr": "La fenêtre de validité n'est pas écoulée"
+  },
+  "ERR_119": {
+    "en": "Market already swept",
+    "fr": "Marché déjà balayé"
+  },
+  "ERR_120": {
+    "en": "Market not resolved yet",
+    "fr": "Marché non encore résolu"
+  },
+  "ERR_121": {
+    "en": "Claim deadline not reached (30 days required)",
+    "fr": "Date limite de réclamation non atteinte (30 jours requis)"
+  },
+  "ERR_122": {
+    "en": "No funds in vault to invest",
+    "fr": "Pas de fonds dans le coffre à investir"
+  },
+  "ERR_123": {
+    "en": "No payout for this address",
+    "fr": "Aucun paiement pour cette adresse"
+  },
+  "ERR_124": {
+    "en": "Already claimed",
+    "fr": "Déjà réclamé"
+  },
+  "ERR_125": {
+    "en": "Insufficient vault balance",
+    "fr": "Solde du coffre insuffisant"
+  },
+  "ERR_126": {
+    "en": "Batch size must be between 1 and MAX_BATCH_SIZE",
+    "fr": "La taille du lot doit être comprise entre 1 et MAX_BATCH_SIZE"
+  }
+}

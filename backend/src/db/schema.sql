@@ -1,6 +1,15 @@
+CREATE TABLE IF NOT EXISTS categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL,
+  slug VARCHAR(50) UNIQUE NOT NULL,
+  icon_name VARCHAR(50) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS markets (
   id SERIAL PRIMARY KEY,
   question TEXT NOT NULL,
+  category_id INT REFERENCES categories(id),
   end_date TIMESTAMPTZ NOT NULL,
   outcomes TEXT[] NOT NULL,
   resolved BOOLEAN DEFAULT FALSE,
@@ -28,18 +37,37 @@ CREATE TABLE IF NOT EXISTS user_notifications (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS users (
-  wallet_address TEXT PRIMARY KEY,
-  email TEXT,
-  social_handles JSONB DEFAULT '{}'::jsonb,
-  profile_bio TEXT,
+-- Governance: disputes submitted for council review
+CREATE TABLE IF NOT EXISTS governance_disputes (
+  id SERIAL PRIMARY KEY,
+  market_id INT REFERENCES markets(id),
+  proposed_outcome TEXT NOT NULL,
+  dispute_reason TEXT NOT NULL,
+  evidence JSONB DEFAULT '[]'::jsonb,  -- [{ label, url, type }]
+  quorum_required INT NOT NULL DEFAULT 5,
+  status TEXT NOT NULL DEFAULT 'active', -- active | resolved | expired
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS audit_logs (
+-- Governance: one vote per council member per dispute
+CREATE TABLE IF NOT EXISTS governance_votes (
   id SERIAL PRIMARY KEY,
-  action TEXT NOT NULL,
+  dispute_id INT REFERENCES governance_disputes(id),
   wallet_address TEXT NOT NULL,
-  details JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  vote TEXT NOT NULL CHECK (vote IN ('yes', 'no')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (dispute_id, wallet_address)
+);
+
+-- Oracle price audit log — records all source values, outliers, and median per aggregation run
+CREATE TABLE IF NOT EXISTS oracle_price_log (
+  id               SERIAL PRIMARY KEY,
+  asset            TEXT NOT NULL,                  -- e.g. 'BTC/USD'
+  fetched_at       TIMESTAMPTZ NOT NULL,           -- when sources were queried
+  source_values    NUMERIC[] NOT NULL,             -- raw values from all valid sources
+  outliers         NUMERIC[] NOT NULL DEFAULT '{}', -- values rejected by outlier filter
+  filtered_values  NUMERIC[] NOT NULL,             -- values used to compute median
+  median_value     NUMERIC NOT NULL,               -- final aggregated price
+  created_at       TIMESTAMPTZ DEFAULT NOW()
 );
