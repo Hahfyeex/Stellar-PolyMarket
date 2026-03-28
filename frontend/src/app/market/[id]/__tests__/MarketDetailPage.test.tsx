@@ -177,6 +177,53 @@ describe("MarketDetailPage", () => {
     });
   });
 
+  describe("Outcome Data Handling", () => {
+    async function renderWithMarket(marketOverride: any) {
+      (fetch as jest.Mock).mockImplementation((url: string) => {
+        if (url.includes("/api/markets/")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ market: marketOverride, bets: DEMO_BETS }),
+          });
+        }
+        if (url.includes("/api/reserves")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ markets: [{ market_id: 1, xlm_balance: "4500" }] }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+
+      render(<MarketDetailPage marketId="1" />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getByText(/Will Bitcoin reach/i)).toBeInTheDocument();
+      });
+    }
+
+    it("shows fallback when outcomes is null", async () => {
+      await renderWithMarket({ ...DEMO_MARKET, outcomes: null as any });
+      expect(screen.getByText("Outcome data unavailable")).toBeInTheDocument();
+    });
+
+    it("shows fallback when outcomes is undefined", async () => {
+      const market = { ...DEMO_MARKET } as any;
+      delete market.outcomes;
+      await renderWithMarket(market);
+      expect(screen.getByText("Outcome data unavailable")).toBeInTheDocument();
+    });
+
+    it("shows fallback when outcomes is empty", async () => {
+      await renderWithMarket({ ...DEMO_MARKET, outcomes: [] });
+      expect(screen.getByText("Outcome data unavailable")).toBeInTheDocument();
+    });
+
+    it("does not show fallback when outcomes is valid", async () => {
+      await renderWithMarket({ ...DEMO_MARKET, outcomes: ["Up", "Down"] });
+      expect(screen.queryByText("Outcome data unavailable")).not.toBeInTheDocument();
+    });
+  });
+
   describe("Tab Navigation", () => {
     beforeEach(async () => {
       render(<MarketDetailPage marketId="1" />, { wrapper: createWrapper() });
