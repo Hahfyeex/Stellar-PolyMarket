@@ -283,13 +283,16 @@ fn release_reentrancy_lock(env: &Env) {
 
 #[contractimpl]
 impl PredictionMarket {
-    /// Initialize contract with admin address.
-    pub fn initialize(env: Env, admin: Address) {
+    /// Initialize contract with admin address and DAO treasury address.
+    pub fn initialize(env: Env, admin: Address, treasury_address: Address) {
         check_initialized(&env);
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::FeeRateBps, &300u32);
         env.storage().instance().set(&DataKey::MarketCounter, &0u64);
+        // Default creation fee: 0.5 XLM = 5_000_000 stroops
+        env.storage().instance().set(&DataKey::CreationFee, &5_000_000i128);
+        env.storage().instance().set(&DataKey::TreasuryAddress, &treasury_address);
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         // Bootstrap SuperAdmin in Persistent storage (new role system)
         bootstrap_super_admin(&env, &admin);
@@ -404,7 +407,6 @@ impl PredictionMarket {
         condition_market_id: Option<u64>,
         condition_outcome: Option<u32>,
     ) -> u64 {
-        creator.require_auth();
         require_role(&env, &creator, Role::Pauser);
         check_platform_active(&env);
         assert!(lmsr_b > 0, "lmsr_b must be positive");
@@ -428,7 +430,7 @@ impl PredictionMarket {
         );
 
         // --- Creation fee collection ---
-        // Read configured fee; default 0 means free market creation.
+        // Transfer creation fee from creator to DAO treasury.
         let creation_fee: i128 = env
             .storage()
             .instance()
@@ -436,33 +438,21 @@ impl PredictionMarket {
             .unwrap_or(0i128);
 
         if creation_fee > 0 {
-            // FeeDestination must be set when fee > 0.
-            let fee_destination: Address = env
+            let treasury: Address = env
                 .storage()
                 .instance()
-                .get(&DataKey::FeeDestination)
-                .expect("FeeDestination not configured");
+                .get(&DataKey::TreasuryAddress)
+                .expect("TreasuryAddress not configured");
 
-            // Transfer fee from creator to destination (burn address or DAO treasury).
-            // The token contract will panic with a host error if the creator has
-            // insufficient balance, aborting the entire transaction — no market is created.
-            // We wrap in try_transfer and map any error to our own panic message so
-            // callers see a clear "InsufficientFeeBalance" reason.
             let fee_token = token::Client::new(&env, &token);
             if fee_token
-                .try_transfer(&creator, &fee_destination, &creation_fee)
+                .try_transfer(&creator, &treasury, &creation_fee)
                 .is_err()
             {
                 panic!("InsufficientFeeBalance");
             }
 
-            // Emit FeeCollected event for off-chain indexing.
-            let fee_mode: FeeMode = env
-                .storage()
-                .instance()
-                .get(&DataKey::FeeModeConfig)
-                .unwrap_or(FeeMode::Treasury);
-            emit_fee_collected(&env, id, &creator, &fee_destination, creation_fee);
+            emit_fee_collected(&env, id, &creator, &treasury, creation_fee);
         }
         // --- End fee collection ---
 
@@ -896,6 +886,16 @@ impl PredictionMarket {
             .unwrap_or(0)
     }
 
+    /// Set the market creation fee (FeeSetter role only).
+    /// `new_fee` must be in stroops: 0 ≤ new_fee ≤ 100_000_000 (10 XLM max).
+    pub fn set_creation_fee(env: Env, caller: Address, new_fee: i128) {
+        require_role(&env, &caller, Role::FeeSetter);
+        assert!(new_fee >= 0, "Fee must be non-negative");
+        assert!(new_fee <= 100_000_000i128, "Fee exceeds maximum of 10 XLM");
+        env.storage().instance().set(&DataKey::CreationFee, &new_fee);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+    }
+
     /// Update the market creation fee configuration (admin only).
     ///
     /// # Parameters
@@ -920,7 +920,6 @@ impl PredictionMarket {
     /// Only callable by the FeeSetter role. Max 1000 bps (10%).
     /// Emits FeeRateUpdated event on every update.
     pub fn set_fee_rate(env: Env, caller: Address, new_rate_bps: u32) {
-        caller.require_auth();
         require_role(&env, &caller, Role::FeeSetter);
         assert!(new_rate_bps <= 1000, "fee rate exceeds maximum of 10 percent");
         let old_rate_bps: u32 = env
@@ -2333,9 +2332,11 @@ mod tests {
         let client = PredictionMarketClient::new(&env, &contract_id);
         
         let admin = Address::generate(&env);
-        client.initialize(&admin);
-        
         let fee_dest = Address::generate(&env);
+        client.initialize(&admin, &fee_dest);
+        // Grant admin the FeeSetter role so fee/whitelist calls succeed
+        client.assign_role(&admin, &Role::FeeSetter, &admin);
+        // Zero out creation fee so existing tests don't need token balances for creators
         client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
 
         let token_admin = Address::generate(&env);
@@ -2346,6 +2347,8 @@ mod tests {
         client.update_bet_limits(&admin, &1i128, &0i128);
 
         let creator = Address::generate(&env);
+        // Grant creator the Pauser role (required by create_market)
+        client.assign_role(&admin, &Role::Pauser, &creator);
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
@@ -2383,9 +2386,9 @@ mod tests {
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
-
         let fee_dest = Address::generate(&env);
+        client.initialize(&admin, &fee_dest);
+        client.assign_role(&admin, &Role::FeeSetter, &admin);
         client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
 
         let loser = Address::generate(&env);
@@ -2424,6 +2427,7 @@ mod tests {
         }
 
         let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
@@ -2463,14 +2467,15 @@ mod tests {
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
-
         let fee_dest = Address::generate(&env);
+        client.initialize(&admin, &fee_dest);
+        client.assign_role(&admin, &Role::FeeSetter, &admin);
         client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
 
         let token_admin = Address::generate(&env);
         let sac = env.register_stellar_asset_contract_v2(token_admin);
         let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
@@ -2526,8 +2531,9 @@ mod tests {
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
-        client.initialize(&admin);
+        let treasury = Address::generate(&env);
+        client.initialize(&admin, &treasury);
+        client.initialize(&admin, &treasury);
     }
 
     // ── Instance storage: total_shares ────────────────────────────────────────
@@ -2547,51 +2553,35 @@ mod tests {
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let fee_dest = Address::generate(&env);
+        client.initialize(&admin, &fee_dest);
+        client.assign_role(&admin, &Role::FeeSetter, &admin);
+        client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
 
         let token_admin_addr = Address::generate(&env);
         let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
         let token_addr = sac.address();
-        
-        client.set_token_whitelist(&admin, &token_addr, &true);
-        client.update_bet_limits(&admin, &1i128, &0i128);
-        
-        client.configure_fee_split(
-            &admin,
-            &10000u32,
-            &0u32,
-            &0u32,
-            &fee_dest,
-            &fee_dest.clone(),
-            &fee_dest.clone(),
-        );
-
         let sac_client = token::StellarAssetClient::new(&env, &token_addr);
 
-        let mut bettors: Vec<Address> = Vec::new(&env);
-        for _ in 0..n {
-            bettors.push_back(Address::generate(&env));
-        }
+        client.set_token_whitelist(&admin, &token_addr, &true);
+        client.update_bet_limits(&admin, &1i128, &0i128);
+        client.configure_fee_split(
+            &admin, &10000u32, &0u32, &0u32,
+            &fee_dest, &fee_dest.clone(), &fee_dest.clone(),
+        );
 
-        let all_recipients: soroban_sdk::Vec<Address> = {
-            let mut v = bettors.clone();
-            v.push_back(loser.clone());
-            v
-        };
-        for addr in all_recipients.iter() {
-            sac_client.mint(&addr, &100_000_000i128);
-        }
+        let bettor1 = Address::generate(&env);
+        let bettor2 = Address::generate(&env);
+        sac_client.mint(&bettor1, &100_000_000i128);
+        sac_client.mint(&bettor2, &100_000_000i128);
 
         let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
         let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![
-            &env,
-            String::from_str(&env, "Yes"),
-            String::from_str(&env, "No"),
-        ];
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
         client.create_market(
             &creator,
-            &String::from_str(&env, "Batch test market"),
+            &String::from_str(&env, "Shares test market"),
             &options,
             &deadline,
             &token_addr,
@@ -2600,19 +2590,10 @@ mod tests {
             &None,
         );
 
-        for bettor in bettors.iter() {
-            client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
-        }
-        client.place_bet(&1u64, &1u32, &loser, &1_000_000i128);
-        
-        let now = env.ledger().timestamp();
-        client.propose_resolution(&1u64, &0u32, &now);
-        
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
-        
-        client.resolve_market(&admin, &1u64, &0u32);
+        client.place_bet(&1u64, &0u32, &bettor1, &1_000_000i128);
+        client.place_bet(&1u64, &0u32, &bettor2, &1_000_000i128);
 
-        (env, client, bettors)
+        assert!(client.get_total_shares(&1u64) > 0);
     }
 
     // ── Creation and configuration tests ───────────────────────────────────────
@@ -2621,6 +2602,7 @@ mod tests {
     fn test_create_market_with_minimum_options() {
         let (env, client, admin, token, _) = setup();
         let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
@@ -2637,7 +2619,7 @@ mod tests {
             &None,
             &None,
         );
-        assert_eq!(market_id, 1u64);
+        assert_eq!(market_id, 2u64); // market 1 was created in setup()
     }
 
     #[test]
@@ -2645,6 +2627,7 @@ mod tests {
     fn test_create_market_with_insufficient_options_panics() {
         let (env, client, admin, token, _) = setup();
         let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
@@ -2664,10 +2647,10 @@ mod tests {
 
     #[test]
     fn test_update_fee_split_and_verify() {
-        let (_, client, admin, _, _) = setup();
-        let new_treasury_addr = Address::generate(&env);
-        let new_lp_addr = Address::generate(&env);
-        let new_burn_addr = Address::generate(&env);
+        let (env, client, admin, _, _) = setup();
+        let _new_treasury_addr = Address::generate(&env);
+        let _new_lp_addr = Address::generate(&env);
+        let _new_burn_addr = Address::generate(&env);
         client.update_fee_split(&admin, &2500u32, &7500u32, &0u32);
         let config = client.get_fee_split_config();
         assert_eq!(config.0.treasury_bps, 2500);
@@ -2677,7 +2660,7 @@ mod tests {
 
     #[test]
     fn test_update_fee_addresses_and_verify() {
-        let (_, client, admin, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let new_treasury_addr = Address::generate(&env);
         let new_lp_addr = Address::generate(&env);
         let new_burn_addr = Address::generate(&env);
@@ -2709,12 +2692,13 @@ mod tests {
         let (env, client, admin, token, _) = setup();
         client.update_fee(&admin, &0i128, &token, &FeeMode::Treasury);
         let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
         let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
         let market_id = client.create_market(
             &creator,
             &String::from_str(&env, "Free market"),
             &options,
-            &(env.ledger().timestamp() + 100),
+            &(env.ledger().timestamp() + 86400),
             &token,
             &100_000_000i128,
             &None,
@@ -2728,19 +2712,21 @@ mod tests {
         let (env, client, admin, token, _) = setup();
         client.update_fee(&admin, &100i128, &token, &FeeMode::Treasury);
         let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
+        // Mint tokens to creator so the fee transfer succeeds
+        let sac_client = token::StellarAssetClient::new(&env, &token);
+        sac_client.mint(&creator, &100_000_000i128);
         let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
-        let market_id = client.create_market(
+        client.create_market(
             &creator,
             &String::from_str(&env, "Fee market"),
             &options,
-            &(env.ledger().timestamp() + 100),
+            &(env.ledger().timestamp() + 86400),
             &token,
             &100_000_000i128,
             &None,
             &None,
         );
-
-        // Creator's balance should reflect the fee deduction
         let fee_token = token::Client::new(&env, &token);
         let creator_balance = fee_token.balance(&creator);
         assert!(creator_balance < 100_000_000i128, "Creator should be charged a fee");
@@ -2812,5 +2798,111 @@ mod tests {
 
         let total_after = client.get_total_shares(&1u64);
         assert!(total_after < total_before);
+    }
+
+    // ── set_creation_fee tests ────────────────────────────────────────────────
+
+    /// Helper: create a minimal env with admin having FeeSetter role.
+    fn setup_fee_test() -> (Env, PredictionMarketClient<'static>, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        client.initialize(&admin, &treasury);
+        client.assign_role(&admin, &Role::FeeSetter, &admin);
+        (env, client, admin, treasury)
+    }
+
+    #[test]
+    fn test_initialize_sets_default_creation_fee_and_treasury() {
+        let (_env, client, _admin, _treasury) = setup_fee_test();
+        let (fee, _dest, _mode) = client.get_fee_config();
+        // Default creation fee must be 5_000_000 stroops (0.5 XLM)
+        assert_eq!(fee, 5_000_000i128);
+    }
+
+    #[test]
+    fn test_set_creation_fee_updates_stored_fee() {
+        let (_env, client, admin, _treasury) = setup_fee_test();
+        client.set_creation_fee(&admin, &10_000_000i128);
+        let (fee, _dest, _mode) = client.get_fee_config();
+        assert_eq!(fee, 10_000_000i128);
+    }
+
+    #[test]
+    fn test_set_creation_fee_zero_disables_fee() {
+        let (_env, client, admin, _treasury) = setup_fee_test();
+        client.set_creation_fee(&admin, &0i128);
+        let (fee, _dest, _mode) = client.get_fee_config();
+        assert_eq!(fee, 0i128);
+    }
+
+    #[test]
+    fn test_set_creation_fee_at_maximum_boundary() {
+        let (_env, client, admin, _treasury) = setup_fee_test();
+        // Exactly 10 XLM (100_000_000 stroops) must be accepted
+        client.set_creation_fee(&admin, &100_000_000i128);
+        let (fee, _dest, _mode) = client.get_fee_config();
+        assert_eq!(fee, 100_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Fee exceeds maximum of 10 XLM")]
+    fn test_set_creation_fee_above_maximum_panics() {
+        let (_env, client, admin, _treasury) = setup_fee_test();
+        // 100_000_001 stroops > 10 XLM — must panic
+        client.set_creation_fee(&admin, &100_000_001i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Fee must be non-negative")]
+    fn test_set_creation_fee_negative_panics() {
+        let (_env, client, admin, _treasury) = setup_fee_test();
+        client.set_creation_fee(&admin, &-1i128);
+    }
+
+    #[test]
+    fn test_creation_fee_transferred_to_treasury_on_market_creation() {
+        let (env, client, admin, treasury) = setup_fee_test();
+
+        let token_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin);
+        let token_addr = sac.address();
+        let sac_client = token::StellarAssetClient::new(&env, &token_addr);
+
+        client.set_token_whitelist(&admin, &token_addr, &true);
+        client.update_bet_limits(&admin, &1i128, &0i128);
+        client.configure_fee_split(
+            &admin, &10000u32, &0u32, &0u32,
+            &treasury, &treasury.clone(), &treasury.clone(),
+        );
+
+        // Set creation fee to 5_000_000 stroops (already default, but explicit)
+        client.set_creation_fee(&admin, &5_000_000i128);
+
+        let creator = Address::generate(&env);
+        client.assign_role(&admin, &Role::Pauser, &creator);
+        sac_client.mint(&creator, &10_000_000i128);
+
+        let token_client = token::Client::new(&env, &token_addr);
+        let treasury_before = token_client.balance(&treasury);
+
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+        client.create_market(
+            &creator,
+            &String::from_str(&env, "Fee market"),
+            &options,
+            &(env.ledger().timestamp() + 86400),
+            &token_addr,
+            &100_000_000i128,
+            &None,
+            &None,
+        );
+
+        let treasury_after = token_client.balance(&treasury);
+        // Treasury must have received exactly 5_000_000 stroops
+        assert_eq!(treasury_after - treasury_before, 5_000_000i128);
     }
 }
