@@ -106,16 +106,17 @@ export default function MarketDetailPage() {
 
   return (
     <main className="min-h-screen bg-gray-950 text-white">
-      {/* Top nav */}
+      {/* Top nav with back button */}
       <nav className="flex items-center gap-3 px-4 md:px-6 py-4 border-b border-gray-800 sticky top-0 z-30 bg-gray-950/90 backdrop-blur-sm">
         <button
-          onClick={() => router.back()}
-          className="text-gray-400 hover:text-white transition-colors"
-          aria-label="Go back"
+          onClick={() => router.push("/")}
+          className="text-gray-400 hover:text-white transition-colors flex items-center gap-2"
+          aria-label="Back to markets"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
             <path d="M19 12H5M12 5l-7 7 7 7" />
           </svg>
+          <span className="text-sm">Back</span>
         </button>
         <Link href="/" className="text-blue-400 font-bold text-sm">Stella Polymarket</Link>
         <span className="text-gray-600">/</span>
@@ -147,10 +148,10 @@ export default function MarketDetailPage() {
           </div>
         )}
 
-        {/* ── MAIN LAYOUT: chart + sidebar ── */}
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left column — chart + stats + comments */}
-          <div className="flex-1 min-w-0 space-y-6">
+        {/* ── MAIN LAYOUT: Two-column desktop / Single-column mobile ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[65%_35%] gap-6">
+          {/* Left column (65%) — market info, odds chart, bet history */}
+          <div className="min-w-0 space-y-6">
             {/* 1. PROBABILITY CHART — primary element */}
             {loading ? (
               <ChartSkeleton />
@@ -190,24 +191,57 @@ export default function MarketDetailPage() {
               </div>
             )}
 
-            {/* 3. Pool ownership chart */}
+            {/* 3. Bet History Table */}
+            {!loading && market && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <h3 className="text-white font-semibold text-base mb-4">Recent Bets</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-gray-400 text-xs border-b border-gray-800">
+                        <th className="text-left pb-2">Wallet</th>
+                        <th className="text-left pb-2">Outcome</th>
+                        <th className="text-right pb-2">Amount</th>
+                        <th className="text-right pb-2">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-300">
+                      <tr className="border-b border-gray-800/50">
+                        <td className="py-2 font-mono text-xs">G...ABC</td>
+                        <td className="py-2">{market.outcomes[0]}</td>
+                        <td className="py-2 text-right">100 XLM</td>
+                        <td className="py-2 text-right text-gray-500">2m ago</td>
+                      </tr>
+                      <tr className="border-b border-gray-800/50">
+                        <td className="py-2 font-mono text-xs">G...XYZ</td>
+                        <td className="py-2">{market.outcomes[1] || market.outcomes[0]}</td>
+                        <td className="py-2 text-right">250 XLM</td>
+                        <td className="py-2 text-right text-gray-500">5m ago</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* 4. Pool ownership chart */}
             {!loading && market && (
               <ContractErrorBoundary context={`PoolChart-${market.id}`} store={store}>
                 <PoolOwnershipChart marketId={market.id} />
               </ContractErrorBoundary>
             )}
 
-            {/* 4. Social sentiment */}
+            {/* 5. Social sentiment */}
             {!loading && market && (
               <SocialSentiment outcomes={market.outcomes} totalPool={parseFloat(market.total_pool)} />
             )}
 
-            {/* 5. Firebase-powered comments */}
+            {/* 6. Firebase-powered comments */}
             {!loading && market && (
               <MarketComments marketId={market.id} walletAddress={publicKey} />
             )}
 
-            {/* 5. Market rules + truth sources */}
+            {/* 7. Market rules + truth sources */}
             {!loading && market && (
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
                 <h3 className="text-white font-semibold text-base">Market Rules</h3>
@@ -253,32 +287,32 @@ export default function MarketDetailPage() {
             )}
           </div>
 
-          {/* Right column — Trade Modal (sidebar on desktop) */}
-          <div className="w-full lg:w-80 shrink-0">
-            {!loading && market ? (
-              <ContractErrorBoundary context={`TradeModal-${market.id}`} store={store}>
-                <TradeModal
-                  market={market}
-                  walletAddress={publicKey}
-                  onBetPlaced={fetchMarket}
-                  onConnectWallet={connect}
-                />
-              </ContractErrorBoundary>
-            ) : (
-              <div className="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-3">
-                <div className="skeleton h-5 w-24 rounded" />
-                <div className="skeleton h-12 w-full rounded-xl" />
-                <div className="skeleton h-12 w-full rounded-xl" />
-                <div className="skeleton h-12 w-full rounded-xl" />
-              </div>
-            )}
-            
-            {/* What-If Simulator Panel */}
-            {!loading && market && (
-              <div className="mt-6">
+          {/* Right column (35%) — Sticky bet form on desktop */}
+          <div className="w-full">
+            <div className="lg:sticky lg:top-20 space-y-4">
+              {!loading && market ? (
+                <ContractErrorBoundary context={`TradeModal-${market.id}`} store={store}>
+                  <TradeModal
+                    market={market}
+                    walletAddress={publicKey}
+                    onBetPlaced={fetchMarket}
+                    onConnectWallet={connect}
+                  />
+                </ContractErrorBoundary>
+              ) : (
+                <div className="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-3">
+                  <div className="skeleton h-5 w-24 rounded" />
+                  <div className="skeleton h-12 w-full rounded-xl" />
+                  <div className="skeleton h-12 w-full rounded-xl" />
+                  <div className="skeleton h-12 w-full rounded-xl" />
+                </div>
+              )}
+              
+              {/* What-If Simulator Panel */}
+              {!loading && market && (
                 <SimulatorPanel market={market} />
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
 

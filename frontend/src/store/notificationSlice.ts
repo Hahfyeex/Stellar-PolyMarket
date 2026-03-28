@@ -7,12 +7,13 @@
  *   MARKET_RESOLVED    — a market the user bet on has been resolved
  *   PAYOUT_AVAILABLE   — winnings are ready to claim
  *   MARKET_ENDING_SOON — a market closes within 1 hour
+ *   DISPUTE_OPENED     — a dispute has been opened on a market
  *
  * State is persisted to localStorage so unread counts survive page refresh.
  */
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-export type NotificationType = "MARKET_RESOLVED" | "PAYOUT_AVAILABLE" | "MARKET_ENDING_SOON";
+export type NotificationType = "MARKET_RESOLVED" | "PAYOUT_AVAILABLE" | "MARKET_ENDING_SOON" | "DISPUTE_OPENED";
 
 export interface Notification {
   id: string;
