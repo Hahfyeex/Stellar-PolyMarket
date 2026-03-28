@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
+import type { Market } from "../../types/market";
+import ResolutionCenter from "../ResolutionCenter";
 import { trackEvent } from "../../lib/firebase";
 import type { Market } from "../../types/market";
 import ResolutionCenter from "../ResolutionCenter";
@@ -35,6 +37,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const isExpired = market ? new Date(market.end_date) <= new Date() : false;
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
 
   // Reset drag when drawer opens/closes
@@ -177,6 +180,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                     key={i}
                     onClick={() => setSelectedOutcome(i)}
                     disabled={market.resolved || isExpired}
+                    disabled={market.resolved || isExpired}
                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
                       ${
                         market.resolved && market.winning_outcome === i
@@ -192,6 +196,22 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               </div>
 
               {/* Amount input */}
+              {walletAddress && !market.resolved && !isExpired ? (
+                <div className="flex gap-3">
+                  <input
+                    type="number"
+                    placeholder="Amount (XLM)"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
+                  />
+                  <button
+                    onClick={placeBet}
+                    disabled={loading || selectedOutcome === null || !amount}
+                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
+                  >
+                    {loading ? "..." : "Bet"}
+                  </button>
               {walletAddress && !market.resolved && !isExpired ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-3">
@@ -243,7 +263,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 <p className="text-gray-400 text-sm text-center py-2">
                   {walletAddress
                     ? "Betting is closed for this market"
-                    : "Connect your wallet to place a bet"}
+                    : "{walletAddress ? "Betting is closed for this market" : "Connect your wallet to place a bet"}"}
                 </p>
               )}
 

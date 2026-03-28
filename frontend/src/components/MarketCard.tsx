@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
-import Link from "next/link"; // Added missing Link import
+import type { Market } from "../types/market";
+import ResolutionCenter from "./ResolutionCenter";
+import Link from "next/link";
 import { useBettingSlip } from "../context/BettingSlipContext";
+import Toast from "./Toast";
+import PoolOwnershipChart from "./PoolOwnershipChart";
+import PayoutTooltip from "./PayoutTooltip";
 import PayoutTooltip from "./PayoutTooltip"; // Added missing PayoutTooltip import
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useSlippageGuard } from "../hooks/useSlippageGuard";
@@ -16,17 +21,7 @@ import TrustlineModal from "./TrustlineModal";
 import WhatIfSimulator from "./WhatIfSimulator";
 import { useOptimisticBet } from "../hooks/useOptimisticBet";
 import OptimisticBetIndicator from "./OptimisticBetIndicator";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-  asset?: { code: string; issuer: string };
-}
+import OddsTicker from "./OddsTicker";
 
 interface Props {
   market: Market;
@@ -70,6 +65,9 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const isExpired = new Date(market.end_date) <= new Date();
   const totalPool = parseFloat(market.total_pool);
   const outcomePool = totalPool / market.outcomes.length;
+
+  // Default odds for display in the ticker (until real per-outcome pool data is available)
+  const defaultOdds = 100 / market.outcomes.length;
 
   // Snapshot odds whenever the user selects an outcome or changes amount
   useEffect(() => {
@@ -273,7 +271,8 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
                     : "bg-gray-800 text-gray-300 hover:bg-gray-700"
               }`}
           >
-            {outcome}
+            <span>{outcome}</span>
+            <OddsTicker value={defaultOdds} size="sm" />
           </button>
         ))}
       </div>
@@ -343,6 +342,8 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       {!market.resolved && !isExpired && selectedOutcome !== null && (
         <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
+
+      <ResolutionCenter market={market} compact />
 
       <ResolutionCenter market={market} compact />
     </div>
