@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
 import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
@@ -67,6 +68,12 @@ export default function Home() {
       <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-[var(--border-default)]">
         <div className="flex items-center gap-4">
           <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+          <Link href="/markets/new" className="text-sm text-gray-300 transition-colors hover:text-white">
+            Create Market
+          </Link>
+          <Link href="/portfolio" className="text-sm text-gray-300 transition-colors hover:text-white">
+            Portfolio
+          </Link>
           <ThemeToggle />
           <button
             onClick={handleHelpClick}
@@ -114,6 +121,12 @@ export default function Home() {
       <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-[var(--border-default)]">
         <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
         <div className="flex items-center gap-3">
+          <Link href="/markets/new" className="text-xs text-gray-300">
+            Create
+          </Link>
+          <Link href="/portfolio" className="text-xs text-gray-300">
+            Portfolio
+          </Link>
           <ThemeToggle />
           {publicKey ? (
             <>

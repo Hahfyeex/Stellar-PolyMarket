@@ -1,4 +1,4 @@
-import { StrKey } from 'stellar-sdk';
+import { StrKey } from '@stellar/stellar-sdk';
 
 /**
  * Validates if a string is a valid Stellar public key address.
