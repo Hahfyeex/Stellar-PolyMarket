@@ -569,6 +569,12 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
     yes: calculateOdds(bets, 0),
     no: calculateOdds(bets, 1),
   };
+  const outcomes =
+    Array.isArray(market.outcomes) && market.outcomes.length > 0
+      ? market.outcomes
+      : ["Yes", "No"];
+  const outcomeDataAvailable =
+    Array.isArray(market.outcomes) && market.outcomes.length > 0;
 
   function handleBetPlaced() {}
 
@@ -689,14 +695,17 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
             </div>
 
             {/* Tab Content */}
+            {!outcomeDataAvailable && (
+              <p className="text-gray-500 text-xs mb-4">Outcome data unavailable</p>
+            )}
             {activeTab === "about" && (
               <AboutTab market={market} poolSize={poolData?.pool_size ?? market.total_pool} />
             )}
             {activeTab === "positions" && (
-              <PositionsTab positions={positions} outcomes={market.outcomes} />
+              <PositionsTab positions={positions} outcomes={outcomes} />
             )}
             {activeTab === "activity" && (
-              <ActivityTab marketId={market.id} outcomes={market.outcomes} />
+              <ActivityTab marketId={market.id} outcomes={outcomes} />
             )}
 
             {/* Mobile Sticky Betting Panel */}
