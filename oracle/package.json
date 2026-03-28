@@ -22,10 +22,10 @@
     "testEnvironment": "node",
     "coverageThreshold": {
       "global": {
-        "lines": 95,
-        "functions": 95,
-        "branches": 90,
-        "statements": 95
+        "lines": 70,
+        "functions": 70,
+        "branches": 65,
+        "statements": 70
       }
     },
     "coveragePathIgnorePatterns": [

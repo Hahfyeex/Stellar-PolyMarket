@@ -67,6 +67,7 @@ export default function SlippageSettings({ value, onChange }: Props) {
           key={p}
           data-testid={`slippage-preset-${p}`}
           onClick={() => select(p)}
+          aria-pressed={!customMode && value === p}
           className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors
             ${!customMode && value === p
               ? "bg-blue-600 text-white"
@@ -80,6 +81,7 @@ export default function SlippageSettings({ value, onChange }: Props) {
       <button
         data-testid="slippage-preset-custom"
         onClick={() => setCustomMode(true)}
+        aria-pressed={customMode}
         className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors
           ${customMode ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
       >

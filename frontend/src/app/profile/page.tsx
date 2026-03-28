@@ -8,28 +8,65 @@
  */
 import { useWalletContext } from "../../context/WalletContext";
 import { useUserBadge } from "../../hooks/useUserBadge";
-import { ReputationBadgeWithLabel } from "../../components/ReputationBadge";
+import { ReputationBadgeWithLabel, ReputationBadge } from "../../components/ReputationBadge";
 import { BADGE_TIERS } from "../../utils/badgeTier";
 import WalletActivityTimeline from "../../components/timeline/WalletActivityTimeline";
+import NotificationPreferencesPanel from "../../components/NotificationPreferencesPanel";
+import BetHistoryTable from "../../components/BetHistoryTable";
+import { usePortfolio } from "../../hooks/usePortfolio";
+import PortfolioSkeleton from "../../components/skeletons/PortfolioSkeleton";
 
-// ── Mock data — replace with real API calls ──────────────────────────────────
-const MOCK_RECENT_PREDICTIONS = [
-  { id: 1, question: "Will XLM reach $0.50 by end of March 2026?", outcome: "Yes", result: "correct", payout: "12.50 XLM" },
-  { id: 2, question: "Will the Stellar Development Foundation release a new SDK?", outcome: "Yes", result: "correct", payout: "8.20 XLM" },
-  { id: 3, question: "Will BTC drop below $60K in Q1 2026?", outcome: "No", result: "incorrect", payout: "0 XLM" },
-  { id: 4, question: "Will global DEX volume exceed $5B in February?", outcome: "Yes", result: "correct", payout: "22.10 XLM" },
-  { id: 5, question: "Will ETH 2.0 staking APY drop below 3%?", outcome: "No", result: "correct", payout: "6.75 XLM" },
-];
-// ─────────────────────────────────────────────────────────────────────────────
 
 function abbreviateWallet(address: string): string {
   if (address.length <= 12) return address;
   return `${address.slice(0, 6)}...${address.slice(-6)}`;
 }
 
+interface PortfolioSummaryProps {
+  summary: {
+    total_invested: string;
+    total_payout: string;
+    total_p_and_l: string;
+    win_rate: string;
+  };
+}
+
+function PortfolioSummary({ summary }: PortfolioSummaryProps) {
+  const pnl = parseFloat(summary.total_p_and_l);
+  const winRate = parseFloat(summary.win_rate) * 100;
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Total Invested</p>
+        <p className="text-white text-xl font-bold mt-1">{parseFloat(summary.total_invested).toFixed(2)} XLM</p>
+      </div>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Total Payout</p>
+        <p className="text-white text-xl font-bold mt-1">{parseFloat(summary.total_payout).toFixed(2)} XLM</p>
+      </div>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Net P&L</p>
+        <p className={`text-xl font-bold mt-1 ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+          {pnl >= 0 ? "+" : ""}{pnl.toFixed(2)} XLM
+        </p>
+      </div>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Win Rate</p>
+        <p className="text-white text-xl font-bold mt-1">{winRate.toFixed(1)}%</p>
+      </div>
+    </div>
+  );
+}
+
+
 export default function ProfilePage() {
   const { publicKey, connecting, connect } = useWalletContext();
-  const { tier, stats, isLoading, error } = useUserBadge();
+  const { tier, stats, isLoading: badgeLoading, error: badgeError } = useUserBadge();
+  const { data: portfolio, isLoading: portfolioLoading } = usePortfolio(publicKey);
+
+  const isLoading = badgeLoading || portfolioLoading;
+
 
   // ── Wallet not connected ──────────────────────────────────────────────────
   if (!publicKey) {
@@ -37,7 +74,13 @@ export default function ProfilePage() {
       <main className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-gray-900 border border-gray-700 rounded-2xl p-8 flex flex-col items-center gap-5 text-center">
           <div className="w-14 h-14 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 text-gray-400">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              className="w-7 h-7 text-gray-400"
+            >
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
@@ -63,8 +106,20 @@ export default function ProfilePage() {
   // ── Loading stats ─────────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <main className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <p className="text-gray-400 text-sm animate-pulse">Loading your stats...</p>
+      <main className="min-h-screen bg-gray-950 text-white">
+        <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
+          <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div>
+              <h1 className="text-white font-bold text-base leading-none">Profile</h1>
+            </div>
+            <a href="/" className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
+              ← Markets
+            </a>
+          </div>
+        </header>
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          <PortfolioSkeleton />
+        </div>
       </main>
     );
   }
@@ -94,11 +149,19 @@ export default function ProfilePage() {
             ) : (
               <div className="flex flex-col items-center gap-2">
                 <div className="w-24 h-24 rounded-full border-2 border-dashed border-gray-700 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="w-10 h-10 text-gray-600">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                    className="w-10 h-10 text-gray-600"
+                  >
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                   </svg>
                 </div>
-                <span className="text-xs text-gray-600 uppercase tracking-widest">No badge yet</span>
+                <span className="text-xs text-gray-600 uppercase tracking-widest">
+                  No badge yet
+                </span>
               </div>
             )}
           </div>
@@ -137,6 +200,10 @@ export default function ProfilePage() {
           </div>
         </div>
 
+        {/* Portfolio Summary */}
+        {portfolio && <PortfolioSummary summary={portfolio.summary} />}
+
+
         {/* Tier progression */}
         <section>
           <h2 className="text-gray-300 text-sm font-semibold uppercase tracking-wider mb-4">
@@ -144,9 +211,11 @@ export default function ProfilePage() {
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[...BADGE_TIERS].reverse().map(({ tier: t, minMarkets, minAccuracy }) => {
-              const isUnlocked = tier === t || (stats
-                ? stats.marketsCount >= minMarkets && stats.accuracyPct >= minAccuracy
-                : false);
+              const isUnlocked =
+                tier === t ||
+                (stats
+                  ? stats.marketsCount >= minMarkets && stats.accuracyPct >= minAccuracy
+                  : false);
 
               return (
                 <div
@@ -155,8 +224,8 @@ export default function ProfilePage() {
                     tier === t
                       ? "border-indigo-600 bg-indigo-950/20"
                       : isUnlocked
-                      ? "border-gray-700"
-                      : "border-gray-800 opacity-50"
+                        ? "border-gray-700"
+                        : "border-gray-800 opacity-50"
                   }`}
                 >
                   <div className="flex justify-center">
@@ -173,44 +242,73 @@ export default function ProfilePage() {
           </div>
         </section>
 
-        {/* Recent predictions */}
+        {/* Recent predictions (Real Data) */}
         <section>
           <h2 className="text-gray-300 text-sm font-semibold uppercase tracking-wider mb-4">
-            Recent Predictions
+            Recent Activity
           </h2>
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-            {MOCK_RECENT_PREDICTIONS.map((prediction, index) => (
-              <div
-                key={prediction.id}
-                className={`flex items-center justify-between px-4 py-3 gap-4 ${
-                  index < MOCK_RECENT_PREDICTIONS.length - 1 ? "border-b border-gray-800" : ""
-                }`}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span
-                    className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                      prediction.result === "correct" ? "bg-green-400" : "bg-red-500"
-                    }`}
-                  />
-                  <p className="text-gray-300 text-sm truncate">{prediction.question}</p>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className="text-gray-500 text-xs">→ {prediction.outcome}</span>
-                  <span
-                    className={`text-xs font-medium ${
-                      prediction.result === "correct" ? "text-green-400" : "text-red-400"
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
+            {(!portfolio?.recent_activity || portfolio.recent_activity.length === 0) ? (
+              <div className="p-8 text-center text-gray-500">No recent activity</div>
+            ) : (
+              portfolio.recent_activity.map((bet, index) => {
+                const isCorrect = bet.is_resolved && bet.winning_outcome === bet.outcome_index;
+                const isIncorrect = bet.is_resolved && bet.winning_outcome !== bet.outcome_index;
+                const payout = parseFloat(bet.payout);
+
+                return (
+                  <div
+                    key={bet.bet_id}
+                    className={`flex items-center justify-between px-4 py-4 gap-4 hover:bg-gray-800/50 transition-colors ${
+                      index < portfolio.recent_activity.length - 1 ? "border-b border-gray-800" : ""
                     }`}
                   >
-                    {prediction.payout}
-                  </span>
-                </div>
-              </div>
-            ))}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs ${
+                           isCorrect ? "bg-green-900 text-green-300" :
+                           isIncorrect ? "bg-red-900 text-red-300" :
+                           "bg-blue-900 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.2)]"
+                        }`}
+                      >
+                        {bet.outcome_name?.[0] || "?"}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-gray-100 text-sm font-medium truncate">{bet.market_question}</p>
+                        <p className="text-gray-500 text-xs mt-0.5">
+                          {bet.outcome_name} · {new Date(bet.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      <span className="text-white text-sm font-semibold">{parseFloat(bet.amount).toFixed(2)} XLM</span>
+                      {bet.is_resolved && (
+                        <span className={`text-xs font-bold ${isCorrect ? "text-green-400" : "text-red-400"}`}>
+                          {payout > 0 ? `+${payout.toFixed(2)} XLM` : "0.00 XLM"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
+        </section>
+
+
+        {/* Bet History */}
+        <section>
+          <BetHistoryTable
+            walletAddress={publicKey}
+            apiUrl={process.env.NEXT_PUBLIC_API_URL ?? ""}
+          />
         </section>
 
         {/* Activity Timeline */}
         <WalletActivityTimeline walletAddress={publicKey} />
+
+        {/* Notification Preferences */}
+        <NotificationPreferencesPanel walletAddress={publicKey} />
       </div>
     </main>
   );

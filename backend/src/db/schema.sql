@@ -50,3 +50,15 @@ CREATE TABLE IF NOT EXISTS governance_votes (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (dispute_id, wallet_address)
 );
+
+-- Oracle price audit log — records all source values, outliers, and median per aggregation run
+CREATE TABLE IF NOT EXISTS oracle_price_log (
+  id               SERIAL PRIMARY KEY,
+  asset            TEXT NOT NULL,                  -- e.g. 'BTC/USD'
+  fetched_at       TIMESTAMPTZ NOT NULL,           -- when sources were queried
+  source_values    NUMERIC[] NOT NULL,             -- raw values from all valid sources
+  outliers         NUMERIC[] NOT NULL DEFAULT '{}', -- values rejected by outlier filter
+  filtered_values  NUMERIC[] NOT NULL,             -- values used to compute median
+  median_value     NUMERIC NOT NULL,               -- final aggregated price
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
