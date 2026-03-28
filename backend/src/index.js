@@ -1,7 +1,9 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
 const logger = require("./utils/logger");
+const { sanitizeError } = require("./utils/errors");
 
 // ── Firebase Admin SDK initialisation ──────────────────────────────────────
 // Must happen before any firebase-admin/* imports (including appCheck middleware).
@@ -47,8 +49,11 @@ app.use(
 
 app.use(express.json());
 
-// Request logging middleware
+// Request tracking and logging middleware
 app.use((req, res, _next) => {
+  req.requestId = req.headers["x-request-id"] || crypto.randomUUID();
+  res.setHeader("X-Request-ID", req.requestId);
+
   const start = Date.now();
   res.on("finish", () => {
     const duration = Date.now() - start;
@@ -59,6 +64,7 @@ app.use((req, res, _next) => {
         status: res.statusCode,
         duration_ms: duration,
         ip: req.ip,
+        requestId: req.requestId,
       },
       "HTTP Request"
     );
@@ -127,16 +133,8 @@ require("./indexer/gap-detector").initializeSelfHealing();
 
 // Global error handler
 app.use((err, req, res, _next) => {
-  logger.error(
-    {
-      err,
-      method: req.method,
-      path: req.path,
-      body: req.body,
-    },
-    "Unhandled error"
-  );
-  res.status(500).json({ error: "Internal server error" });
+  const safeMessage = sanitizeError(err, req.requestId);
+  res.status(500).json({ error: safeMessage });
 });
 
 const PORT = process.env.PORT || 4000;
