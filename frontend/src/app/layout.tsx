@@ -13,6 +13,8 @@ export const metadata: Metadata = {
   description: "Decentralized prediction markets on Stellar",
 };
 
+import { ToastProvider } from "../components/ToastProvider";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -26,13 +28,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ReactQueryProvider>
             {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
             <WalletProvider>
-              <BettingSlipProvider>
-                <main id="main-content" role="main">
-                  {children}
-                </main>
-                {/* BettingSlip mounted globally — persists across all pages */}
-                <BettingSlipWrapper />
-              </BettingSlipProvider>
+              <ToastProvider>
+                <BettingSlipProvider>
+                  <main id="main-content" role="main">
+                    {children}
+                  </main>
+                  {/* BettingSlip mounted globally — persists across all pages */}
+                  <BettingSlipWrapper />
+                </BettingSlipProvider>
+              </ToastProvider>
             </WalletProvider>
           </ReactQueryProvider>
         </ReduxProvider>
@@ -40,3 +44,4 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
+

@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const redis = require("../utils/redis");
 const logger = require("../utils/logger");
 const eventBus = require("../bots/eventBus");
 
@@ -60,7 +61,11 @@ router.post("/", async (req, res) => {
       eventBus.emit("pool.low", { marketId, totalPool, threshold: POOL_LOW_THRESHOLD });
     }
 
+    // Invalidate portfolio cache for this wallet
+    await redis.del(`portfolio:${walletAddress}`);
+    
     res.status(201).json({ bet: bet.rows[0] });
+
   } catch (err) {
     logger.error({ err, market_id: marketId, wallet_address: walletAddress }, "Failed to place bet");
     res.status(500).json({ error: err.message });
@@ -142,6 +147,14 @@ router.post("/payout/:marketId", async (req, res) => {
       total_pool,
       winning_stake: Number(winningStakeStroops) / 1e7,
     }, "Payouts distributed");
+
+    // Invalidate portfolio cache for all winners
+    if (winners.rows.length > 0) {
+      const winnerAddresses = new Set(winners.rows.map(w => w.wallet_address));
+      const invalidationPromises = Array.from(winnerAddresses).map(addr => redis.del(`portfolio:${addr}`));
+      await Promise.all(invalidationPromises);
+      logger.info({ market_id: req.params.marketId, winners_count: winnerAddresses.size }, "[Cache] Invalidated portfolio cache for winners");
+    }
 
     res.json({ payouts });
   } catch (err) {

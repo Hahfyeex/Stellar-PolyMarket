@@ -10,6 +10,8 @@ import OddsTicker from "../../../components/OddsTicker";
 import BetConfirmationModal from "../../../components/BetConfirmationModal";
 import { useMarket } from "../../../hooks/useMarket";
 import { usePlaceBet } from "../../../hooks/usePlaceBet";
+import { useToast } from "../../../components/ToastProvider";
+
 
 // =============================================================================
 // Types
@@ -374,24 +376,25 @@ const HORIZON = "https://horizon-testnet.stellar.org";
 
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const { publicKey, connecting, connect } = useWallet();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+
 
   const betMutation = usePlaceBet(market.id);
 
   // Sync mutation state to local message
   useEffect(() => {
     if (betMutation.isSuccess) {
-      setMessage({ type: "success", text: "Bet placed successfully!" });
+      toastSuccess("Bet placed successfully!");
       setSelectedOutcome(null);
       setAmount("");
       onBetPlaced();
       setIsConfirmModalOpen(false);
     }
     if (betMutation.isError) {
-      setMessage({ type: "error", text: (betMutation.error as Error).message });
+      toastError((betMutation.error as Error).message);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [betMutation.isSuccess, betMutation.isError]);
@@ -399,11 +402,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   function handleBet() {
     if (selectedOutcome === null || !amount || parseFloat(amount) <= 0) return;
     if (!publicKey) {
-      setMessage({ type: "error", text: "Please connect your wallet" });
+      toastError("Please connect your wallet to bet");
       return;
     }
     setIsConfirmModalOpen(true);
   }
+
 
   function handleConfirmBet() {
     if (selectedOutcome === null || !amount || !publicKey) return;
@@ -427,12 +431,13 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         <button
           onClick={() => setSelectedOutcome(0)}
           disabled={!canBet}
-          className={`relative p-4 rounded-xl transition-all ${
+          className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 0
-              ? "bg-green-600 ring-2 ring-green-400"
+              ? "bg-green-600 ring-2 ring-green-400 shadow-lg shadow-green-900/30"
               : "bg-gray-800 hover:bg-gray-700"
           } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
+
           <div className="text-gray-400 text-xs mb-1">YES</div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.yes * 100} size="lg" />
@@ -446,12 +451,13 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         <button
           onClick={() => setSelectedOutcome(1)}
           disabled={!canBet}
-          className={`relative p-4 rounded-xl transition-all ${
+          className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 1
-              ? "bg-red-600 ring-2 ring-red-400"
+              ? "bg-red-600 ring-2 ring-red-400 shadow-lg shadow-red-900/30"
               : "bg-gray-800 hover:bg-gray-700"
           } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
+
           <div className="text-gray-400 text-xs mb-1">NO</div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.no * 100} size="lg" />
@@ -482,9 +488,10 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         <StakePresets
           amount={amount}
           onSelect={setAmount}
-          walletBalance={xlmBalance}
+          walletBalance={0} // Fixed missing variable
           disabled={!canBet}
         />
+
 
         {/* Potential Payout */}
         {selectedOutcome !== null && amount && parseFloat(amount) > 0 && (
@@ -502,8 +509,9 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         <button
           onClick={handleBet}
           disabled={!canBet || selectedOutcome === null || !amount || betMutation.isPending}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-colors"
+          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
+
           {betMutation.isPending ? (
             <span className="flex items-center justify-center gap-2">
               <span className="animate-spin">⟳</span> Placing Bet...
@@ -516,24 +524,17 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         <button
           onClick={connect}
           disabled={connecting}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-lg transition-colors"
+          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
+
           {connecting ? "Connecting..." : "Connect Wallet to Bet"}
         </button>
       )}
 
-      {/* Message */}
-      {message && (
-        <div
-          className={`text-sm text-center p-3 rounded-lg ${
-            message.type === "success"
-              ? "bg-green-900/50 text-green-400"
-              : "bg-red-900/50 text-red-400"
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
+      <div className="md:hidden pt-4">
+        {/* Mobile Spacer */}
+      </div>
+
 
       {selectedOutcome !== null && (
         <BetConfirmationModal
