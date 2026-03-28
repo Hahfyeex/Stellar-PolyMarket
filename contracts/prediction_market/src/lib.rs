@@ -526,14 +526,9 @@ impl PredictionMarket {
             let treasury: Address = env
                 .storage()
                 .instance()
-                .get(&DataKey::FeeDestination)
-                .expect("ERR_107");
+                .get(&DataKey::TreasuryAddress)
+                .expect("TreasuryAddress not configured");
 
-            // Transfer fee from creator to destination (burn address or DAO treasury).
-            // The token contract will panic with a host error if the creator has
-            // insufficient balance, aborting the entire transaction — no market is created.
-            // We wrap in try_transfer and map any error to our own panic message so
-            // callers see a clear "ERR_108" reason.
             let fee_token = token::Client::new(&env, &token);
             if fee_token
                 .try_transfer(&creator, &treasury, &creation_fee)
