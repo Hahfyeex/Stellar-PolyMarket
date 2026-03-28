@@ -24,7 +24,7 @@ const HORIZON_URL = process.env.HORIZON_URL || "https://horizon.stellar.org";
  */
 async function verifyTrustline(walletAddress, assetCode, assetIssuer) {
   const cacheKey = `trustline:${walletAddress}:${assetCode}:${assetIssuer}`;
-  
+
   // Check cache first
   const cached = await redis.get(cacheKey);
   if (cached !== null) {
@@ -34,16 +34,14 @@ async function verifyTrustline(walletAddress, assetCode, assetIssuer) {
   try {
     const response = await axios.get(`${HORIZON_URL}/accounts/${walletAddress}`);
     const balances = response.data.balances || [];
-    
+
     const hasTrustline = balances.some(
-      (balance) =>
-        balance.asset_code === assetCode &&
-        balance.asset_issuer === assetIssuer
+      (balance) => balance.asset_code === assetCode && balance.asset_issuer === assetIssuer
     );
 
     // Cache the result
     await redis.set(cacheKey, hasTrustline ? "1" : "0", "EX", TRUSTLINE_CACHE_TTL);
-    
+
     return hasTrustline;
   } catch (err) {
     logger.error(
@@ -72,11 +70,15 @@ router.post("/", async (req, res) => {
 
   const { marketId, outcomeIndex, amount, walletAddress, transaction_hash } = req.body;
   if (!marketId || outcomeIndex === undefined || !amount || !walletAddress || !transaction_hash) {
-    return res
-      .status(400)
-      .json({
-        error: "marketId, outcomeIndex, amount, walletAddress, and transaction_hash are required",
-      });
+    return res.status(400).json({
+      error: "marketId, outcomeIndex, amount, walletAddress, and transaction_hash are required",
+    });
+  }
+
+  // Validate amount is a positive integer stroop value
+  const amountInt = parseInt(amount, 10);
+  if (!Number.isInteger(amountInt) || amountInt <= 0 || String(amountInt) !== String(amount)) {
+    return res.status(400).json({ error: "amount must be a positive integer stroop value" });
   }
 
   // Validate Stellar wallet address format
@@ -134,7 +136,6 @@ router.post("/", async (req, res) => {
         .status(400)
         .json({ error: "Market not found, already resolved, expired, or deleted" });
     }
-
 
     const marketData = market.rows[0];
 
