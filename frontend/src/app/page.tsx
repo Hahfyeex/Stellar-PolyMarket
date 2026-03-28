@@ -20,6 +20,12 @@ import { trackEvent } from "../lib/firebase";
 import { store } from "../store";
 import type { Market } from "../types/market";
 import OnboardingWizard from "../components/onboarding/OnboardingWizard";
+import ThemeToggle from "../components/ThemeToggle";
+import { useMarkets } from "../hooks/useMarkets";
+import { useQueryClient } from "@tanstack/react-query";
+import { useMarketTabs } from "../hooks/useMarketTabs";
+import MarketTabs from "../components/MarketTabs";
+import MarketListSkeleton from "../components/skeletons/MarketListSkeleton";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
@@ -240,11 +246,7 @@ export default function Home() {
           <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
             <MarketFilters filters={filters} onChange={setFilters} />
             {loading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <MarketCardSkeleton key={i} />
-                ))}
-              </div>
+              <MarketListSkeleton />
             ) : filteredMarkets.length === 0 ? (
               <p className="text-gray-400" data-testid="no-markets-empty-state">
                 {filters.query

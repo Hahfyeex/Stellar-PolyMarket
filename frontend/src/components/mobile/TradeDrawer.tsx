@@ -7,6 +7,12 @@ import { trackEvent } from "../../lib/firebase";
 import type { Market } from "../../types/market";
 import ResolutionCenter from "../ResolutionCenter";
 import WhatIfSimulator from "../WhatIfSimulator";
+import { useFormPersistence } from "../../hooks/useFormPersistence";
+import StakePresets from "../StakePresets";
+import SlippageSettings from "../SlippageSettings";
+import SlippageWarningModal from "../SlippageWarningModal";
+import { useSlippageCheck } from "../../hooks/useSlippageCheck";
+import { toStroops, calcPayoutStroops, stroopsToXlm } from "../../utils/slippageCalc";
 
 interface Props {
   market: Market | null;
@@ -39,7 +45,75 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   const [message, setMessage] = useState("");
   const [xlmBalance] = useState<number | null>(null);
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
-  const isExpired = market ? new Date(market.end_date) <= new Date() : false;
+
+  const { checkSlippage, slippageState, dismiss, checking } = useSlippageCheck();
+
+  /**
+   * Compute the expected payout in XLM using BigInt stroop arithmetic.
+   * Called at the moment the user clicks "Bet" to capture the current odds.
+   */
+  function computeExpectedPayout(): number {
+    if (!market || selectedOutcome === null) return 0;
+    const stakeXlm = parseFloat(amount) || 0;
+    const totalPool = parseFloat(market.total_pool) || 0;
+    // Approximate per-outcome pool as equal split (same as TradeDrawer's WhatIfSimulator)
+    const outcomePool = totalPool / market.outcomes.length;
+    const payout = calcPayoutStroops(
+      toStroops(stakeXlm),
+      toStroops(outcomePool),
+      toStroops(totalPool)
+    );
+    return stroopsToXlm(payout);
+  }
+
+  /** Submit the bet to the API — called after slippage check passes */
+  async function submitBet() {
+    if (selectedOutcome === null || !amount || !walletAddress || !market) return;
+    const xlm = parseFloat(amount);
+    if (!isFinite(xlm) || xlm <= 0) {
+      setMessage("Error: Enter a valid positive amount");
+      return;
+    }
+    const stroops = Math.round(xlm * 1e7);
+    if (!Number.isInteger(stroops) || stroops <= 0) {
+      setMessage("Error: Amount too small");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketId: market.id,
+          outcomeIndex: selectedOutcome,
+          amount: stroops.toString(),
+          walletAddress,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setMessage("Bet placed successfully!");
+      trackEvent("bet_placed", {
+        market_id: market.id,
+        outcome_index: selectedOutcome,
+        amount: stroops,
+        outcome_name: market.outcomes[selectedOutcome],
+      });
+      clearForm();
+      onBetPlaced?.();
+    } catch (err: any) {
+      setMessage(`Error: ${err.message}`);
+      trackEvent("bet_error", {
+        market_id: market?.id,
+        error_message: err.message.substring(0, 100),
+        amount: stroops,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
 
   // Reset drag when drawer opens/closes
   useEffect(() => {
@@ -260,10 +334,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">
-                    <SlippageSettings
-                      value={slippageTolerance}
-                      onChange={setSlippageTolerance}
-                    />
+                    <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
                     <button
                       data-testid="clear-form"
                       onClick={() => {

@@ -108,6 +108,7 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
 app.use("/api/archive", require("./routes/archive"));
 app.use("/api/portfolio", require("./routes/portfolio"));
+app.use("/api/leaderboard", require("./routes/leaderboard"));
 
 
 // GraphQL endpoint (graphql-yoga as Express middleware)
@@ -148,6 +149,9 @@ const httpServer = http.createServer(app);
 
 // Attach graphql-ws WebSocket server (subscriptions at /graphql)
 require("./graphql/wsServer").attach(httpServer, schema);
+
+// Attach market updates WebSocket server (real-time updates at /ws/markets)
+require("./websocket/marketUpdates").attach(httpServer);
 
 httpServer.listen(PORT, () => {
   logger.info({ port: PORT, environment: process.env.NODE_ENV || "development" }, "Server started");
