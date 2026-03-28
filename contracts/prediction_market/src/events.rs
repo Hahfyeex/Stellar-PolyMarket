@@ -115,6 +115,27 @@ pub struct EventPayoutClaimed {
     pub ledger_timestamp: u64,
 }
 
+/// Emitted by `batch_claim_payout`.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventBatchPayoutClaimed {
+    pub version: u32,
+    pub bettor: Address,
+    pub market_ids: Vec<u64>,
+    pub total_payout: i128,
+    pub ledger_timestamp: u64,
+}
+
+/// Emitted when a market is voided because the resolved winning outcome had no bets.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventMarketVoidedNoWinner {
+    pub version: u32,
+    pub market_id: u64,
+    pub total_pool: i128,
+    pub ledger_timestamp: u64,
+}
+
 /// Emitted by `provide_liquidity`.
 #[contracttype]
 #[derive(Clone)]
@@ -167,37 +188,6 @@ pub struct EventFeeCollected {
     pub payer: Address,
     pub fee_destination: Address,
     pub amount: i128,
-    pub ledger_timestamp: u64,
-}
-
-/// Emitted by `propose_upgrade`.
-#[contracttype]
-#[derive(Clone)]
-pub struct EventUpgradeProposed {
-    pub version: u32,
-    pub proposer: Address,
-    pub new_wasm_hash: soroban_sdk::BytesN<32>,
-    pub unlock_ledger: u32,
-    pub ledger_timestamp: u64,
-}
-
-/// Emitted by `execute_upgrade`.
-#[contracttype]
-#[derive(Clone)]
-pub struct EventUpgraded {
-    pub version: u32,
-    pub executor: Address,
-    pub new_wasm_hash: soroban_sdk::BytesN<32>,
-    pub ledger_timestamp: u64,
-}
-
-/// Emitted by `cancel_upgrade`.
-#[contracttype]
-#[derive(Clone)]
-pub struct EventUpgradeCancelled {
-    pub version: u32,
-    pub canceller: Address,
-    pub cancelled_wasm_hash: soroban_sdk::BytesN<32>,
     pub ledger_timestamp: u64,
 }
 
@@ -335,6 +325,36 @@ pub fn emit_payout_claimed(
     );
 }
 
+pub fn emit_batch_payout_claimed(
+    env: &Env,
+    bettor: &Address,
+    market_ids: &Vec<u64>,
+    total_payout: i128,
+) {
+    env.events().publish(
+        (symbol_short!("BatchPay"), bettor.clone()),
+        EventBatchPayoutClaimed {
+            version: EVENT_VERSION,
+            bettor: bettor.clone(),
+            market_ids: market_ids.clone(),
+            total_payout,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_market_voided_no_winner(env: &Env, market_id: u64, total_pool: i128) {
+    env.events().publish(
+        (symbol_short!("VoidNoWin"), market_id),
+        EventMarketVoidedNoWinner {
+            version: EVENT_VERSION,
+            market_id,
+            total_pool,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
 pub fn emit_liquidity_provided(env: &Env, market_id: u64, provider: &Address, amount: i128) {
     env.events().publish(
         (symbol_short!("LpSeed"), market_id),
@@ -406,56 +426,6 @@ pub fn emit_fee_collected(
             payer: payer.clone(),
             fee_destination: fee_destination.clone(),
             amount,
-            ledger_timestamp: env.ledger().timestamp(),
-        },
-    );
-}
-
-pub fn emit_upgrade_proposed(
-    env: &Env,
-    proposer: &Address,
-    new_wasm_hash: &soroban_sdk::BytesN<32>,
-    unlock_ledger: u32,
-) {
-    env.events().publish(
-        (symbol_short!("UpProp"),),
-        EventUpgradeProposed {
-            version: EVENT_VERSION,
-            proposer: proposer.clone(),
-            new_wasm_hash: new_wasm_hash.clone(),
-            unlock_ledger,
-            ledger_timestamp: env.ledger().timestamp(),
-        },
-    );
-}
-
-pub fn emit_upgraded(
-    env: &Env,
-    executor: &Address,
-    new_wasm_hash: &soroban_sdk::BytesN<32>,
-) {
-    env.events().publish(
-        (symbol_short!("Upgrade"),),
-        EventUpgraded {
-            version: EVENT_VERSION,
-            executor: executor.clone(),
-            new_wasm_hash: new_wasm_hash.clone(),
-            ledger_timestamp: env.ledger().timestamp(),
-        },
-    );
-}
-
-pub fn emit_upgrade_cancelled(
-    env: &Env,
-    canceller: &Address,
-    cancelled_wasm_hash: &soroban_sdk::BytesN<32>,
-) {
-    env.events().publish(
-        (symbol_short!("UpCancl"),),
-        EventUpgradeCancelled {
-            version: EVENT_VERSION,
-            canceller: canceller.clone(),
-            cancelled_wasm_hash: cancelled_wasm_hash.clone(),
             ledger_timestamp: env.ledger().timestamp(),
         },
     );

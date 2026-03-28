@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Unit tests for GET /api/markets pagination
+ * Unit tests for GET /api/markets pagination, search, filter, and sorting
  * Covers:
  * - Default pagination (limit=20, offset=0)
  * - Custom limit and offset parameters
@@ -19,7 +19,7 @@ jest.mock("../utils/logger", () => ({
   warn: jest.fn(),
   error: jest.fn(),
 }));
-jest.mock("firebase-admin", () => ({ apps: [true], initializeApp: jest.fn() }));
+jest.mock("firebase-admin", () => ({ apps: [true], initializeApp: jest.fn() }), { virtual: true });
 jest.mock("../middleware/appCheck", () => (req, res, next) => next());
 
 const request = require("supertest");
@@ -69,10 +69,7 @@ describe("GET /api/markets", () => {
       });
 
       // Verify the queries
-      expect(db.query).toHaveBeenNthCalledWith(
-        1,
-        "SELECT COUNT(*) as total FROM markets"
-      );
+      expect(db.query).toHaveBeenNthCalledWith(1, "SELECT COUNT(*) as total FROM markets", []);
       expect(db.query).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining("LIMIT $1 OFFSET $2"),
@@ -228,6 +225,20 @@ describe("GET /api/markets", () => {
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe("INVALID_LIMIT");
     });
+
+    it("returns 400 for unsupported status", async () => {
+      const res = await request(app).get("/api/markets?status=paused");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("INVALID_STATUS");
+    });
+
+    it("returns 400 for unsupported sort", async () => {
+      const res = await request(app).get("/api/markets?sort=oldest");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("INVALID_SORT");
+    });
   });
 
   describe("hasMore calculation", () => {
@@ -290,6 +301,127 @@ describe("GET /api/markets", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Query timeout");
+    });
+  });
+
+  describe("search and filters", () => {
+    it("applies text search with parameterized ILIKE query", async () => {
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "1" }] })
+        .mockResolvedValueOnce({ rows: [makeMarket(1)] });
+
+      const res = await request(app).get("/api/markets?q=bitcoin");
+
+      expect(res.status).toBe(200);
+      expect(db.query).toHaveBeenNthCalledWith(
+        1,
+        "SELECT COUNT(*) as total FROM markets WHERE question ILIKE '%' || $1 || '%'",
+        ["bitcoin"]
+      );
+      expect(db.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining("WHERE question ILIKE '%' || $1 || '%'"),
+        ["bitcoin", 20, 0]
+      );
+    });
+
+    it("applies category filter", async () => {
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "2" }] })
+        .mockResolvedValueOnce({ rows: [makeMarket(1), makeMarket(2)] });
+
+      const res = await request(app).get("/api/markets?category=crypto");
+
+      expect(res.status).toBe(200);
+      expect(db.query).toHaveBeenNthCalledWith(
+        1,
+        "SELECT COUNT(*) as total FROM markets WHERE category = $1",
+        ["crypto"]
+      );
+    });
+
+    it("applies active status filter", async () => {
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "1" }] })
+        .mockResolvedValueOnce({ rows: [makeMarket(1)] });
+
+      const res = await request(app).get("/api/markets?status=active");
+
+      expect(res.status).toBe(200);
+      expect(db.query).toHaveBeenNthCalledWith(
+        1,
+        "SELECT COUNT(*) as total FROM markets WHERE resolved = FALSE",
+        []
+      );
+    });
+
+    it("applies ending_soon status filter", async () => {
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "1" }] })
+        .mockResolvedValueOnce({ rows: [makeMarket(1)] });
+
+      const res = await request(app).get("/api/markets?status=ending_soon");
+
+      expect(res.status).toBe(200);
+      expect(db.query.mock.calls[0][0]).toContain("resolved = FALSE");
+      expect(db.query.mock.calls[0][0]).toContain("end_date >= NOW()");
+      expect(db.query.mock.calls[0][0]).toContain("end_date <= NOW() + INTERVAL '24 hours'");
+    });
+
+    it("applies volume_desc sort", async () => {
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "1" }] })
+        .mockResolvedValueOnce({ rows: [makeMarket(1)] });
+
+      const res = await request(app).get("/api/markets?sort=volume_desc");
+
+      expect(res.status).toBe(200);
+      expect(db.query.mock.calls[1][0]).toContain("ORDER BY total_pool DESC, created_at DESC");
+    });
+
+    it("applies end_date_asc sort", async () => {
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "1" }] })
+        .mockResolvedValueOnce({ rows: [makeMarket(1)] });
+
+      const res = await request(app).get("/api/markets?sort=end_date_asc");
+
+      expect(res.status).toBe(200);
+      expect(db.query.mock.calls[1][0]).toContain("ORDER BY end_date ASC, created_at DESC");
+    });
+
+    it("combines search, category, status, and sort with parameterized placeholders", async () => {
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "1" }] })
+        .mockResolvedValueOnce({ rows: [makeMarket(1)] });
+
+      const res = await request(app).get(
+        "/api/markets?q=btc&category=crypto&status=resolved&sort=volume_desc&limit=10&offset=5"
+      );
+
+      expect(res.status).toBe(200);
+      expect(db.query.mock.calls[0][0]).toBe(
+        "SELECT COUNT(*) as total FROM markets WHERE question ILIKE '%' || $1 || '%' AND category = $2 AND resolved = TRUE"
+      );
+      expect(db.query.mock.calls[0][1]).toEqual(["btc", "crypto"]);
+      expect(db.query.mock.calls[1][0]).toContain("ORDER BY total_pool DESC, created_at DESC");
+      expect(db.query.mock.calls[1][1]).toEqual(["btc", "crypto", 10, 5]);
+    });
+
+    it("keeps SQL injection attempt inside parameters", async () => {
+      const injection = "'; DROP TABLE markets; --";
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: "0" }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get(`/api/markets?q=${encodeURIComponent(injection)}`);
+
+      expect(res.status).toBe(200);
+      expect(db.query.mock.calls[0][0]).toBe(
+        "SELECT COUNT(*) as total FROM markets WHERE question ILIKE '%' || $1 || '%'"
+      );
+      expect(db.query.mock.calls[0][1]).toEqual([injection]);
+      expect(db.query.mock.calls[0][0]).not.toContain(injection);
     });
   });
 });
