@@ -10,8 +10,7 @@ import OddsTicker from "../../../components/OddsTicker";
 import BetConfirmationModal from "../../../components/BetConfirmationModal";
 import { useMarket } from "../../../hooks/useMarket";
 import { usePlaceBet } from "../../../hooks/usePlaceBet";
-import { useToast } from "../../../components/ToastProvider";
-
+import StakePresets from "../../../components/StakePresets";
 
 // =============================================================================
 // Types
@@ -372,15 +371,13 @@ interface BettingPanelProps {
   onBetPlaced: () => void;
 }
 
-const HORIZON = "https://horizon-testnet.stellar.org";
-
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const { publicKey, connecting, connect } = useWallet();
   const { success: toastSuccess, error: toastError } = useToast();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
+  const [amountError, setAmountError] = useState<string | null>(null);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
-
 
   const betMutation = usePlaceBet(market.id);
 
@@ -400,7 +397,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   }, [betMutation.isSuccess, betMutation.isError]);
 
   function handleBet() {
-    if (selectedOutcome === null || !amount || parseFloat(amount) <= 0) return;
+    const parsed = parseFloat(amount);
+    if (selectedOutcome === null || !amount || !isFinite(parsed) || parsed <= 0) {
+      setAmountError("Enter a valid positive amount");
+      return;
+    }
+    setAmountError(null);
     if (!publicKey) {
       toastError("Please connect your wallet to bet");
       return;
@@ -408,13 +410,15 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
     setIsConfirmModalOpen(true);
   }
 
-
   function handleConfirmBet() {
     if (selectedOutcome === null || !amount || !publicKey) return;
+    const parsed = parseFloat(amount);
+    if (!isFinite(parsed) || parsed <= 0) return;
+    const stroops = Math.round(parsed * 10_000_000);
     betMutation.mutate({
       marketId: market.id,
       outcomeIndex: selectedOutcome,
-      amount: parseFloat(amount),
+      amount: String(stroops),
       walletAddress: publicKey,
     });
   }
@@ -437,7 +441,6 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
               : "bg-gray-800 hover:bg-gray-700"
           } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
-
           <div className="text-gray-400 text-xs mb-1">YES</div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.yes * 100} size="lg" />
@@ -457,7 +460,6 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
               : "bg-gray-800 hover:bg-gray-700"
           } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
-
           <div className="text-gray-400 text-xs mb-1">NO</div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.no * 100} size="lg" />
@@ -477,7 +479,10 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
             type="number"
             placeholder="0.00"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setAmount(e.target.value);
+              setAmountError(null);
+            }}
             disabled={!canBet}
             className="flex-1 bg-gray-800 text-white rounded-lg px-4 py-3 text-lg outline-none border border-gray-700 focus:border-blue-500 disabled:opacity-50"
             min="0"
@@ -487,11 +492,14 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         </div>
         <StakePresets
           amount={amount}
-          onSelect={setAmount}
+          onSelect={(v) => {
+            setAmount(v);
+            setAmountError(null);
+          }}
           walletBalance={0} // Fixed missing variable
           disabled={!canBet}
         />
-
+        {amountError && <p className="text-red-400 text-sm">{amountError}</p>}
 
         {/* Potential Payout */}
         {selectedOutcome !== null && amount && parseFloat(amount) > 0 && (
@@ -511,7 +519,6 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           disabled={!canBet || selectedOutcome === null || !amount || betMutation.isPending}
           className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
-
           {betMutation.isPending ? (
             <span className="flex items-center justify-center gap-2">
               <span className="animate-spin">⟳</span> Placing Bet...
@@ -526,15 +533,11 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           disabled={connecting}
           className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
-
           {connecting ? "Connecting..." : "Connect Wallet to Bet"}
         </button>
       )}
 
-      <div className="md:hidden pt-4">
-        {/* Mobile Spacer */}
-      </div>
-
+      <div className="md:hidden pt-4">{/* Mobile Spacer */}</div>
 
       {selectedOutcome !== null && (
         <BetConfirmationModal

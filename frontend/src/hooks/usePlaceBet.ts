@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 interface PlaceBetInput {
   marketId: number;
   outcomeIndex: number;
-  amount: number;
+  amount: string; // integer stroop value as string (1 XLM = 10_000_000 stroops)
   walletAddress: string;
 }
 
