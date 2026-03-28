@@ -405,6 +405,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       toastError("Please connect your wallet to bet");
       return;
     }
+
     setIsConfirmModalOpen(true);
   }
 
@@ -440,6 +441,8 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         >
 
           <div className="text-gray-400 text-xs mb-1">YES</div>
+          <div className="text-white text-2xl font-bold">
+            {(odds.yes * 100).toFixed(0)}%
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.yes * 100} size="lg" />
           </div>
@@ -460,6 +463,8 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
         >
 
           <div className="text-gray-400 text-xs mb-1">NO</div>
+          <div className="text-white text-2xl font-bold">
+            {(odds.no * 100).toFixed(0)}%
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.no * 100} size="lg" />
           </div>
@@ -686,6 +691,10 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
                 </div>
                 <div className="text-right">
                   <p className="text-blue-300 text-sm">Live Odds</p>
+                  <p className="text-white font-semibold">
+                    <span className="text-green-400">{(odds.yes * 100).toFixed(0)}%</span>
+                    {" / "}
+                    <span className="text-red-400">{(odds.no * 100).toFixed(0)}%</span>
                   <p className="text-white font-semibold flex items-center justify-end gap-1">
                     <OddsTicker value={odds.yes * 100} size="sm" className="text-green-400" />
                     <span className="text-gray-500">/</span>

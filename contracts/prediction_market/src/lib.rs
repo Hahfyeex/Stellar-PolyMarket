@@ -50,6 +50,10 @@ pub struct FeeConfig {
     pub burn_bps: u32,
 }
 
+mod settlement_math;
+
+use settlement_math::calculate_payout_pool;
+
 /// Maximum winners processed per batch_distribute call.
 /// Keeps CPU instruction count well below Soroban's per-tx ceiling (~100M instructions).
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
@@ -212,6 +216,10 @@ pub struct DisputeData {
     pub total_votes: i128,
     pub support_votes: i128,
     pub deadline: u64,
+    AuditLog(u64),
+    AuditLogCount,
+}
+```
 }
 
 #[contracttype]
@@ -242,7 +250,7 @@ fn check_initialized(env: &Env) {
         .instance()
         .get(&DataKey::Initialized)
         .unwrap_or(false);
-    assert!(!is_init, "Contract already initialized");
+    assert!(!is_init, "ERR_101");
 }
 
 fn load_market(env: &Env, market_id: u64) -> Market {
@@ -376,7 +384,84 @@ impl PredictionMarket {
         set_whitelisted_token(&env, &token, is_whitelisted);
     }
 
+    /// Add a token to the whitelist. Admin-only.
+    pub fn add_whitelisted_token(env: Env, token_address: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let mut tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+
+        // Prevent duplicates
+        for i in 0..tokens.len() {
+            if tokens.get(i).unwrap() == token_address {
+                panic!("Token already whitelisted");
+            }
+        }
+
+        tokens.push_back(token_address);
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistedTokens, &tokens);
+    }
+
+    /// Remove a token from the whitelist. Admin-only.
+    pub fn remove_whitelisted_token(env: Env, token_address: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+
+        let mut new_tokens = Vec::new(&env);
+        let mut found = false;
+        for i in 0..tokens.len() {
+            let t = tokens.get(i).unwrap();
+            if t == token_address {
+                found = true;
+            } else {
+                new_tokens.push_back(t);
+            }
+        }
+        assert!(found, "Token not found in whitelist");
+
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistedTokens, &new_tokens);
+    }
+
+    /// Query the current whitelisted tokens.
+    pub fn get_whitelisted_tokens(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Check whether a specific token is whitelisted.
+    pub fn is_token_whitelisted(env: Env, token_address: Address) -> bool {
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..tokens.len() {
+            if tokens.get(i).unwrap() == token_address {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Create a new prediction market.
+    /// Market metadata (question, options, deadline) stored in persistent storage.
+    /// The token must be whitelisted before it can be used for a market.
     /// Blocked when GlobalStatus is false (graceful shutdown).
     /// Hot data (total_shares, is_paused) written to Instance storage.
     /// Cold data (market metadata, user positions) written to Persistent storage.
@@ -385,7 +470,7 @@ impl PredictionMarket {
     /// If a non-zero CreationFee is configured, the creator must hold sufficient
     /// balance of `token` to cover the fee. The fee is transferred to FeeDestination
     /// before the market is stored. If the transfer fails (insufficient balance),
-    /// the transaction aborts with "InsufficientFeeBalance" and no market is created.
+    /// the transaction aborts with "ERR_108" and no market is created.
     ///
     /// Fee routing is controlled by FeeMode:
     ///   - FeeMode::Burn     → fee sent to a burn/lock address (e.g. issuer with locked trustline)
@@ -441,19 +526,19 @@ impl PredictionMarket {
                 .storage()
                 .instance()
                 .get(&DataKey::FeeDestination)
-                .expect("FeeDestination not configured");
+                .expect("ERR_107");
 
             // Transfer fee from creator to destination (burn address or DAO treasury).
             // The token contract will panic with a host error if the creator has
             // insufficient balance, aborting the entire transaction — no market is created.
             // We wrap in try_transfer and map any error to our own panic message so
-            // callers see a clear "InsufficientFeeBalance" reason.
+            // callers see a clear "ERR_108" reason.
             let fee_token = token::Client::new(&env, &token);
             if fee_token
                 .try_transfer(&creator, &fee_destination, &creation_fee)
                 .is_err()
             {
-                panic!("InsufficientFeeBalance");
+                panic!("ERR_108");
             }
 
             // Emit FeeCollected event for off-chain indexing.
@@ -531,13 +616,19 @@ impl PredictionMarket {
         id
     }
 
-    /// Place a bet on an option.
+```
+        env.storage().instance().set(&DataKey::IsPaused(id), &false);
+    }
+
+    /// Place a bet on an option — transfers tokens into the contract.
+    /// Rejects bets if the market's token is not in the WhitelistedTokens set.
     /// Reads total_shares from Instance (1 cheap read) instead of Persistent.
-    /// 
+    ///
     /// # Gas Optimization
     /// Uses Vec for positions storage instead of Map.
     /// Linear scan to find existing bet is cheaper than Map hashing for small datasets.
     /// Typical markets have <100 bettors, making Vec O(n) faster than Map O(1) with hashing overhead.
+```
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         check_platform_active(&env);
         bettor.require_auth();
@@ -614,12 +705,12 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::IsPaused(market_id))
             .unwrap_or(false);
-        assert!(!paused, "Market is paused");
+        assert!(!paused, "ERR_110");
 
         // Cold read: market metadata from Persistent
         let market: Market = load_market(&env, market_id);
 
-        assert!(market.status == MarketStatus::Active, "Market not active");
+        assert!(market.status == MarketStatus::Active, "ERR_111");
         assert!(
             env.ledger().timestamp() <= market.deadline,
             "Market deadline has passed"
@@ -688,7 +779,9 @@ impl PredictionMarket {
         env.storage().persistent().extend_ttl(&cost_key, 100, 1_000_000);
 
         env.storage()
+            
             .persistent()
+            
             .extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
 
         // Hot write: total_shares → Instance
@@ -1213,7 +1306,7 @@ impl PredictionMarket {
         // Final resolution override by admin (e.g. after examining dispute)
         assert!(
             market.status == MarketStatus::Proposed || market.status == MarketStatus::Disputed,
-            "Market must be proposed or disputed to resolve"
+            "ERR_117"
         );
         assert!(
             env.ledger().timestamp() >= market.deadline,
@@ -1221,7 +1314,7 @@ impl PredictionMarket {
         );
         assert!(
             env.ledger().timestamp() >= market.proposal_timestamp + LIVENESS_WINDOW,
-            "Liveness window has not elapsed"
+            "ERR_118"
         );
         assert!(
             winning_outcome < market.options.len(),
@@ -1431,7 +1524,7 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::MarketSwept(market_id))
             .unwrap_or(false);
-        assert!(!already_swept, "Market already swept");
+        assert!(!already_swept, "ERR_119");
 
         // Verify market is resolved
         let market: Market = env
@@ -1439,7 +1532,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "ERR_120");
 
         // Check 30-day claim deadline has passed (30 days = 2,592,000 seconds)
         let resolution_time: u64 = env
@@ -1451,7 +1544,7 @@ impl PredictionMarket {
         let thirty_days: u64 = 30 * 24 * 60 * 60; // 2,592,000 seconds
         assert!(
             current_time >= resolution_time + thirty_days,
-            "Claim deadline not reached (30 days required)"
+            "ERR_121"
         );
 
         // Get winners from the position_token Map
@@ -1555,7 +1648,7 @@ impl PredictionMarket {
             .get(&DataKey::VaultBalance)
             .unwrap_or(0);
 
-        assert!(vault_balance > 0, "No funds in vault to invest");
+        assert!(vault_balance > 0, "ERR_122");
 
         // TODO: Implement actual Stellar AMM integration
         // For now, this is a placeholder that validates the vault balance exists
@@ -1630,13 +1723,13 @@ impl PredictionMarket {
         // Verify claimant has a payout
         assert!(
             original_payouts.contains_key(claimant.clone()),
-            "No payout for this address"
+            "ERR_123"
         );
 
         let payout_amount = original_payouts.get(claimant.clone()).unwrap();
 
         // Check if already claimed (payout would be 0 if claimed)
-        assert!(payout_amount > 0, "Already claimed");
+        assert!(payout_amount > 0, "ERR_124");
 
         // Transfer the original payout amount
         let token_client = token::Client::new(env, &market.token);
@@ -1739,7 +1832,7 @@ impl PredictionMarket {
     fn internal_batch_distribute(env: &Env, market_id: u64, batch_size: u32) -> u32 {
         assert!(
             batch_size > 0 && batch_size <= MAX_BATCH_SIZE,
-            "batch_size must be 1..=MAX_BATCH_SIZE"
+            "ERR_126"
         );
 
         let market: Market = env
@@ -1747,7 +1840,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "ERR_120");
 
         // Get remaining winners from the position_token Map
         let winners_map = position_token::get_balances(env, market_id, market.winning_outcome);
@@ -2076,6 +2169,44 @@ impl PredictionMarket {
             .unwrap_or(0)
     }
 
+    /// Store an audit log hash on-chain. Only callable by admin.
+    /// `cid_hash` is the SHA-256 hash of the IPFS CID for the audit entry.
+    pub fn store_audit_hash(env: Env, admin: Address, cid_hash: BytesN<32>) {
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can store audit hashes");
+        admin.require_auth();
+
+        // Increment the audit log counter
+        let count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLog(count), &cid_hash);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLogCount, &(count + 1));
+    }
+
+    /// Retrieve an audit log hash by its sequential ID.
+    pub fn get_audit_hash(env: Env, log_id: u64) -> BytesN<32> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLog(log_id))
+            .unwrap()
+    }
+
+    /// Get the total number of audit log entries stored on-chain.
+    pub fn get_audit_log_count(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0)
+    }
+
     /// Get pause state for a market (hot read from Instance).
     pub fn get_is_paused(env: Env, market_id: u64) -> bool {
         env.storage()
@@ -2318,6 +2449,155 @@ impl PredictionMarket {
             .unwrap();
         market.options.len()
     }
+
+    /// Distribute rewards proportionally to winners using fixed-point arithmetic.
+    /// 
+    /// This function implements the settlement logic with proper dust handling:
+    /// 1. Calculates 3% platform fee
+    /// 2. Calculates payout pool (97% of total)
+    /// 3. Uses fixed-point arithmetic for precise division
+    /// 4. Redistributes dust to ensure 100% distribution
+    /// 
+    /// The payout formula for each winner is:
+    ///   payout = (bet_amount / winning_stake) * payout_pool
+    /// 
+    /// This ensures:
+    /// - Total payouts + dust = payout_pool (conservation)
+    /// - Proportional distribution based on bet amounts
+    /// - No XLM lost to rounding errors
+    pub fn distribute_rewards(env: Env, market_id: u64) {
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+
+        let positions: Map<Address, (u32, i128)> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserPosition(market_id))
+            .unwrap();
+
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+
+        // Calculate winning stake and collect winning bets
+        let mut winners: Vec<(Address, i128)> = Vec::new(&env);
+        let mut winning_stake: i128 = 0;
+        
+        for (addr, (outcome, amount)) in positions.iter() {
+            if outcome == market.winning_outcome {
+                winners.push_back((addr, amount));
+                winning_stake += amount;
+            }
+        }
+
+        if winning_stake == 0 {
+            // No winners - funds remain in contract
+            return;
+        }
+
+        // Calculate payout pool after 3% platform fee
+        let payout_pool = calculate_payout_pool(total_pool);
+        
+        // Calculate all payouts with dust handling using inline logic
+        let num_winners = winners.len();
+        let mut payouts: Vec<i128> = Vec::new(&env);
+        let mut ideal_total: i128 = 0;
+        
+        // First pass: calculate ideal payouts
+        for i in 0..num_winners {
+            let (_, amount) = winners.get(i).unwrap();
+            let payout = if winning_stake > 0 { (amount * payout_pool) / winning_stake } else { 0 };
+            payouts.push_back(payout);
+            ideal_total += payout;
+        }
+        
+        // Calculate and redistribute dust
+        let dust = payout_pool - ideal_total;
+        if dust > 0 && num_winners > 0 {
+            let dust_per_winner = dust / num_winners as i128;
+            let extra_dust = dust % num_winners as i128;
+            for i in 0..num_winners {
+                let current = payouts.get(i).unwrap_or(0);
+                let add = dust_per_winner + if (i as i128) < extra_dust { 1 } else { 0 };
+                payouts.set(i, current + add);
+            }
+        }
+        
+        // Verify conservation before distributing
+        let mut variance: i128 = 0;
+        for i in 0..payouts.len() {
+            variance += payouts.get(i).unwrap_or(0);
+        }
+        variance = payout_pool - variance;
+        assert!(variance == 0, "Payout conservation violated: variance = {}", variance);
+
+        // Distribute payouts
+        let token_client = token::Client::new(&env, &market.token);
+        
+        for i in 0..num_winners {
+            let (bettor, _) = winners.get(i).unwrap();
+            let payout = payouts.get(i).unwrap_or(0);
+            if payout > 0 {
+                token_client.transfer(&env.current_contract_address(), &bettor, &payout);
+            }
+        }
+        
+        // Log settlement summary for verification
+        soroban_sdk::log!(
+            &env,
+            "Settlement: pool={}, fee={}, payout_pool={}, winners={}, dust={}, variance={}",
+            total_pool,
+            total_pool - payout_pool,
+            payout_pool,
+            num_winners,
+            dust,
+            variance
+        );
+    }
+
+    /// Get settlement metadata for a market (for verification).
+    /// Returns the calculation parameters without executing transfers.
+    pub fn get_settlement_info(env: Env, market_id: u64) -> Option<(i128, i128, i128, i128, u32)> {
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))?;
+            
+        if market.status != MarketStatus::Resolved {
+            return None;
+        }
+
+        let positions: Map<Address, (u32, i128)> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserPosition(market_id))?;
+
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+
+        let mut winning_stake: i128 = 0;
+        let mut num_winners: u32 = 0;
+        
+        for (_, (outcome, amount)) in positions.iter() {
+            if outcome == market.winning_outcome {
+                winning_stake += amount;
+                num_winners += 1;
+            }
+        }
+
+        let payout_pool = calculate_payout_pool(total_pool);
+        
+        Some((total_pool, total_pool - payout_pool, payout_pool, winning_stake, num_winners))
+    }
 }
 
 #[cfg(test)]
@@ -2512,10 +2792,53 @@ mod tests {
         let (env, client, admin, _, deadline) = setup();
         let market = client.get_market(&1u64);
         assert_eq!(market.id, 1u64);
+        assert_eq!(
+            market.question,
+            String::from_str(&env, "Will BTC exceed $100k by end of 2025?")
+        );
         assert_eq!(market.options.len(), 2);
         assert_eq!(market.deadline, deadline);
         assert_eq!(market.status, MarketStatus::Active);
         soroban_sdk::log!(&env, "✅ Market stored: id={}, status={:?}", market.id, market.status);
+        assert!(!market.resolved);
+
+        // Visual validation — log stored market data
+        soroban_sdk::log!(
+            &env,
+            "✅ Market stored: id={}, deadline={}, resolved={}",
+            market.id,
+            market.deadline,
+            market.resolved
+        );
+    }
+
+    #[test]
+    fn test_store_and_get_audit_hash() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Initially zero audit logs
+        assert_eq!(client.get_audit_log_count(), 0);
+
+        // Store a mock CID hash (32 bytes)
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        client.store_audit_hash(&admin, &hash);
+
+        assert_eq!(client.get_audit_log_count(), 1);
+        assert_eq!(client.get_audit_hash(&0u64), hash);
+
+        // Store a second hash
+        let hash2 = BytesN::from_array(&env, &[2u8; 32]);
+        client.store_audit_hash(&admin, &hash2);
+
+        assert_eq!(client.get_audit_log_count(), 2);
+        assert_eq!(client.get_audit_hash(&1u64), hash2);
     }
 
     #[test]

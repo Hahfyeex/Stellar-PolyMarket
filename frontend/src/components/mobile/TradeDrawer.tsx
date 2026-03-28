@@ -1,8 +1,11 @@
 "use client";
-import { useRef, useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useFormPersistence } from "../../hooks/useFormPersistence";
 import type { Market } from "../../types/market";
-import MarketResolutionTracker from "../MarketResolutionTracker";
+import ResolutionCenter from "../ResolutionCenter";
 import { trackEvent } from "../../lib/firebase";
+import type { Market } from "../../types/market";
+import ResolutionCenter from "../ResolutionCenter";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
 import StakePresets from "../StakePresets";
@@ -10,10 +13,6 @@ import SlippageSettings from "../SlippageSettings";
 import SlippageWarningModal from "../SlippageWarningModal";
 import { useSlippageCheck } from "../../hooks/useSlippageCheck";
 import { toStroops, calcPayoutStroops, stroopsToXlm } from "../../utils/slippageCalc";
-
-
-
-
 
 interface Props {
   market: Market | null;
@@ -70,6 +69,16 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   /** Submit the bet to the API — called after slippage check passes */
   async function submitBet() {
     if (selectedOutcome === null || !amount || !walletAddress || !market) return;
+    const xlm = parseFloat(amount);
+    if (!isFinite(xlm) || xlm <= 0) {
+      setMessage("Error: Enter a valid positive amount");
+      return;
+    }
+    const stroops = Math.round(xlm * 1e7);
+    if (!Number.isInteger(stroops) || stroops <= 0) {
+      setMessage("Error: Amount too small");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -79,7 +88,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
         body: JSON.stringify({
           marketId: market.id,
           outcomeIndex: selectedOutcome,
-          amount: parseFloat(amount),
+          amount: stroops.toString(),
           walletAddress,
         }),
       });
@@ -89,7 +98,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
       trackEvent("bet_placed", {
         market_id: market.id,
         outcome_index: selectedOutcome,
-        amount: parseFloat(amount),
+        amount: stroops,
         outcome_name: market.outcomes[selectedOutcome],
       });
       clearForm();
@@ -99,7 +108,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
       trackEvent("bet_error", {
         market_id: market?.id,
         error_message: err.message.substring(0, 100),
-        amount: parseFloat(amount) || 0,
+        amount: stroops,
       });
     } finally {
       setLoading(false);
@@ -109,10 +118,10 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   // Reset drag when drawer opens/closes
   useEffect(() => {
     if (!open) setDragY(0);
-    
+
     // Track begin_checkout event when bet modal opens
     if (open && market) {
-      trackEvent('begin_checkout', {
+      trackEvent("begin_checkout", {
         market_id: market.id,
         market_question: market.question.substring(0, 50), // Truncate for privacy
         total_pool: parseFloat(market.total_pool),
@@ -149,16 +158,46 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   /** Entry point — checks slippage before submitting */
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress || !market) return;
-    const expectedPayout = computeExpectedPayout();
-    const safe = await checkSlippage({
-      marketId: market.id,
-      outcomeIndex: selectedOutcome,
-      stakeXlm: parseFloat(amount),
-      expectedPayoutXlm: expectedPayout,
-      tolerancePct: slippageTolerance,
-    });
-    if (safe) await submitBet();
-    // else: slippageState is set → warning modal renders
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketId: market.id,
+          outcomeIndex: selectedOutcome,
+          amount: parseFloat(amount),
+          walletAddress,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setMessage("Bet placed successfully!");
+
+      // Track successful bet placement
+      trackEvent("bet_placed", {
+        market_id: market.id,
+        outcome_index: selectedOutcome,
+        amount: parseFloat(amount),
+        outcome_name: market.outcomes[selectedOutcome],
+      });
+
+      // Clear persisted form state after successful submission
+      clearForm();
+      onBetPlaced?.();
+    } catch (err: any) {
+      setMessage(`Error: ${err.message}`);
+
+      // Track bet placement error
+      trackEvent("bet_error", {
+        market_id: market?.id,
+        error_message: err.message.substring(0, 100), // Truncate for privacy
+        amount: parseFloat(amount) || 0,
+      });
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (!open && dragY === 0) return null;
@@ -230,13 +269,14 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                     key={i}
                     onClick={() => setSelectedOutcome(i)}
                     disabled={market.resolved || isExpired}
-                    aria-pressed={selectedOutcome === i}
+                    disabled={market.resolved || isExpired}
                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
-                      ${market.resolved && market.winning_outcome === i
-                        ? "bg-green-600 text-white"
-                        : selectedOutcome === i
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                      ${
+                        market.resolved && market.winning_outcome === i
+                          ? "bg-green-600 text-white"
+                          : selectedOutcome === i
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-800 text-gray-300 hover:bg-gray-700"
                       }`}
                   >
                     {outcome}
@@ -245,7 +285,23 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               </div>
 
               {/* Amount input */}
-              {walletAddress ? (
+              {walletAddress && !market.resolved && !isExpired ? (
+                <div className="flex gap-3">
+                  <input
+                    type="number"
+                    placeholder="Amount (XLM)"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
+                  />
+                  <button
+                    onClick={placeBet}
+                    disabled={loading || selectedOutcome === null || !amount}
+                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
+                  >
+                    {loading ? "..." : "Bet"}
+                  </button>
+              {walletAddress && !market.resolved && !isExpired ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-3">
                     <label htmlFor="trade-drawer-amount" className="sr-only">
@@ -278,13 +334,13 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">
-                    <SlippageSettings
-                      value={slippageTolerance}
-                      onChange={setSlippageTolerance}
-                    />
+                    <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
                     <button
                       data-testid="clear-form"
-                      onClick={() => { clearForm(); setMessage(""); }}
+                      onClick={() => {
+                        clearForm();
+                        setMessage("");
+                      }}
                       className="text-xs text-gray-500 hover:text-red-400 transition-colors"
                     >
                       Clear form
@@ -293,12 +349,16 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 </div>
               ) : (
                 <p className="text-gray-400 text-sm text-center py-2">
-                  Connect your wallet to place a bet
+                  {walletAddress
+                    ? "Betting is closed for this market"
+                    : "{walletAddress ? "Betting is closed for this market" : "Connect your wallet to place a bet"}"}
                 </p>
               )}
 
               {message && (
-                <p className={`text-sm mt-3 ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+                <p
+                  className={`text-sm mt-3 ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}
+                >
                   {message}
                 </p>
               )}
@@ -306,6 +366,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               <div className="mt-5">
                 <MarketResolutionTracker market={market} />
               </div>
+
               {/* What-If Simulator — shown when an outcome is selected */}
               {selectedOutcome !== null && (
                 <WhatIfSimulator

@@ -14,6 +14,7 @@ import WalletActivityTimeline from "../../components/timeline/WalletActivityTime
 import NotificationPreferencesPanel from "../../components/NotificationPreferencesPanel";
 import BetHistoryTable from "../../components/BetHistoryTable";
 import { usePortfolio } from "../../hooks/usePortfolio";
+import PortfolioSkeleton from "../../components/skeletons/PortfolioSkeleton";
 
 
 function abbreviateWallet(address: string): string {
@@ -105,8 +106,20 @@ export default function ProfilePage() {
   // ── Loading stats ─────────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <main className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <p className="text-gray-400 text-sm animate-pulse">Loading your stats...</p>
+      <main className="min-h-screen bg-gray-950 text-white">
+        <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
+          <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div>
+              <h1 className="text-white font-bold text-base leading-none">Profile</h1>
+            </div>
+            <a href="/" className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
+              ← Markets
+            </a>
+          </div>
+        </header>
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          <PortfolioSkeleton />
+        </div>
       </main>
     );
   }
