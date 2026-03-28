@@ -582,6 +582,9 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
 
   const market = marketData?.market ?? DEMO_MARKET;
   const bets = marketData?.bets ?? DEMO_BETS;
+  const outcomeDataAvailable = Array.isArray(market.outcomes) && market.outcomes.length > 0;
+  const outcomes = outcomeDataAvailable ? market.outcomes : ["Yes", "No"];
+  const marketWithOutcomes = { ...market, outcomes };
   const positions = calculatePositions(bets);
   const odds = {
     yes: calculateOdds(bets, 0),
@@ -706,19 +709,25 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
               </div>
             </div>
 
+            {!outcomeDataAvailable && (
+              <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 mb-6">
+                <p className="text-gray-400">Outcome data unavailable</p>
+              </div>
+            )}
+
             {/* Tab Content */}
             {activeTab === "about" && (
               <AboutTab market={market} poolSize={poolData?.pool_size ?? market.total_pool} />
             )}
             {activeTab === "positions" && (
-              <PositionsTab positions={positions} outcomes={market.outcomes} />
+              <PositionsTab positions={positions} outcomes={outcomes} />
             )}
-            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={market.outcomes} />}
+            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={outcomes} />}
 
             {/* Mobile Sticky Betting Panel */}
             <div className="fixed bottom-0 left-0 right-0 bg-gray-950 border-t border-gray-800 p-4 md:static md:mt-6 md:bg-transparent md:border-0 md:p-0 z-20">
               <div className="max-w-4xl mx-auto">
-                <BettingPanel market={market} odds={odds} onBetPlaced={handleBetPlaced} />
+                <BettingPanel market={marketWithOutcomes} odds={odds} onBetPlaced={handleBetPlaced} />
               </div>
             </div>
           </>
@@ -734,7 +743,11 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
 
       {/* Mobile layout */}
       <div className="block md:hidden">
-        <MobileShell activeMarket={market} walletAddress={publicKey} onBetPlaced={handleBetPlaced}>
+        <MobileShell
+          activeMarket={marketWithOutcomes}
+          walletAddress={publicKey}
+          onBetPlaced={handleBetPlaced}
+        >
           {pageContent}
         </MobileShell>
       </div>
