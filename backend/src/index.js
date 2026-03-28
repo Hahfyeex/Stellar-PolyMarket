@@ -66,8 +66,9 @@ app.use((req, res, _next) => {
   _next();
 });
 
-// Health check – intentionally NOT behind App Check so uptime monitors work
-app.get("/health", (req, res) => res.json({ status: "ok" }));
+// Health and readiness probes — NOT behind App Check so orchestrators can probe freely
+const healthRouter = require("./routes/health");
+app.use(healthRouter);
 app.use("/api/health", require("./routes/health/protocolHealth"));
 
 // Prometheus metrics — NOT behind App Check so Prometheus can scrape freely
