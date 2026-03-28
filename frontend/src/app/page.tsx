@@ -36,6 +36,7 @@ export default function Home() {
   const [filters, setFilters] = useState<SearchFilters>(() => ({
     query: searchParams.get("q") ?? "",
     category: searchParams.get("category") ?? "",
+    categories: [],
     status: searchParams.get("status") ?? "",
     sort: (searchParams.get("sort") as SortKey) ?? "newest",
   }));
@@ -199,7 +200,11 @@ export default function Home() {
               ))}
             </div>
           ) : filteredMarkets.length === 0 ? (
-            <p className="text-gray-400">No markets found.</p>
+            <p className="text-gray-400" data-testid="no-markets-empty-state">
+              {filters.query
+                ? `No markets found for "${filters.query}"`
+                : "No markets found."}
+            </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredMarkets.map((market) => (
