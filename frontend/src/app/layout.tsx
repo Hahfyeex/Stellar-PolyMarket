@@ -8,6 +8,7 @@ import SkipLink from "../components/SkipLink";
 import ReactQueryProvider from "../components/ReactQueryProvider";
 import ThemeScript from "../components/ThemeScript";
 import OfflineBanner from "../components/OfflineBanner";
+import KeyboardShortcutsProvider from "../components/KeyboardShortcutsProvider";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
@@ -44,6 +45,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </main>
                   {/* BettingSlip mounted globally — persists across all pages */}
                   <BettingSlipWrapper />
+                  {/* Global keyboard shortcuts (B, /, Esc, ?) */}
+                  <KeyboardShortcutsProvider />
                 </BettingSlipProvider>
               </ToastProvider>
             </WalletProvider>
