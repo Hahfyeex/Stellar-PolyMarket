@@ -28,6 +28,7 @@ import RelatedMarketsCarousel from "../../../components/RelatedMarketsCarousel";
 import ContractErrorBoundary from "../../../components/ContractErrorBoundary";
 import SocialSentiment from "../../../components/SocialSentiment";
 import SimulatorPanel from "../../../components/SimulatorPanel";
+import ShareModal from "../../../components/ShareModal";
 import { store } from "../../../store";
 import MarketDetailSkeleton from "../../../components/skeletons/MarketDetailSkeleton";
 
@@ -63,6 +64,7 @@ export default function MarketDetailPage() {
   const [market, setMarket] = useState<Market | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
 
   const marketId = Number(params?.id);
 
@@ -162,6 +164,17 @@ export default function MarketDetailPage() {
               <span className="text-xs text-gray-500">
                 {daysLeft === 0 ? "Ends today" : `${daysLeft}d remaining`} · Ends {new Date(market.end_date).toLocaleDateString()}
               </span>
+              <button
+                data-testid="share-button"
+                onClick={() => setShareOpen(true)}
+                className="ml-auto flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white px-3 py-1.5 rounded-full border border-gray-700 transition-colors"
+                aria-label="Share market"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                  <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
+                </svg>
+                Share
+              </button>
             </div>
             <h1 className="text-xl md:text-3xl font-bold text-white leading-snug">{market.question}</h1>
             {market.description && (
@@ -346,6 +359,19 @@ export default function MarketDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Share modal */}
+      {shareOpen && market && (
+        <ShareModal
+          marketId={market.id}
+          question={market.question}
+          yesOdds={Math.round(100 / market.outcomes.length)}
+          noOdds={Math.round(100 - 100 / market.outcomes.length)}
+          totalPool={parseFloat(market.total_pool)}
+          endDate={market.end_date}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </main>
   );
 }

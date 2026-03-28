@@ -58,6 +58,8 @@ module.exports = {
         "src/components/VirtualizedOrderBook.tsx",
         "src/components/LiveActivityFeed.tsx",
         "src/components/OfflineBanner.tsx",
+        "src/components/ShareCard.tsx",
+        "src/components/ShareModal.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
