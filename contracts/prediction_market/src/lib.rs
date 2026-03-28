@@ -215,6 +215,8 @@ pub struct DisputeData {
     AuditLog(u64),
     AuditLogCount,
 }
+```
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -378,7 +380,84 @@ impl PredictionMarket {
         set_whitelisted_token(&env, &token, is_whitelisted);
     }
 
+    /// Add a token to the whitelist. Admin-only.
+    pub fn add_whitelisted_token(env: Env, token_address: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let mut tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+
+        // Prevent duplicates
+        for i in 0..tokens.len() {
+            if tokens.get(i).unwrap() == token_address {
+                panic!("Token already whitelisted");
+            }
+        }
+
+        tokens.push_back(token_address);
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistedTokens, &tokens);
+    }
+
+    /// Remove a token from the whitelist. Admin-only.
+    pub fn remove_whitelisted_token(env: Env, token_address: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+
+        let mut new_tokens = Vec::new(&env);
+        let mut found = false;
+        for i in 0..tokens.len() {
+            let t = tokens.get(i).unwrap();
+            if t == token_address {
+                found = true;
+            } else {
+                new_tokens.push_back(t);
+            }
+        }
+        assert!(found, "Token not found in whitelist");
+
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistedTokens, &new_tokens);
+    }
+
+    /// Query the current whitelisted tokens.
+    pub fn get_whitelisted_tokens(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Check whether a specific token is whitelisted.
+    pub fn is_token_whitelisted(env: Env, token_address: Address) -> bool {
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistedTokens)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..tokens.len() {
+            if tokens.get(i).unwrap() == token_address {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Create a new prediction market.
+    /// Market metadata (question, options, deadline) stored in persistent storage.
+    /// The token must be whitelisted before it can be used for a market.
     /// Blocked when GlobalStatus is false (graceful shutdown).
     /// Hot data (total_shares, is_paused) written to Instance storage.
     /// Cold data (market metadata, user positions) written to Persistent storage.
@@ -533,13 +612,19 @@ impl PredictionMarket {
         id
     }
 
-    /// Place a bet on an option.
+```
+        env.storage().instance().set(&DataKey::IsPaused(id), &false);
+    }
+
+    /// Place a bet on an option — transfers tokens into the contract.
+    /// Rejects bets if the market's token is not in the WhitelistedTokens set.
     /// Reads total_shares from Instance (1 cheap read) instead of Persistent.
-    /// 
+    ///
     /// # Gas Optimization
     /// Uses Vec for positions storage instead of Map.
     /// Linear scan to find existing bet is cheaper than Map hashing for small datasets.
     /// Typical markets have <100 bettors, making Vec O(n) faster than Map O(1) with hashing overhead.
+```
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         check_platform_active(&env);
         bettor.require_auth();
