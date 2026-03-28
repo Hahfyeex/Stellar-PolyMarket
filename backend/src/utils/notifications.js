@@ -9,11 +9,11 @@ const logger = require("./logger");
  * @param {number|null} marketId
  */
 async function triggerNotification(walletAddress, type, message, marketId = null) {
-  logger.info(
-    { wallet_address: walletAddress, type, market_id: marketId },
-    "Triggering notification"
-  );
   try {
+    logger.info(
+      { wallet_address: walletAddress, type, market_id: marketId },
+      "Triggering notification"
+    );
     await db.query(
       `INSERT INTO notifications (wallet_address, type, message, market_id) VALUES ($1, $2, $3, $4)`,
       [walletAddress, type, message, marketId]
@@ -21,10 +21,23 @@ async function triggerNotification(walletAddress, type, message, marketId = null
     logger.debug({ wallet_address: walletAddress, type }, "Notification inserted");
   } catch (err) {
     logger.warn(
-      { err: err.message, wallet_address: walletAddress, type },
+      { err: err.message, market_id: marketId, type },
       "Failed to insert notification"
     );
-    // Non-blocking — don't fail the caller
+
+    // Dead-letter mechanism: persistence for later retry
+    try {
+      await db.query(
+        `INSERT INTO failed_notifications (wallet_address, type, message, market_id, error_message) VALUES ($1, $2, $3, $4, $5)`,
+        [walletAddress, type, message, marketId, err.message]
+      );
+    } catch (dlqErr) {
+      logger.error(
+        { err: dlqErr.message, original_err: err.message, market_id: marketId },
+        "Critical error: failed to insert into dead-letter queue"
+      );
+    }
+    // Non-blocking — do not re-throw error to avoid failing market resolution
   }
 }
 

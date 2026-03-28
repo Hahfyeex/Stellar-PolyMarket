@@ -69,29 +69,40 @@ router.get("/", async (req, res) => {
       offset = parsedOffset;
     }
 
+    // Category filter: slug
+    const categorySlug = req.query.category;
+
     // Cache-aside: check Redis first, fall back to DB on miss or Redis failure
-    const key = listKey(limit, offset);
+    // Include categorySlug in cache key if present
+    const key = categorySlug ? `markets:cat:${categorySlug}:${limit}:${offset}` : listKey(limit, offset);
     const data = await getOrSet(key, TTL.LIST, async () => {
       // Cache miss — query the database
-      const countResult = await db.query(
-        "SELECT COUNT(*) as total FROM markets WHERE deleted_at IS NULL"
-      );
+      let countQuery = "SELECT COUNT(*) as total FROM markets m WHERE m.deleted_at IS NULL";
+      let dataQuery = "SELECT m.*, c.slug as category_slug FROM markets m LEFT JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL";
+      const params = [limit, offset];
+
+      if (categorySlug) {
+        countQuery = "SELECT COUNT(*) as total FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND c.slug = $1";
+        dataQuery = "SELECT m.*, c.slug as category_slug FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND c.slug = $3 ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
+        params.push(categorySlug);
+      } else {
+        dataQuery += " ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
+      }
+
+      const countResult = await db.query(countQuery, categorySlug ? [categorySlug] : []);
       const total = parseInt(countResult.rows[0].total, 10);
 
-      const result = await db.query(
-        "SELECT * FROM markets WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        [limit, offset]
-      );
+      const result = await db.query(dataQuery, params);
 
       const markets = result.rows;
       const hasMore = offset + markets.length < total;
 
       logger.debug(
-        { market_count: markets.length, total, limit, offset },
-        "Markets fetched with pagination"
+        { market_count: markets.length, total, limit, offset, categorySlug },
+        "Markets fetched with pagination and filtering"
       );
 
-      return { markets, meta: { total, limit, offset, hasMore } };
+      return { markets, meta: { total, limit, offset, hasMore, category: categorySlug || null } };
     });
 
     res.json(data);
@@ -106,19 +117,20 @@ router.get("/", async (req, res) => {
 // 1. validateMarketCreation - checks metadata (duplicates, end date, description, outcomes)
 // 2. rateLimitMarketCreation - enforces 3 markets per wallet per 24 hours
 router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, res) => {
-  const { question, endDate, outcomes, contractAddress, walletAddress } = req.body;
+  const { question, endDate, outcomes, contractAddress, walletAddress, categoryId } = req.body;
 
   // Basic required field validation (middleware handles detailed validation)
-  if (!question || !endDate || !outcomes?.length || !walletAddress) {
+  if (!question || !endDate || !outcomes?.length || !walletAddress || !categoryId) {
     return res.status(400).json({
       error: {
         code: "MISSING_REQUIRED_FIELDS",
-        message: "question, endDate, outcomes, and walletAddress are required",
+        message: "question, endDate, outcomes, walletAddress, and categoryId are required",
         details: {
           question: !!question,
           endDate: !!endDate,
           outcomes: !!outcomes?.length,
           walletAddress: !!walletAddress,
+          categoryId: !!categoryId,
         },
       },
     });
@@ -127,8 +139,8 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
   try {
     // Market has passed all validation checks - create immediately without admin approval
     const result = await db.query(
-      "INSERT INTO markets (question, end_date, outcomes, contract_address, created_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING *",
-      [question, endDate, outcomes, contractAddress || null]
+      "INSERT INTO markets (question, end_date, outcomes, contract_address, category_id, created_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING *",
+      [question, endDate, outcomes, contractAddress || null, categoryId]
     );
 
     logger.info(
