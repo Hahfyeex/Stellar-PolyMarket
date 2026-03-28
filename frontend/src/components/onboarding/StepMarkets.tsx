@@ -26,7 +26,7 @@ export default function StepMarkets() {
           {
             icon: "📋",
             title: "A question is posed",
-            desc: "e.g. "Will BTC reach $100k before 2027?"",
+            desc: "e.g. \u201cWill BTC reach $100k before 2027?\u201d",
           },
           {
             icon: "💰",

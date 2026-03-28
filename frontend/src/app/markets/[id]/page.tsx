@@ -28,7 +28,9 @@ import RelatedMarketsCarousel from "../../../components/RelatedMarketsCarousel";
 import ContractErrorBoundary from "../../../components/ContractErrorBoundary";
 import SocialSentiment from "../../../components/SocialSentiment";
 import SimulatorPanel from "../../../components/SimulatorPanel";
+import ShareModal from "../../../components/ShareModal";
 import { store } from "../../../store";
+import MarketDetailSkeleton from "../../../components/skeletons/MarketDetailSkeleton";
 
 interface Market {
   id: number;
@@ -62,6 +64,7 @@ export default function MarketDetailPage() {
   const [market, setMarket] = useState<Market | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
 
   const marketId = Number(params?.id);
 
@@ -104,6 +107,27 @@ export default function MarketDetailPage() {
     );
   }
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-gray-950 text-white">
+        <nav className="flex items-center gap-3 px-4 md:px-6 py-4 border-b border-gray-800 sticky top-0 z-30 bg-gray-950/90 backdrop-blur-sm">
+          <button
+            onClick={() => router.push("/")}
+            className="text-gray-400 hover:text-white transition-colors flex items-center gap-2"
+            aria-label="Back to markets"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+              <path d="M19 12H5M12 5l-7 7 7 7" />
+            </svg>
+            <span className="text-sm">Back</span>
+          </button>
+          <Link href="/" className="text-blue-400 font-bold text-sm">Stella Polymarket</Link>
+        </nav>
+        <MarketDetailSkeleton />
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Top nav with back button */}
@@ -121,13 +145,13 @@ export default function MarketDetailPage() {
         <Link href="/" className="text-blue-400 font-bold text-sm">Stella Polymarket</Link>
         <span className="text-gray-600">/</span>
         <span className="text-gray-400 text-sm truncate max-w-xs">
-          {loading ? "Loading..." : market?.question.slice(0, 50) + (market && market.question.length > 50 ? "…" : "")}
+          {market?.question.slice(0, 50) + (market && market.question.length > 50 ? "…" : "")}
         </span>
       </nav>
 
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
         {/* ── HERO: Question + status badges ── */}
-        {!loading && market && (
+        {market && (
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               {market.resolved ? (
@@ -140,6 +164,17 @@ export default function MarketDetailPage() {
               <span className="text-xs text-gray-500">
                 {daysLeft === 0 ? "Ends today" : `${daysLeft}d remaining`} · Ends {new Date(market.end_date).toLocaleDateString()}
               </span>
+              <button
+                data-testid="share-button"
+                onClick={() => setShareOpen(true)}
+                className="ml-auto flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white px-3 py-1.5 rounded-full border border-gray-700 transition-colors"
+                aria-label="Share market"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                  <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
+                </svg>
+                Share
+              </button>
             </div>
             <h1 className="text-xl md:text-3xl font-bold text-white leading-snug">{market.question}</h1>
             {market.description && (
@@ -153,14 +188,12 @@ export default function MarketDetailPage() {
           {/* Left column (65%) — market info, odds chart, bet history */}
           <div className="min-w-0 space-y-6">
             {/* 1. PROBABILITY CHART — primary element */}
-            {loading ? (
-              <ChartSkeleton />
-            ) : market ? (
+            {market ? (
               <ProbabilityChart marketId={market.id} outcomes={market.outcomes} />
             ) : null}
 
             {/* 2. Current prices row */}
-            {!loading && market && (
+            {market && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {market.outcomes.map((outcome, i) => {
                   const prob = (100 / market.outcomes.length).toFixed(0);
@@ -192,7 +225,7 @@ export default function MarketDetailPage() {
             )}
 
             {/* 3. Bet History Table */}
-            {!loading && market && (
+            {market && (
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
                 <h3 className="text-white font-semibold text-base mb-4">Recent Bets</h3>
                 <div className="overflow-x-auto">
@@ -225,24 +258,24 @@ export default function MarketDetailPage() {
             )}
 
             {/* 4. Pool ownership chart */}
-            {!loading && market && (
+            {market && (
               <ContractErrorBoundary context={`PoolChart-${market.id}`} store={store}>
                 <PoolOwnershipChart marketId={market.id} />
               </ContractErrorBoundary>
             )}
 
             {/* 5. Social sentiment */}
-            {!loading && market && (
+            {market && (
               <SocialSentiment outcomes={market.outcomes} totalPool={parseFloat(market.total_pool)} />
             )}
 
             {/* 6. Firebase-powered comments */}
-            {!loading && market && (
+            {market && (
               <MarketComments marketId={market.id} walletAddress={publicKey} />
             )}
 
             {/* 7. Market rules + truth sources */}
-            {!loading && market && (
+            {market && (
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
                 <h3 className="text-white font-semibold text-base">Market Rules</h3>
                 <p className="text-gray-400 text-sm leading-relaxed">
@@ -290,7 +323,7 @@ export default function MarketDetailPage() {
           {/* Right column (35%) — Sticky bet form on desktop */}
           <div className="w-full">
             <div className="lg:sticky lg:top-20 space-y-4">
-              {!loading && market ? (
+              {market ? (
                 <ContractErrorBoundary context={`TradeModal-${market.id}`} store={store}>
                   <TradeModal
                     market={market}
@@ -309,7 +342,7 @@ export default function MarketDetailPage() {
               )}
               
               {/* What-If Simulator Panel */}
-              {!loading && market && (
+              {market && (
                 <SimulatorPanel market={market} />
               )}
             </div>
@@ -317,7 +350,7 @@ export default function MarketDetailPage() {
         </div>
 
         {/* ── FOOTER: Related Markets carousel ── */}
-        {!loading && market && (
+        {market && (
           <div className="border-t border-gray-800 pt-6">
             <RelatedMarketsCarousel
               currentMarketId={market.id}
@@ -326,6 +359,19 @@ export default function MarketDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Share modal */}
+      {shareOpen && market && (
+        <ShareModal
+          marketId={market.id}
+          question={market.question}
+          yesOdds={Math.round(100 / market.outcomes.length)}
+          noOdds={Math.round(100 - 100 / market.outcomes.length)}
+          totalPool={parseFloat(market.total_pool)}
+          endDate={market.end_date}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </main>
   );
 }
