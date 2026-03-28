@@ -15,6 +15,20 @@ const jwtAuth = require("../middleware/jwtAuth");
 
 const DISPUTE_WINDOW_HOURS = parseInt(process.env.DISPUTE_WINDOW_HOURS, 10) || 24;
 
+const ACTION_LABELS = {
+  PROPOSED: "Resolution Proposed",
+  CONFIRMED: "Resolution Confirmed",
+  REJECTED: "Resolution Rejected",
+  DISPUTED: "Resolution Disputed",
+};
+
+async function recordResolutionHistory(marketId, action, actorWallet, outcomeIndex, notes) {
+  await db.query(
+    "INSERT INTO market_resolution_history (market_id, action, actor_wallet, outcome_index, notes) VALUES ($1, $2, $3, $4, $5)",
+    [marketId, action, actorWallet || null, outcomeIndex ?? null, notes || null]
+  );
+}
+
 // GET /api/markets — list all markets with pagination
 router.get("/", async (req, res) => {
   try {
@@ -250,7 +264,7 @@ router.get("/:id/odds", async (req, res) => {
 
 // POST /api/markets/:id/propose — oracle proposes a resolution
 router.post("/:id/propose", async (req, res) => {
-  const { proposedOutcome } = req.body;
+  const { proposedOutcome, actorWallet } = req.body;
   if (proposedOutcome === undefined) {
     return res.status(400).json({ error: "proposedOutcome is required" });
   }
@@ -264,24 +278,130 @@ router.post("/:id/propose", async (req, res) => {
       return res.status(404).json({ error: "Market not found" });
     }
 
+    await recordResolutionHistory(req.params.id, "PROPOSED", actorWallet, proposedOutcome);
+
     logger.info(
-      {
-        market_id: req.params.id,
-        proposed_outcome: proposedOutcome,
-        status: "PROPOSED",
-      },
+      { market_id: req.params.id, proposed_outcome: proposedOutcome },
       "Market resolution proposed"
     );
-
-    // Trigger notification
     triggerNotification(req.params.id, "PROPOSED");
-
     res.json({ market: result.rows[0] });
   } catch (err) {
-    logger.error(
-      { err, market_id: req.params.id, proposed_outcome: proposedOutcome },
-      "Failed to propose market resolution"
+    logger.error({ err, market_id: req.params.id }, "Failed to propose market resolution");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/markets/:id/confirm — confirm a proposed resolution
+router.post("/:id/confirm", async (req, res) => {
+  const { actorWallet } = req.body;
+  try {
+    const result = await db.query(
+      "UPDATE markets SET status = 'CONFIRMED', resolved = TRUE WHERE id = $1 AND status = 'PROPOSED' RETURNING *",
+      [req.params.id]
     );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Market not found or not in PROPOSED state" });
+    }
+
+    await recordResolutionHistory(
+      req.params.id,
+      "CONFIRMED",
+      actorWallet,
+      result.rows[0].winning_outcome
+    );
+
+    logger.info({ market_id: req.params.id }, "Market resolution confirmed");
+    triggerNotification(req.params.id, "CONFIRMED");
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to confirm market resolution");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/markets/:id/reject — reject a proposed resolution
+router.post("/:id/reject", async (req, res) => {
+  const { actorWallet, notes } = req.body;
+  try {
+    const result = await db.query(
+      "UPDATE markets SET status = 'ACTIVE', winning_outcome = NULL WHERE id = $1 AND status = 'PROPOSED' RETURNING *",
+      [req.params.id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Market not found or not in PROPOSED state" });
+    }
+
+    await recordResolutionHistory(req.params.id, "REJECTED", actorWallet, null, notes);
+
+    logger.info({ market_id: req.params.id }, "Market resolution rejected");
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to reject market resolution");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/markets/:id/dispute — dispute a proposed resolution
+router.post("/:id/dispute", async (req, res) => {
+  const { actorWallet, notes } = req.body;
+  try {
+    const result = await db.query(
+      "UPDATE markets SET status = 'DISPUTED' WHERE id = $1 AND status = 'PROPOSED' RETURNING *",
+      [req.params.id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Market not found or not in PROPOSED state" });
+    }
+
+    await recordResolutionHistory(
+      req.params.id,
+      "DISPUTED",
+      actorWallet,
+      result.rows[0].winning_outcome,
+      notes
+    );
+
+    logger.info({ market_id: req.params.id }, "Market resolution disputed");
+    triggerNotification(req.params.id, "DISPUTED");
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to dispute market resolution");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/markets/:id/history — public resolution history
+router.get("/:id/history", async (req, res) => {
+  try {
+    const marketCheck = await db.query(
+      "SELECT id FROM markets WHERE id = $1 AND deleted_at IS NULL",
+      [req.params.id]
+    );
+    if (!marketCheck.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    const result = await db.query(
+      "SELECT id, action, actor_wallet, outcome_index, notes, created_at FROM market_resolution_history WHERE market_id = $1 ORDER BY created_at ASC",
+      [req.params.id]
+    );
+
+    const history = result.rows.map((row) => ({
+      id: row.id,
+      action: row.action,
+      action_label: ACTION_LABELS[row.action] || row.action,
+      actor_wallet: row.actor_wallet
+        ? `${row.actor_wallet.slice(0, 4)}...${row.actor_wallet.slice(-4)}`
+        : null,
+      outcome_index: row.outcome_index,
+      notes: row.notes,
+      created_at: row.created_at,
+    }));
+
+    res.json({ market_id: parseInt(req.params.id, 10), history });
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to fetch resolution history");
     res.status(500).json({ error: err.message });
   }
 });
@@ -290,8 +410,8 @@ router.post("/:id/propose", async (req, res) => {
 router.post("/:id/resolve", async (req, res) => {
   try {
     const marketId = req.params.id;
+    const { actorWallet, winningOutcome } = req.body;
 
-    // Resolve the market
     const result = await db.query(
       "UPDATE markets SET resolved = TRUE, dispute_window_ends_at = NOW() + INTERVAL '1 hour' * $1 WHERE id = $2 RETURNING *",
       [DISPUTE_WINDOW_HOURS, marketId]
@@ -300,6 +420,13 @@ router.post("/:id/resolve", async (req, res) => {
     if (!result.rows.length) {
       return res.status(404).json({ error: "Market not found" });
     }
+
+    await recordResolutionHistory(
+      marketId,
+      "CONFIRMED",
+      actorWallet,
+      winningOutcome ?? result.rows[0].winning_outcome
+    );
 
     logger.info({ market_id: marketId }, "Market resolved and dispute window set");
     res.status(200).json({ market: result.rows[0] });
