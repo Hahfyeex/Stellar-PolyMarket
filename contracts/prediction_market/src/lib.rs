@@ -203,9 +203,9 @@ pub enum MarketStatus {
     Active,
     Proposed,
     Disputed,
-    ReReview, // threshold crossed, paused for final admin review
+    ReReview,
     Resolved,
-    Voided,   // condition not met — full refunds enabled
+    Voided,
 }
 
 #[contracttype]
@@ -1021,6 +1021,7 @@ impl PredictionMarket {
             .get(&DataKey::AuditLogCount)
             .unwrap_or(0)
     }
+
 }
 
 #[cfg(test)]

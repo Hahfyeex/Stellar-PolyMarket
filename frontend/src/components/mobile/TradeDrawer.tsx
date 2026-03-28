@@ -1,15 +1,10 @@
 "use client";
 import { useRef, useState, useEffect } from "react";
 import type { Market } from "../../types/market";
-import MarketResolutionTracker from "../MarketResolutionTracker";
 import { trackEvent } from "../../lib/firebase";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
-import StakePresets from "../StakePresets";
-
-const HORIZON = "https://horizon-testnet.stellar.org";
-
-
+import ResolutionCenter from "../ResolutionCenter";
 
 interface Props {
   market: Market | null;
@@ -41,6 +36,13 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
+
+  // Reset form when market changes
+  useEffect(() => {
+    setSelectedOutcome(null);
+    setAmount("");
+    setMessage("");
+  }, [market?.id]);
 
   // Reset drag when drawer opens/closes
   useEffect(() => {
@@ -214,11 +216,6 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                       {loading ? "..." : "Bet"}
                     </button>
                   </div>
-                  <StakePresets
-                    amount={amount}
-                    onSelect={setAmount}
-                    walletBalance={xlmBalance}
-                    disabled={loading}
                   />
 
                   {/* Slippage + clear row */}
@@ -248,7 +245,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 </div>
               ) : (
                 <p className="text-gray-400 text-sm text-center py-2">
-                  Connect your wallet to place a bet
+                  {walletAddress ? "Betting is closed for this market" : "Connect your wallet to place a bet"}
                 </p>
               )}
 
@@ -259,9 +256,8 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               )}
 
               <div className="mt-5">
-                <MarketResolutionTracker market={market} />
+                <ResolutionCenter market={market} />
               </div>
-              {/* What-If Simulator — shown when an outcome is selected */}
               {selectedOutcome !== null && (
                 <WhatIfSimulator
                   poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}

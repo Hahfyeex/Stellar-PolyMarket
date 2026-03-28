@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import type { Market } from "../types/market";
-import MarketResolutionTracker from "./MarketResolutionTracker";
 import Link from "next/link";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
@@ -17,6 +16,7 @@ import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { useOptimisticBet } from "../hooks/useOptimisticBet";
 import OptimisticBetIndicator from "./OptimisticBetIndicator";
 import OddsTicker from "./OddsTicker";
+import ResolutionCenter from "./ResolutionCenter";
 
 interface Props {
   market: Market;
@@ -154,7 +154,6 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           onCancel={() => setSlippageWarning(null)}
         />
       )}
-
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
         <div className="flex items-center gap-2">
@@ -250,7 +249,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
 
-      <MarketResolutionTracker market={market} compact />
+      <ResolutionCenter market={market} compact />
     </div>
   );
 }
