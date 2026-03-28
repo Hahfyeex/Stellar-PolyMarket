@@ -115,6 +115,27 @@ pub struct EventPayoutClaimed {
     pub ledger_timestamp: u64,
 }
 
+/// Emitted by `batch_claim_payout`.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventBatchPayoutClaimed {
+    pub version: u32,
+    pub bettor: Address,
+    pub market_ids: Vec<u64>,
+    pub total_payout: i128,
+    pub ledger_timestamp: u64,
+}
+
+/// Emitted when a market is voided because the resolved winning outcome had no bets.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventMarketVoidedNoWinner {
+    pub version: u32,
+    pub market_id: u64,
+    pub total_pool: i128,
+    pub ledger_timestamp: u64,
+}
+
 /// Emitted by `provide_liquidity`.
 #[contracttype]
 #[derive(Clone)]
@@ -299,6 +320,36 @@ pub fn emit_payout_claimed(
             recipients_paid,
             total_distributed,
             cursor,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_batch_payout_claimed(
+    env: &Env,
+    bettor: &Address,
+    market_ids: &Vec<u64>,
+    total_payout: i128,
+) {
+    env.events().publish(
+        (symbol_short!("BatchPay"), bettor.clone()),
+        EventBatchPayoutClaimed {
+            version: EVENT_VERSION,
+            bettor: bettor.clone(),
+            market_ids: market_ids.clone(),
+            total_payout,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_market_voided_no_winner(env: &Env, market_id: u64, total_pool: i128) {
+    env.events().publish(
+        (symbol_short!("VoidNoWin"), market_id),
+        EventMarketVoidedNoWinner {
+            version: EVENT_VERSION,
+            market_id,
+            total_pool,
             ledger_timestamp: env.ledger().timestamp(),
         },
     );

@@ -10,7 +10,7 @@ const {
 const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
 const eventBus = require("../bots/eventBus");
-const { getOrSet, invalidateAll, invalidateMarket, listKey, detailKey, TTL } = require("../utils/cache");
+const { getOrSet, invalidateAll, invalidateMarket, detailKey, TTL } = require("../utils/cache");
 
 // GET /api/markets — list all markets with pagination
 router.get("/", async (req, res) => {
@@ -24,8 +24,8 @@ router.get("/", async (req, res) => {
     
     // Validate limit
     if (limitParam !== undefined) {
-      const parsedLimit = parseInt(limitParam, 10);
-      if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      const parsedLimit = Number(limitParam);
+      if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
         return res.status(400).json({ 
           error: {
             code: 'INVALID_LIMIT',
@@ -39,8 +39,8 @@ router.get("/", async (req, res) => {
     
     // Validate offset
     if (offsetParam !== undefined) {
-      const parsedOffset = parseInt(offsetParam, 10);
-      if (isNaN(parsedOffset) || parsedOffset < 0) {
+      const parsedOffset = Number(offsetParam);
+      if (!Number.isInteger(parsedOffset) || parsedOffset < 0) {
         return res.status(400).json({ 
           error: {
             code: 'INVALID_OFFSET',
@@ -52,22 +52,83 @@ router.get("/", async (req, res) => {
       offset = parsedOffset;
     }
 
-    // Cache-aside: check Redis first, fall back to DB on miss or Redis failure
-    const key = listKey(limit, offset);
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const category = typeof req.query.category === "string" ? req.query.category.trim() : "";
+    const status = typeof req.query.status === "string" ? req.query.status.trim().toLowerCase() : "";
+    const sort = typeof req.query.sort === "string" ? req.query.sort.trim().toLowerCase() : "newest";
+
+    const allowedStatuses = new Set(["", "active", "resolved", "ending_soon"]);
+    if (!allowedStatuses.has(status)) {
+      return res.status(400).json({
+        error: {
+          code: "INVALID_STATUS",
+          message: "status must be one of: active, resolved, ending_soon",
+          details: { provided: req.query.status },
+        },
+      });
+    }
+
+    const allowedSorts = new Set(["volume_desc", "end_date_asc", "newest"]);
+    if (!allowedSorts.has(sort)) {
+      return res.status(400).json({
+        error: {
+          code: "INVALID_SORT",
+          message: "sort must be one of: volume_desc, end_date_asc, newest",
+          details: { provided: req.query.sort },
+        },
+      });
+    }
+
+    const whereClauses = [];
+    const params = [];
+
+    if (q) {
+      params.push(q);
+      whereClauses.push(`question ILIKE '%' || $${params.length} || '%'`);
+    }
+
+    if (category) {
+      params.push(category);
+      whereClauses.push(`category = $${params.length}`);
+    }
+
+    if (status === "active") {
+      whereClauses.push("resolved = FALSE");
+    } else if (status === "resolved") {
+      whereClauses.push("resolved = TRUE");
+    } else if (status === "ending_soon") {
+      whereClauses.push("resolved = FALSE");
+      whereClauses.push("end_date >= NOW()");
+      whereClauses.push("end_date <= NOW() + INTERVAL '24 hours'");
+    }
+
+    const whereSql = whereClauses.length ? ` WHERE ${whereClauses.join(" AND ")}` : "";
+
+    let orderBySql = " ORDER BY created_at DESC";
+    if (sort === "volume_desc") {
+      orderBySql = " ORDER BY total_pool DESC, created_at DESC";
+    } else if (sort === "end_date_asc") {
+      orderBySql = " ORDER BY end_date ASC, created_at DESC";
+    }
+
+    const key = `markets:list:${JSON.stringify({ q, category, status, sort, limit, offset })}`;
     const data = await getOrSet(key, TTL.LIST, async () => {
-      // Cache miss — query the database
-      const countResult = await db.query("SELECT COUNT(*) as total FROM markets");
+      const countResult = await db.query(`SELECT COUNT(*) as total FROM markets${whereSql}`, params);
       const total = parseInt(countResult.rows[0].total, 10);
 
+      const listParams = [...params, limit, offset];
       const result = await db.query(
-        "SELECT * FROM markets ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        [limit, offset]
+        `SELECT * FROM markets${whereSql}${orderBySql} LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+        listParams
       );
 
       const markets = result.rows;
       const hasMore = offset + markets.length < total;
 
-      logger.debug({ market_count: markets.length, total, limit, offset }, "Markets fetched with pagination");
+      logger.debug(
+        { market_count: markets.length, total, limit, offset, q, category, status, sort },
+        "Markets fetched with pagination"
+      );
 
       return { markets, meta: { total, limit, offset, hasMore } };
     });
