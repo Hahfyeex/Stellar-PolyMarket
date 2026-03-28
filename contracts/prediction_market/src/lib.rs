@@ -244,7 +244,7 @@ fn check_initialized(env: &Env) {
         .instance()
         .get(&DataKey::Initialized)
         .unwrap_or(false);
-    assert!(!is_init, "Contract already initialized");
+    assert!(!is_init, "ERR_101");
 }
 
 fn load_market(env: &Env, market_id: u64) -> Market {
@@ -387,7 +387,7 @@ impl PredictionMarket {
     /// If a non-zero CreationFee is configured, the creator must hold sufficient
     /// balance of `token` to cover the fee. The fee is transferred to FeeDestination
     /// before the market is stored. If the transfer fails (insufficient balance),
-    /// the transaction aborts with "InsufficientFeeBalance" and no market is created.
+    /// the transaction aborts with "ERR_108" and no market is created.
     ///
     /// Fee routing is controlled by FeeMode:
     ///   - FeeMode::Burn     → fee sent to a burn/lock address (e.g. issuer with locked trustline)
@@ -443,19 +443,19 @@ impl PredictionMarket {
                 .storage()
                 .instance()
                 .get(&DataKey::FeeDestination)
-                .expect("FeeDestination not configured");
+                .expect("ERR_107");
 
             // Transfer fee from creator to destination (burn address or DAO treasury).
             // The token contract will panic with a host error if the creator has
             // insufficient balance, aborting the entire transaction — no market is created.
             // We wrap in try_transfer and map any error to our own panic message so
-            // callers see a clear "InsufficientFeeBalance" reason.
+            // callers see a clear "ERR_108" reason.
             let fee_token = token::Client::new(&env, &token);
             if fee_token
                 .try_transfer(&creator, &fee_destination, &creation_fee)
                 .is_err()
             {
-                panic!("InsufficientFeeBalance");
+                panic!("ERR_108");
             }
 
             // Emit FeeCollected event for off-chain indexing.
@@ -616,12 +616,12 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::IsPaused(market_id))
             .unwrap_or(false);
-        assert!(!paused, "Market is paused");
+        assert!(!paused, "ERR_110");
 
         // Cold read: market metadata from Persistent
         let market: Market = load_market(&env, market_id);
 
-        assert!(market.status == MarketStatus::Active, "Market not active");
+        assert!(market.status == MarketStatus::Active, "ERR_111");
         assert!(
             env.ledger().timestamp() <= market.deadline,
             "Market deadline has passed"
@@ -1217,7 +1217,7 @@ impl PredictionMarket {
         // Final resolution override by admin (e.g. after examining dispute)
         assert!(
             market.status == MarketStatus::Proposed || market.status == MarketStatus::Disputed,
-            "Market must be proposed or disputed to resolve"
+            "ERR_117"
         );
         assert!(
             env.ledger().timestamp() >= market.deadline,
@@ -1225,7 +1225,7 @@ impl PredictionMarket {
         );
         assert!(
             env.ledger().timestamp() >= market.proposal_timestamp + LIVENESS_WINDOW,
-            "Liveness window has not elapsed"
+            "ERR_118"
         );
         assert!(
             winning_outcome < market.options.len(),
@@ -1435,7 +1435,7 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::MarketSwept(market_id))
             .unwrap_or(false);
-        assert!(!already_swept, "Market already swept");
+        assert!(!already_swept, "ERR_119");
 
         // Verify market is resolved
         let market: Market = env
@@ -1443,7 +1443,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "ERR_120");
 
         // Check 30-day claim deadline has passed (30 days = 2,592,000 seconds)
         let resolution_time: u64 = env
@@ -1455,7 +1455,7 @@ impl PredictionMarket {
         let thirty_days: u64 = 30 * 24 * 60 * 60; // 2,592,000 seconds
         assert!(
             current_time >= resolution_time + thirty_days,
-            "Claim deadline not reached (30 days required)"
+            "ERR_121"
         );
 
         // Get winners from the position_token Map
@@ -1559,7 +1559,7 @@ impl PredictionMarket {
             .get(&DataKey::VaultBalance)
             .unwrap_or(0);
 
-        assert!(vault_balance > 0, "No funds in vault to invest");
+        assert!(vault_balance > 0, "ERR_122");
 
         // TODO: Implement actual Stellar AMM integration
         // For now, this is a placeholder that validates the vault balance exists
@@ -1634,13 +1634,13 @@ impl PredictionMarket {
         // Verify claimant has a payout
         assert!(
             original_payouts.contains_key(claimant.clone()),
-            "No payout for this address"
+            "ERR_123"
         );
 
         let payout_amount = original_payouts.get(claimant.clone()).unwrap();
 
         // Check if already claimed (payout would be 0 if claimed)
-        assert!(payout_amount > 0, "Already claimed");
+        assert!(payout_amount > 0, "ERR_124");
 
         // Transfer the original payout amount
         let token_client = token::Client::new(env, &market.token);
@@ -1743,7 +1743,7 @@ impl PredictionMarket {
     fn internal_batch_distribute(env: &Env, market_id: u64, batch_size: u32) -> u32 {
         assert!(
             batch_size > 0 && batch_size <= MAX_BATCH_SIZE,
-            "batch_size must be 1..=MAX_BATCH_SIZE"
+            "ERR_126"
         );
 
         let market: Market = env
@@ -1751,7 +1751,7 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Market(market_id))
             .unwrap();
-        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+        assert!(market.status == MarketStatus::Resolved, "ERR_120");
 
         // Get remaining winners from the position_token Map
         let winners_map = position_token::get_balances(env, market_id, market.winning_outcome);
