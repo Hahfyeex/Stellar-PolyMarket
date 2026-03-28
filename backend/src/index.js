@@ -86,7 +86,7 @@ app.use("/metrics", require("./routes/metrics"));
 app.use("/api", appCheckMiddleware);
 // ───────────────────────────────────────────────────────────────────────────
 
-// Routes
+// Routes (MERGED — keep ALL)
 app.use("/api/markets", require("./routes/markets"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
