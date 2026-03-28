@@ -52,8 +52,11 @@ module.exports = {
         "src/hooks/useMarkets.ts",
         "src/hooks/useMarket.ts",
         "src/hooks/usePlaceBet.ts",
+        "src/hooks/useSlippageCheck.ts",
         "src/components/VirtualizedOrderBook.tsx",
         "src/components/LiveActivityFeed.tsx",
+        "src/components/SlippageSettings.tsx",
+        "src/components/SlippageWarningModal.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
@@ -71,6 +74,7 @@ module.exports = {
         "src/utils/simulatorCalc.ts",
         "src/utils/poolOwnership.ts",
         "src/utils/simulateBet.ts",
+        "src/utils/slippageCalc.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
