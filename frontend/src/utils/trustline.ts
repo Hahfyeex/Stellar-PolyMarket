@@ -22,6 +22,8 @@
  *   }
  */
 
+// Named imports for tree-shaking — stellar-sdk is large (~500KB); only pull
+// what is used so webpack can eliminate the rest.
 import {
   Asset,
   Horizon,
@@ -138,5 +140,5 @@ export async function submitTrustlineTx(signedXdr: string): Promise<Horizon.Hori
   const server = new Horizon.Server(HORIZON_TESTNET);
   const { TransactionBuilder } = await import("@stellar/stellar-sdk");
   const tx = TransactionBuilder.fromXDR(signedXdr, Networks.TESTNET);
-  return server.submitTransaction(tx);
+  return server.submitTransaction(tx) as Promise<Horizon.HorizonApi.TransactionResponse>;
 }

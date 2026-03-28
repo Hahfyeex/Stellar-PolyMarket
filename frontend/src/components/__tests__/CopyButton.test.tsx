@@ -540,3 +540,67 @@ describe("CopyButton Component", () => {
     });
   });
 });
+
+describe("displayValue prop", () => {
+  it("renders displayValue when provided instead of auto-abbreviation", () => {
+    render(<CopyButton value="GABCDEF123456WXYZABCDEF" displayValue="GABC...CDEF" />);
+    expect(screen.getByText("GABC...CDEF")).toBeInTheDocument();
+  });
+
+  it("still copies the full value when displayValue is set", async () => {
+    const full = "GABCDEF123456WXYZABCDEF";
+    render(<CopyButton value={full} displayValue="GABC...CDEF" />);
+    fireEvent.click(screen.getByRole("button"));
+    await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(full));
+  });
+
+  it("falls back to auto-abbreviation when displayValue is not provided", () => {
+    render(<CopyButton value="GABCDEF123456WXYZABCDEF" />);
+    expect(screen.getByText("GABCDE...CDEF")).toBeInTheDocument();
+  });
+});
+
+describe("Manual copy prompt fallback", () => {
+  beforeEach(() => {
+    delete (navigator as unknown as Record<string, unknown>).clipboard;
+    jest.spyOn(document, "execCommand").mockReturnValue(false); // both fail
+  });
+
+  afterEach(() => {
+    Object.assign(navigator, { clipboard: { writeText: mockClipboardWriteText } });
+    jest.restoreAllMocks();
+  });
+
+  it("shows manual copy prompt when both clipboard methods fail", async () => {
+    render(<CopyButton value="GABCDEF123456WXYZABCDEF" />);
+    fireEvent.click(screen.getByRole("button"));
+    await waitFor(() =>
+      expect(screen.getByTestId("manual-copy-prompt")).toBeInTheDocument()
+    );
+  });
+
+  it("manual copy input contains the full value", async () => {
+    const value = "GABCDEF123456WXYZABCDEF";
+    render(<CopyButton value={value} />);
+    fireEvent.click(screen.getByRole("button"));
+    await waitFor(() => {
+      const input = screen.getByTestId("manual-copy-input") as HTMLInputElement;
+      expect(input.value).toBe(value);
+    });
+  });
+
+  it("dismiss button hides the manual copy prompt", async () => {
+    render(<CopyButton value="GABCDEF123456WXYZABCDEF" />);
+    fireEvent.click(screen.getByRole("button"));
+    await waitFor(() => screen.getByTestId("manual-copy-prompt"));
+    fireEvent.click(screen.getByText("Dismiss"));
+    expect(screen.queryByTestId("manual-copy-prompt")).not.toBeInTheDocument();
+  });
+
+  it("does not show Copied! when fallback fails", async () => {
+    render(<CopyButton value="GABCDEF123456WXYZABCDEF" />);
+    fireEvent.click(screen.getByRole("button"));
+    await waitFor(() => screen.getByTestId("manual-copy-prompt"));
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+  });
+});

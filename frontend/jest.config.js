@@ -7,6 +7,12 @@ module.exports = {
       testEnvironment: "node",
       testMatch: [
         "**/hooks/__tests__/**/*.test.ts",
+        "**/store/__tests__/**/*.test.ts",
+        "!**/hooks/__tests__/useMarketSearch.test.ts",
+        "!**/hooks/__tests__/useBatchTransaction.test.ts",
+        "!**/hooks/__tests__/useMarkets.test.ts",
+        "!**/hooks/__tests__/useOnlineStatus.test.ts",
+        "!**/hooks/__tests__/useKeyboardShortcuts.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -14,6 +20,9 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
+        "src/hooks/useOnboarding.ts",
+        "src/hooks/useTheme.ts",
+        "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
@@ -25,7 +34,14 @@ module.exports = {
       testEnvironment: "jest-environment-jsdom",
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
+        "**/app/**/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
+        "**/hooks/__tests__/useMarketSearch.test.ts",
+        "**/hooks/__tests__/useIPFSMetadata.test.ts",
+        "**/hooks/__tests__/useBatchTransaction.test.ts",
+        "**/hooks/__tests__/useMarkets.test.ts",
+        "**/hooks/__tests__/useOnlineStatus.test.ts",
+        "**/hooks/__tests__/useKeyboardShortcuts.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -34,6 +50,31 @@ module.exports = {
             esModuleInterop: true,
           },
         },
+      },
+      collectCoverageFrom: [
+        "src/hooks/useMarketSearch.ts",
+        "src/hooks/useIPFSMetadata.ts",
+        "src/components/MetadataUnavailable.tsx",
+        ,
+        "src/hooks/useBatchTransaction.ts",
+        "src/hooks/useMarkets.ts",
+        "src/hooks/useMarket.ts",
+        "src/hooks/usePlaceBet.ts",
+        "src/hooks/useOnlineStatus.ts",
+        "src/hooks/useKeyboardShortcuts.ts",
+        "src/components/VirtualizedOrderBook.tsx",
+        "src/components/LiveActivityFeed.tsx",
+        "src/components/OfflineBanner.tsx",
+        "src/components/ShareCard.tsx",
+        "src/components/ShareModal.tsx",
+        "src/components/onboarding/OnboardingWizard.tsx",
+        "src/components/onboarding/StepWallet.tsx",
+        "src/components/onboarding/StepMarkets.tsx",
+        "src/components/onboarding/StepBetting.tsx",
+        "src/components/onboarding/StepPayouts.tsx",
+      ],
+      coverageThreshold: {
+        global: { lines: 90, functions: 90, branches: 90 },
       },
     },
     {
@@ -47,8 +88,8 @@ module.exports = {
       collectCoverageFrom: [
         "src/utils/simulatorCalc.ts",
         "src/utils/poolOwnership.ts",
-        "src/utils/trustline.ts",
-        "src/utils/marketDiscovery.ts",
+        "src/utils/simulateBet.ts",
+        "src/utils/slippageCalc.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

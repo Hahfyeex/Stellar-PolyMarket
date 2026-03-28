@@ -46,6 +46,11 @@ module.exports = {
         "@typescript-eslint/no-explicit-any": "off",
       },
     },
+    {
+      // Jest globals for test files
+      files: ["**/*.test.js", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.js"],
+      env: { jest: true },
+    },
   ],
   ignorePatterns: ["node_modules/", ".next/", "dist/", "target/"],
 };
