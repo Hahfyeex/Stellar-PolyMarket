@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import type { Market } from "../types/market";
 import MarketResolutionTracker from "./MarketResolutionTracker";
 import Link from "next/link";
@@ -24,9 +25,12 @@ interface Props {
   walletAddress: string | null;
   onBetPlaced?: () => void;
   showFullCard?: boolean;
+  isError?: boolean;
+  onRetry?: () => void;
 }
 
-export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
+export default function MarketCard({ market, walletAddress, onBetPlaced, isError = false, onRetry }: Props) {
+  const router = useRouter();
   const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
 
   const {
@@ -140,10 +144,40 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     await handlePlaceBetAction();
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      router.push(`/market/${market.id}`);
+    }
+  };
+
+  if (isError) {
+    return (
+      <div
+        role="article"
+        className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-red-800 items-center justify-center min-h-[200px]"
+      >
+        <p className="text-red-400 text-sm font-medium">Failed to load market</p>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div 
       ref={cardRef}
-      className={`bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800 card-ripple hover:border-gray-700 transition-all ${
+      role="article"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      aria-label={market.question}
+      className={`bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800 card-ripple hover:border-gray-700 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 ${
         isPulsing ? (direction === "up" ? "pulse-green" : "pulse-red") : ""
       }`}
     >
