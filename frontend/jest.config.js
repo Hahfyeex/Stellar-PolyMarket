@@ -75,6 +75,7 @@ module.exports = {
         "src/utils/simulatorCalc.ts",
         "src/utils/poolOwnership.ts",
         "src/utils/simulateBet.ts",
+        "src/utils/slippageCalc.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

@@ -6,8 +6,12 @@ import { trackEvent } from "../../lib/firebase";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
 import StakePresets from "../StakePresets";
+import SlippageSettings from "../SlippageSettings";
+import SlippageWarningModal from "../SlippageWarningModal";
+import { useSlippageCheck } from "../../hooks/useSlippageCheck";
+import { toStroops, calcPayoutStroops, stroopsToXlm } from "../../utils/slippageCalc";
 
-const HORIZON = "https://horizon-testnet.stellar.org";
+
 
 
 
@@ -40,7 +44,67 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [xlmBalance] = useState<number | null>(null);
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
+
+  const { checkSlippage, slippageState, dismiss, checking } = useSlippageCheck();
+
+  /**
+   * Compute the expected payout in XLM using BigInt stroop arithmetic.
+   * Called at the moment the user clicks "Bet" to capture the current odds.
+   */
+  function computeExpectedPayout(): number {
+    if (!market || selectedOutcome === null) return 0;
+    const stakeXlm = parseFloat(amount) || 0;
+    const totalPool = parseFloat(market.total_pool) || 0;
+    // Approximate per-outcome pool as equal split (same as TradeDrawer's WhatIfSimulator)
+    const outcomePool = totalPool / market.outcomes.length;
+    const payout = calcPayoutStroops(
+      toStroops(stakeXlm),
+      toStroops(outcomePool),
+      toStroops(totalPool)
+    );
+    return stroopsToXlm(payout);
+  }
+
+  /** Submit the bet to the API — called after slippage check passes */
+  async function submitBet() {
+    if (selectedOutcome === null || !amount || !walletAddress || !market) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketId: market.id,
+          outcomeIndex: selectedOutcome,
+          amount: parseFloat(amount),
+          walletAddress,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setMessage("Bet placed successfully!");
+      trackEvent("bet_placed", {
+        market_id: market.id,
+        outcome_index: selectedOutcome,
+        amount: parseFloat(amount),
+        outcome_name: market.outcomes[selectedOutcome],
+      });
+      clearForm();
+      onBetPlaced?.();
+    } catch (err: any) {
+      setMessage(`Error: ${err.message}`);
+      trackEvent("bet_error", {
+        market_id: market?.id,
+        error_message: err.message.substring(0, 100),
+        amount: parseFloat(amount) || 0,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
 
   // Reset drag when drawer opens/closes
   useEffect(() => {
@@ -82,54 +146,38 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
     }
   }
 
+  /** Entry point — checks slippage before submitting */
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress || !market) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          marketId: market.id,
-          outcomeIndex: selectedOutcome,
-          amount: parseFloat(amount),
-          walletAddress,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setMessage("Bet placed successfully!");
-      
-      // Track successful bet placement
-      trackEvent('bet_placed', {
-        market_id: market.id,
-        outcome_index: selectedOutcome,
-        amount: parseFloat(amount),
-        outcome_name: market.outcomes[selectedOutcome],
-      });
-
-      // Clear persisted form state after successful submission
-      clearForm();
-      onBetPlaced?.();
-    } catch (err: any) {
-      setMessage(`Error: ${err.message}`);
-      
-      // Track bet placement error
-      trackEvent('bet_error', {
-        market_id: market?.id,
-        error_message: err.message.substring(0, 100), // Truncate for privacy
-        amount: parseFloat(amount) || 0,
-      });
-    } finally {
-      setLoading(false);
-    }
+    const expectedPayout = computeExpectedPayout();
+    const safe = await checkSlippage({
+      marketId: market.id,
+      outcomeIndex: selectedOutcome,
+      stakeXlm: parseFloat(amount),
+      expectedPayoutXlm: expectedPayout,
+      tolerancePct: slippageTolerance,
+    });
+    if (safe) await submitBet();
+    // else: slippageState is set → warning modal renders
   }
 
   if (!open && dragY === 0) return null;
 
   return (
     <>
+      {/* Slippage warning modal — rendered above the drawer */}
+      {slippageState?.exceeded && (
+        <SlippageWarningModal
+          expectedPayout={slippageState.expectedPayout}
+          currentPayout={slippageState.currentPayout}
+          tolerancePct={slippageState.tolerancePct}
+          onProceed={async () => {
+            dismiss();
+            await submitBet();
+          }}
+          onCancel={dismiss}
+        />
+      )}
       {/* Backdrop */}
       <div
         data-testid="trade-drawer-backdrop"
@@ -208,10 +256,10 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                     />
                     <button
                       onClick={placeBet}
-                      disabled={loading || selectedOutcome === null || !amount}
+                      disabled={loading || checking || selectedOutcome === null || !amount}
                       className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
                     >
-                      {loading ? "..." : "Bet"}
+                      {loading || checking ? "..." : "Bet"}
                     </button>
                   </div>
                   <StakePresets
@@ -223,20 +271,10 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 text-xs text-gray-400">
-                      Slippage
-                      <select
-                        data-testid="slippage-select"
-                        value={slippageTolerance}
-                        onChange={(e) => setSlippageTolerance(parseFloat(e.target.value))}
-                        className="bg-gray-800 text-white rounded px-2 py-1 text-xs border border-gray-700 outline-none"
-                      >
-                        <option value={0.1}>0.1%</option>
-                        <option value={0.5}>0.5%</option>
-                        <option value={1}>1%</option>
-                        <option value={2}>2%</option>
-                      </select>
-                    </label>
+                    <SlippageSettings
+                      value={slippageTolerance}
+                      onChange={setSlippageTolerance}
+                    />
                     <button
                       data-testid="clear-form"
                       onClick={() => { clearForm(); setMessage(""); }}
