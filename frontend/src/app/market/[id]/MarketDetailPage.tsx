@@ -421,6 +421,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
 
   const isExpired = new Date(market.end_date) <= new Date();
   const canBet = !market.resolved && !isExpired && publicKey;
+  const isPending = betMutation.isPending;
 
   return (
     <div className="bg-gray-900 rounded-xl p-5 border border-gray-800 space-y-4">
@@ -430,12 +431,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={() => setSelectedOutcome(0)}
-          disabled={!canBet}
+          disabled={!canBet || isPending}
           className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 0
               ? "bg-green-600 ring-2 ring-green-400 shadow-lg shadow-green-900/30"
               : "bg-gray-800 hover:bg-gray-700"
-          } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+          } ${!canBet || isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
 
           <div className="text-gray-400 text-xs mb-1">YES</div>
@@ -450,12 +451,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
 
         <button
           onClick={() => setSelectedOutcome(1)}
-          disabled={!canBet}
+          disabled={!canBet || isPending}
           className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 1
               ? "bg-red-600 ring-2 ring-red-400 shadow-lg shadow-red-900/30"
               : "bg-gray-800 hover:bg-gray-700"
-          } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+          } ${!canBet || isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
 
           <div className="text-gray-400 text-xs mb-1">NO</div>
@@ -478,7 +479,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            disabled={!canBet}
+            disabled={!canBet || isPending}
             className="flex-1 bg-gray-800 text-white rounded-lg px-4 py-3 text-lg outline-none border border-gray-700 focus:border-blue-500 disabled:opacity-50"
             min="0"
             step="0.01"
@@ -508,13 +509,14 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       {publicKey ? (
         <button
           onClick={handleBet}
-          disabled={!canBet || selectedOutcome === null || !amount || betMutation.isPending}
+          disabled={!canBet || selectedOutcome === null || !amount || isPending}
           className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
 
-          {betMutation.isPending ? (
+          {isPending ? (
             <span className="flex items-center justify-center gap-2">
-              <span className="animate-spin">⟳</span> Placing Bet...
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Confirming...
             </span>
           ) : (
             "Place Bet"
