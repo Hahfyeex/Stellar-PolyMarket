@@ -182,6 +182,37 @@ body {
   color: var(--color-white);
 }
 
+/**
+ * Screen Reader Only (sr-only) Utility
+ * 
+ * Hides content visually but keeps it available to screen readers.
+ * Used for skip links, aria-labels, and other accessibility-only content.
+ * 
+ * WCAG 2.1 AA: Ensures assistive technology users can access all content.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.focus\:not-sr-only:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: inherit;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
 /* Safe-area utility classes */
 .safe-top {
   padding-top: env(safe-area-inset-top);
@@ -323,4 +354,23 @@ body {
     transform: translateY(-4px);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.2);
   }
+}
+
+/**
+ * Badge fade-in animation for resolved market status.
+ * Fades in and scales from 0.95 to 1.0 over 0.4 seconds.
+ */
+@keyframes badgeFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.badge-fade-in {
+  animation: badgeFadeIn 0.4s ease-out;
 }
