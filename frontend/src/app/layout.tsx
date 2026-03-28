@@ -6,17 +6,34 @@ import BettingSlipWrapper from "../components/BettingSlipWrapper";
 import ReduxProvider from "../components/ReduxProvider";
 import I18nProvider from "../components/I18nProvider";
 import SkipLink from "../components/SkipLink";
+import ReactQueryProvider from "../components/ReactQueryProvider";
+import ThemeScript from "../components/ThemeScript";
+import OfflineBanner from "../components/OfflineBanner";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
   description: "Decentralized prediction markets on Stellar",
+  manifest: "/manifest.json",
+  themeColor: "#2563eb",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Stella",
+  },
 };
+
+import { ToastProvider } from "../components/ToastProvider";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Blocking script — sets data-theme before first paint to prevent FOUC */}
+        <ThemeScript />
+      </head>
       <body>
         <SkipLink />
+        <OfflineBanner />
         <ReduxProvider>
           {/* I18nProvider initialises i18next on the client and supplies the
               instance to all useTranslation() hooks in the tree. */}

@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",
+    "next-pwa": "^5.6.0",
     "@sentry/nextjs": "^10.46.0",
     "@stellar/freighter-api": "^1.7.1",
     "@stellar/stellar-sdk": "^11.0.0",
@@ -25,6 +26,7 @@
     "i18next-browser-languagedetector": "^8.2.1",
     "i18next-http-backend": "^3.0.2",
     "next": "^16.2.1",
+    "papaparse": "^5.5.3",
     "pinata": "^2.5.5",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
@@ -41,6 +43,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/jest": "^29.0.0",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^18.0.0",
     "@types/react-window": "^1.8.8",
     "axe-core": "^4.8.0",

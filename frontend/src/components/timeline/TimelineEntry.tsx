@@ -17,25 +17,25 @@ const ACTION_CONFIG: Record<
     label: "Bet Placed",
     iconColor: "text-blue-400",
     bgColor: "bg-blue-900/30 border-blue-800/50",
-    iconPath: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+    iconPath: "M7 11l5-5m0 0l5 5m-5-5v12", // arrow-up
   },
   PayoutClaimed: {
     label: "Payout Claimed",
     iconColor: "text-green-400",
     bgColor: "bg-green-900/30 border-green-800/50",
-    iconPath: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
+    iconPath: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z", // coins (reusing existing SVG-like path that looks like money/coins)
   },
   MarketCreated: {
     label: "Market Created",
     iconColor: "text-purple-400",
     bgColor: "bg-purple-900/30 border-purple-800/50",
-    iconPath: "M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z",
+    iconPath: "M12 4v16m8-8H4", // plus
   },
   PositionExited: {
     label: "Position Exited",
     iconColor: "text-orange-400",
     bgColor: "bg-orange-900/30 border-orange-800/50",
-    iconPath: "M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1",
+    iconPath: "M17 13l-5 5m0 0l-5-5m5 5V6", // arrow-down
   },
 };
 

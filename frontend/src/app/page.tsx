@@ -22,25 +22,19 @@ import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
 import OnboardingWizard from "../components/onboarding/OnboardingWizard";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-  status: string;
-}
+import ThemeToggle from "../components/ThemeToggle";
+import { useMarkets } from "../hooks/useMarkets";
+import { useQueryClient } from "@tanstack/react-query";
+import { useMarketTabs } from "../hooks/useMarketTabs";
+import MarketTabs from "../components/MarketTabs";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation();
   const searchParams = useSearchParams();
-  const [markets, setMarkets] = useState<Market[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
@@ -48,11 +42,17 @@ export default function Home() {
   const [filters, setFilters] = useState<SearchFilters>(() => ({
     query: searchParams.get("q") ?? "",
     category: searchParams.get("category") ?? "",
+    categories: [],
     status: searchParams.get("status") ?? "",
     sort: (searchParams.get("sort") as SortKey) ?? "newest",
   }));
 
-  const filteredMarkets = useMarketSearch(markets, filters);
+  const { activeTab, setActiveTab, activeMarkets, resolvedMarkets, activeBadge, resolvedBadge } =
+    useMarketTabs(markets);
+
+  // Apply search/filter on top of the tab-filtered list
+  const tabMarkets = activeTab === "active" ? activeMarkets : resolvedMarkets;
+  const filteredMarkets = useMarketSearch(tabMarkets, filters);
 
   const handleHelpClick = () => {
     trackEvent("help_doc_read", {
@@ -65,45 +65,7 @@ export default function Home() {
     window.open(helpUrl, "_blank");
   };
 
-  async function fetchMarkets() {
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets`);
-      const data = await res.json();
-      const newMarkets = data.markets || [];
-      
-      // Detect resolution transitions
-      newMarkets.forEach((newMarket: Market) => {
-        const oldMarket = markets.find(m => m.id === newMarket.id);
-        if (oldMarket && !oldMarket.resolved && newMarket.resolved) {
-          // Market just resolved - show toast notification
-          const event = new CustomEvent('showToast', {
-            detail: {
-              message: `Market "${newMarket.question}" has been resolved. Claim your payout now.`,
-              type: 'success'
-            }
-          });
-          window.dispatchEvent(event);
-        }
-      });
-      
-      setMarkets(newMarkets);
-    } catch {
-      setMarkets(DEMO_MARKETS);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    fetchMarkets();
-    
-    // Poll for market updates every 30 seconds
-    const pollInterval = setInterval(() => {
-      fetchMarkets();
-    }, 30_000);
-    
-    return () => clearInterval(pollInterval);
-  }, []);
+  const refetchMarkets = () => queryClient.invalidateQueries({ queryKey: ["markets"] });
 
   // Auto-select first active market for the FAB
   useEffect(() => {
@@ -114,7 +76,7 @@ export default function Home() {
   const pageContent = (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
-      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-[var(--border-default)]">
         <div className="flex items-center gap-4">
           <span className="text-xl font-bold text-blue-400">{t("nav.brand")}</span>
           <button
@@ -306,9 +268,9 @@ export default function Home() {
         <MobileShell
           activeMarket={activeMarket}
           walletAddress={publicKey}
-          onBetPlaced={fetchMarkets}
+          onBetPlaced={refetchMarkets}
         >
-          <PullToRefresh onRefresh={fetchMarkets}>{pageContent}</PullToRefresh>
+          <PullToRefresh onRefresh={refetchMarkets}>{pageContent}</PullToRefresh>
         </MobileShell>
       </div>
 

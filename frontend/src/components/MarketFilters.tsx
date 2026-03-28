@@ -48,15 +48,31 @@ export default function MarketFilters({ filters, onChange }: Props) {
 
   return (
     <div className="flex flex-col gap-3 mb-6">
-      {/* Search input */}
-      <input
-        type="search"
-        placeholder="Search markets…"
-        value={inputValue}
-        onChange={(e) => handleQueryChange(e.target.value)}
-        className="w-full bg-gray-800 text-white rounded-lg px-4 py-2.5 text-sm outline-none border border-gray-700 focus:border-blue-500"
-        aria-label="Search markets"
-      />
+      {/* Search input with magnifying glass icon */}
+      <div className="relative">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+          aria-hidden="true"
+        >
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input
+          type="search"
+          data-testid="market-search-input"
+          placeholder="Search markets…"
+          value={inputValue}
+          onChange={(e) => handleQueryChange(e.target.value)}
+          className="w-full bg-gray-800 text-white rounded-lg pl-9 pr-4 py-2.5 text-sm outline-none border border-gray-700 focus:border-blue-500"
+          aria-label="Search markets"
+        />
+      </div>
 
       <div className="flex flex-wrap gap-2 items-center">
         {/* Category tag buttons */}

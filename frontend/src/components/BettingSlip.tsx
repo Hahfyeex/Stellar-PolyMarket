@@ -17,6 +17,7 @@
 import { useTranslation } from "react-i18next";
 import { useBettingSlip, MAX_BETS } from "../context/BettingSlipContext";
 import { useBatchTransaction } from "../hooks/useBatchTransaction";
+import { useOnlineStatus } from "../hooks/useOnlineStatus";
 
 interface Props {
   walletAddress: string | null;
@@ -83,7 +84,13 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
             className="text-gray-400 hover:text-white transition-colors"
             aria-label={t("bettingSlip.close")}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="w-5 h-5"
+            >
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
@@ -92,9 +99,7 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
         {/* Bet list */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 max-h-[50vh] lg:max-h-[calc(100vh-200px)]">
           {bets.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-8">
-              {t("bettingSlip.noBets")}
-            </p>
+            <p className="text-gray-500 text-sm text-center py-8">{t("bettingSlip.noBets")}</p>
           ) : (
             bets.map((bet) => (
               <div
@@ -105,10 +110,12 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
                 <div className="flex-1 min-w-0">
                   <p className="text-white text-sm font-medium truncate">{bet.marketTitle}</p>
                   <p className="text-gray-400 text-xs mt-0.5">
-                    {t("bettingSlip.outcome")}: <span className="text-blue-400">{bet.outcomeName}</span>
+                    {t("bettingSlip.outcome")}:{" "}
+                    <span className="text-blue-400">{bet.outcomeName}</span>
                   </p>
                   <p className="text-gray-400 text-xs">
-                    {t("bettingSlip.amount")}: <span className="text-white font-medium">{bet.amount} XLM</span>
+                    {t("bettingSlip.amount")}:{" "}
+                    <span className="text-white font-medium">{bet.amount} XLM</span>
                   </p>
                 </div>
                 <button
@@ -117,7 +124,13 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
                   className="text-red-400 hover:text-red-300 transition-colors shrink-0"
                   aria-label={t("bettingSlip.removeBet", { market: bet.marketTitle })}
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="w-5 h-5"
+                  >
                     <path d="M18 6L6 18M6 6l12 12" />
                   </svg>
                 </button>
@@ -137,7 +150,10 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
             </div>
 
             {error && (
-              <p className="text-red-400 text-xs bg-red-900/30 px-3 py-2 rounded-lg" data-testid="batch-error">
+              <p
+                className="text-red-400 text-xs bg-red-900/30 px-3 py-2 rounded-lg"
+                data-testid="batch-error"
+              >
                 {error}
               </p>
             )}
@@ -152,8 +168,8 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
                 {submitting
                   ? t("bettingSlip.submitting")
                   : bets.length === 1
-                  ? t("bettingSlip.placeBet", { count: bets.length })
-                  : t("bettingSlip.placeBets", { count: bets.length })}
+                    ? t("bettingSlip.placeBet", { count: bets.length })
+                    : t("bettingSlip.placeBets", { count: bets.length })}
               </button>
             ) : (
               <p className="text-gray-400 text-xs text-center py-2">
