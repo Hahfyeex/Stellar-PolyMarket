@@ -1,7 +1,7 @@
 #![no_std]
 
 #[cfg(test)]
-use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, vec, Address, BytesN, Env, Map, String, Vec, IntoVal,
 };
@@ -19,6 +19,7 @@ use crate::events::{
     emit_fee_rate_updated, emit_lp_reward_claimed, emit_liquidity_provided,
     emit_market_created, emit_market_paused, emit_market_resolved, emit_market_voided,
     emit_market_voided_no_winner, emit_batch_payout_claimed, emit_payout_claimed,
+    emit_contract_paused, emit_contract_unpaused, emit_min_bet_updated,
 };
 mod lmsr;
 mod position_token;
@@ -114,6 +115,7 @@ pub const MAX_ORACLE_DRIFT: u64 = 1800;
 #[contracttype]
 pub enum DataKey {
     Initialized,
+    Paused,
     OracleAddress,
     Market(u64),
     Bets(u64),
@@ -254,6 +256,11 @@ fn load_outcome_shares(env: &Env, market_id: u64) -> Vec<i128> {
         .instance()
         .get(&DataKey::OutcomeShares(market_id))
         .unwrap()
+}
+
+fn require_not_paused(env: &Env) {
+    let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+    assert!(!paused, "contract is paused");
 }
 
 fn build_share_arrays(outcome_shares: &Vec<i128>) -> ([i128; 8], usize) {
@@ -578,7 +585,9 @@ impl PredictionMarket {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::FeeRateBps, &300u32);
+        env.storage().instance().set(&DataKey::MinBetAmount, &10_000_000i128);
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         // Bootstrap SuperAdmin in Persistent storage (new role system)
         bootstrap_super_admin(&env, &admin);
@@ -586,6 +595,27 @@ impl PredictionMarket {
         set_role(&env, AccessRole::Admin, &admin);
         set_platform_status(&env, AccessPlatformStatus::Active);
         emit_contract_initialized(&env, &admin);
+    }
+
+    /// Toggle the emergency contract pause on. Blocks new bets and payout claims.
+    pub fn pause(env: Env, caller: Address) {
+        require_role(&env, &caller, Role::Pauser);
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+        emit_contract_paused(&env, &caller);
+    }
+
+    /// Toggle the emergency contract pause off.
+    pub fn unpause(env: Env, caller: Address) {
+        require_role(&env, &caller, Role::Pauser);
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+        emit_contract_unpaused(&env, &caller);
+    }
+
+    /// Read the emergency contract pause flag.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 
     /// Assign a role to an address. Only SuperAdmin may call this.
@@ -768,6 +798,7 @@ impl PredictionMarket {
     /// Typical markets have <100 bettors, making Vec O(n) faster than Map O(1) with hashing overhead.
     pub fn place_bet(env: Env, market_id: u64, option_index: u32, bettor: Address, amount: i128) {
         check_platform_active(&env);
+        require_not_paused(&env);
         bettor.require_auth();
         Self::internal_place_bet(env, market_id, option_index, bettor, amount);
     }
@@ -788,6 +819,7 @@ impl PredictionMarket {
         signature: soroban_sdk::BytesN<64>,
     ) {
         check_platform_active(&env);
+        require_not_paused(&env);
 
         // 1. Verify manual nonce (Replay Protection Requirement #209)
         let stored_nonce: u64 = env
@@ -823,8 +855,8 @@ impl PredictionMarket {
             .storage()
             .instance()
             .get(&DataKey::MinBetAmount)
-            .unwrap_or(1i128); // default 1 for tests; production should set explicitly
-        assert!(amount >= min_bet, "bet below minimum");
+            .unwrap_or(10_000_000i128);
+        assert!(amount >= min_bet, "bet amount is below the minimum of 1 XLM");
 
         let max_bet: i128 = env
             .storage()
@@ -1176,9 +1208,33 @@ impl PredictionMarket {
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
+    /// Update only the minimum bet amount. FeeSetter role only.
+    pub fn set_min_bet(env: Env, caller: Address, new_min: i128) {
+        caller.require_auth();
+        require_role(&env, &caller, Role::FeeSetter);
+        assert!(
+            new_min > 0 && new_min <= 1_000_000_000i128,
+            "invalid minimum bet amount"
+        );
+
+        let old_min: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinBetAmount)
+            .unwrap_or(10_000_000i128);
+
+        env.storage().instance().set(&DataKey::MinBetAmount, &new_min);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+        emit_min_bet_updated(&env, old_min, new_min);
+    }
+
     /// Get current bet limits. Returns (min_amount, max_amount).
     pub fn get_bet_limits(env: Env) -> (i128, i128) {
-        let min: i128 = env.storage().instance().get(&DataKey::MinBetAmount).unwrap_or(1);
+        let min: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinBetAmount)
+            .unwrap_or(10_000_000i128);
         let max: i128 = env.storage().instance().get(&DataKey::MaxBetAmount).unwrap_or(i128::MAX);
         (min, max)
     }
@@ -2201,6 +2257,7 @@ impl PredictionMarket {
     /// Calculates payout in O(1) using per-outcome pool tracking.
     pub fn claim_payout(env: Env, market_id: u64, claimant: Address) -> i128 {
         claimant.require_auth();
+        require_not_paused(&env);
 
         // Acquire re-entrancy lock
         acquire_reentrancy_lock(&env);
@@ -2629,6 +2686,11 @@ mod tests {
     use soroban_sdk::testutils::Address as _;
 
     fn setup() -> (Env, PredictionMarketClient<'static>, Address, Address, u64) {
+        let (env, client, _admin, creator, token_addr, deadline) = setup_with_admin();
+        (env, client, creator, token_addr, deadline)
+    }
+
+    fn setup_with_admin() -> (Env, PredictionMarketClient<'static>, Address, Address, Address, u64) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -2676,7 +2738,7 @@ mod tests {
             &fee_dest.clone()
         );
 
-        (env, client, creator, token_addr, deadline)
+        (env, client, admin, creator, token_addr, deadline)
     }
 
     fn setup_market_with_winners(n: u32) -> (Env, PredictionMarketClient<'static>, Vec<Address>) {
@@ -2896,30 +2958,86 @@ mod tests {
         assert!(client.get_total_shares(&2u64) > 0);
     }
 
-    // ── Instance storage: is_paused ───────────────────────────────────────────
+    // ── Instance storage: emergency contract pause ───────────────────────────
 
     #[test]
-    fn test_is_paused_defaults_false() {
+    fn test_contract_pause_defaults_false() {
         let (_, client, _, _, _) = setup();
-        assert!(!client.get_is_paused(&1u64));
+        assert!(!client.is_paused());
     }
 
     #[test]
-    fn test_set_paused_updates_instance_storage() {
-        let (_, client, _, _, _) = setup();
-        client.set_paused(&1u64, &true);
-        assert!(client.get_is_paused(&1u64));
-        client.set_paused(&1u64, &false);
-        assert!(!client.get_is_paused(&1u64));
+    fn test_pause_and_unpause_update_instance_storage() {
+        let (env, client, admin, _, _, _) = setup_with_admin();
+        let pauser = Address::generate(&env);
+
+        client.assign_role(&admin, &pauser, &Role::Pauser);
+
+        client.pause(&pauser);
+        assert!(client.is_paused());
+
+        client.unpause(&pauser);
+        assert!(!client.is_paused());
     }
 
     #[test]
-    #[should_panic(expected = "Market is paused")]
-    fn test_place_bet_blocked_when_paused() {
+    #[should_panic(expected = "caller does not hold role Pauser")]
+    fn test_only_pauser_can_toggle_contract_pause() {
         let (env, client, _, _, _) = setup();
-        client.set_paused(&1u64, &true);
+        let caller = Address::generate(&env);
+        client.pause(&caller);
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_place_bet_blocked_when_contract_paused() {
+        let (env, client, admin, _, token, _) = setup_with_admin();
+        let pauser = Address::generate(&env);
         let bettor = Address::generate(&env);
+
+        client.assign_role(&admin, &pauser, &Role::Pauser);
+        client.pause(&pauser);
+
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&bettor, &10_000_000i128);
+
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_claim_payout_blocked_when_contract_paused() {
+        let (env, client, admin, _, token, _) = setup_with_admin();
+        let pauser = Address::generate(&env);
+        let bettor = Address::generate(&env);
+
+        client.assign_role(&admin, &pauser, &Role::Pauser);
+
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&bettor, &10_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        client.pause(&pauser);
+        client.claim_payout(&1u64, &bettor);
+    }
+
+    #[test]
+    fn test_pause_and_unpause_emit_events() {
+        let (env, client, admin, _, _, _) = setup_with_admin();
+        let pauser = Address::generate(&env);
+
+        client.assign_role(&admin, &pauser, &Role::Pauser);
+
+        client.pause(&pauser);
+        client.unpause(&pauser);
+
+        let events_debug = format!("{:?}", env.events().all());
+        assert!(events_debug.contains("CtrPause"));
+        assert!(events_debug.contains("CtrUnps"));
     }
 
     // ── Persistent storage: UserPosition ─────────────────────────────────────
@@ -3618,6 +3736,51 @@ mod tests {
     }
 
     #[test]
+    fn test_default_min_bet_is_one_xlm_after_initialize() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        client.initialize(&admin);
+
+        let (min, _) = client.get_bet_limits();
+        assert_eq!(min, 10_000_000i128);
+    }
+
+    #[test]
+    fn test_set_min_bet_updates_minimum() {
+        let (env, client, admin, _, _, _) = setup_with_admin();
+        let fee_setter = Address::generate(&env);
+
+        client.assign_role(&admin, &fee_setter, &Role::FeeSetter);
+        client.set_min_bet(&fee_setter, &25_000_000i128);
+
+        let (min, _) = client.get_bet_limits();
+        assert_eq!(min, 25_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "AccessDenied: caller does not hold role FeeSetter")]
+    fn test_only_fee_setter_can_update_min_bet() {
+        let (env, client, _, _, _, _) = setup_with_admin();
+        let caller = Address::generate(&env);
+        client.set_min_bet(&caller, &25_000_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid minimum bet amount")]
+    fn test_set_min_bet_rejects_value_above_100_xlm() {
+        let (env, client, admin, _, _, _) = setup_with_admin();
+        let fee_setter = Address::generate(&env);
+
+        client.assign_role(&admin, &fee_setter, &Role::FeeSetter);
+        client.set_min_bet(&fee_setter, &1_000_000_001i128);
+    }
+
+    #[test]
     #[should_panic(expected = "bet exceeds cap")]
     fn test_bet_above_max_panics() {
         let (env, client, _, _, _) = setup();
@@ -3627,7 +3790,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "bet below minimum")]
+    #[should_panic(expected = "bet amount is below the minimum of 1 XLM")]
     fn test_bet_below_min_panics() {
         let (env, client, _, _, _) = setup();
         client.update_bet_limits(&5_000_000i128, &100_000_000i128);
@@ -4605,6 +4768,3 @@ mod tests {
         assert_eq!(client.get_audit_hash(&1u64), hash2);
     }
 }
-
-
-

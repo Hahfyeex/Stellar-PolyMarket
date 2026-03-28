@@ -36,3 +36,21 @@ Reports the health of the Application layer, the Database (Postgres), and the St
 **Status Codes:**
 - `200 OK`: When system is `up` or `degraded`.
 - `503 Service Unavailable`: When system is completely `down` (both core services unreachable).
+
+## Request Body Limits
+
+All backend endpoints that use JSON or URL-encoded request parsing enforce an explicit **10kb request body limit**.
+
+- `express.json({ limit: "10kb" })`
+- `express.urlencoded({ extended: true, limit: "10kb" })`
+
+Oversized request bodies are rejected with:
+
+```json
+{
+  "error": "Request body exceeds the 10kb limit."
+}
+```
+
+**Status Code:**
+- `413 Payload Too Large`: Request body exceeded the 10kb parsing limit.
