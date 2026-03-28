@@ -7,6 +7,8 @@ const eventBus = require("../bots/eventBus");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { sanitizeError } = require("../utils/errors");
 const axios = require("axios");
+const { broadcastBetPlaced } = require("../websocket/marketUpdates");
+const { getMarketStatus } = require("../utils/sorobanClient");
 
 const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
@@ -138,6 +140,18 @@ router.post("/", async (req, res) => {
 
     const marketData = market.rows[0];
 
+    // #435: Validate bet against on-chain market status
+    const onChainStatus = await getMarketStatus(marketId);
+    if (onChainStatus && onChainStatus !== "Active") {
+      logger.warn(
+        { market_id: marketId, on_chain_status: onChainStatus },
+        "Bet rejected: market not accepting bets on-chain"
+      );
+      return res.status(400).json({
+        error: `Market is not accepting bets on-chain. Current status: ${onChainStatus}`,
+      });
+    }
+
     // #479: Verify trustline for custom Stellar assets
     if (marketData.contract_address && marketData.asset_code && marketData.asset_issuer) {
       const hasTrustline = await verifyTrustline(
@@ -197,6 +211,9 @@ router.post("/", async (req, res) => {
       },
       "Bet placed"
     );
+
+    // Broadcast BET_PLACED event to all subscribed clients
+    broadcastBetPlaced(marketId, bet.rows[0]);
 
     // Fetch updated pool and emit pool.low if depth has fallen below threshold
     const poolResult = await db.query("SELECT total_pool FROM markets WHERE id = $1", [marketId]);
