@@ -37,6 +37,7 @@ module.exports = {
         "**/app/**/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
         "**/hooks/__tests__/useMarketSearch.test.ts",
+        "**/hooks/__tests__/useIPFSMetadata.test.ts",
         "**/hooks/__tests__/useBatchTransaction.test.ts",
         "**/hooks/__tests__/useMarkets.test.ts",
         "**/hooks/__tests__/useOnlineStatus.test.ts",
@@ -52,6 +53,9 @@ module.exports = {
       },
       collectCoverageFrom: [
         "src/hooks/useMarketSearch.ts",
+        "src/hooks/useIPFSMetadata.ts",
+        "src/components/MetadataUnavailable.tsx",
+        ,
         "src/hooks/useBatchTransaction.ts",
         "src/hooks/useMarkets.ts",
         "src/hooks/useMarket.ts",

@@ -1,24 +1,24 @@
 "use client";
-import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useWalletContext } from "../context/WalletContext";
-import MarketCard from "../components/MarketCard";
-import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
-import MarketFilters from "../components/MarketFilters";
-import NotificationManager from "../components/NotificationManager";
+import { useEffect, useState } from "react";
+import ContractErrorBoundary from "../components/ContractErrorBoundary";
+import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 import LiveActivityFeed from "../components/LiveActivityFeed";
+import MarketCard from "../components/MarketCard";
+import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
+import MarketFilters from "../components/MarketFilters";
 import SocialTicker from "../components/SocialTicker";
 import NotificationInbox from "../components/NotificationInbox";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
-import type { Market } from "../types/market";
-import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
-import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
-import ContractErrorBoundary from "../components/ContractErrorBoundary";
-import { store } from "../store";
-import { trackEvent } from "../lib/firebase";
+import NotificationManager from "../components/NotificationManager";
+import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+import { useWalletContext } from "../context/WalletContext";
+import { SearchFilters, SortKey, useMarketSearch } from "../hooks/useMarketSearch";
 import { useTheme } from "../hooks/useTheme";
-import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+import { trackEvent } from "../lib/firebase";
+import { store } from "../store";
+import type { Market } from "../types/market";
 import OnboardingWizard from "../components/onboarding/OnboardingWizard";
 import ThemeToggle from "../components/ThemeToggle";
 import { useMarkets } from "../hooks/useMarkets";
@@ -62,7 +62,45 @@ export default function Home() {
     window.open(helpUrl, "_blank");
   };
 
-  const refetchMarkets = () => queryClient.invalidateQueries({ queryKey: ["markets"] });
+  async function fetchMarkets() {
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets`);
+      const data = await res.json();
+      const newMarkets = data.markets || [];
+
+      // Detect resolution transitions
+      newMarkets.forEach((newMarket: Market) => {
+        const oldMarket = markets.find((m) => m.id === newMarket.id);
+        if (oldMarket && !oldMarket.resolved && newMarket.resolved) {
+          // Market just resolved - show toast notification
+          const event = new CustomEvent("showToast", {
+            detail: {
+              message: `Market "${newMarket.question}" has been resolved. Claim your payout now.`,
+              type: "success",
+            },
+          });
+          window.dispatchEvent(event);
+        }
+      });
+
+      setMarkets(newMarkets);
+    } catch {
+      setMarkets(DEMO_MARKETS);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchMarkets();
+
+    // Poll for market updates every 30 seconds
+    const pollInterval = setInterval(() => {
+      fetchMarkets();
+    }, 30_000);
+
+    return () => clearInterval(pollInterval);
+  }, []);
 
   // Auto-select first active market for the FAB
   useEffect(() => {
@@ -205,11 +243,7 @@ export default function Home() {
             resolvedBadge={resolvedBadge}
             onChange={setActiveTab}
           />
-          <div
-            role="tabpanel"
-            id={`tabpanel-${activeTab}`}
-            aria-labelledby={`tab-${activeTab}`}
-          >
+          <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
             <MarketFilters filters={filters} onChange={setFilters} />
             {loading ? (
               <MarketListSkeleton />
@@ -218,8 +252,8 @@ export default function Home() {
                 {filters.query
                   ? `No markets found for "${filters.query}"`
                   : activeTab === "active"
-                  ? "No active markets found."
-                  : "No resolved markets found."}
+                    ? "No active markets found."
+                    : "No resolved markets found."}
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

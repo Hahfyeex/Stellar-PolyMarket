@@ -212,6 +212,8 @@ pub struct DisputeData {
     pub total_votes: i128,
     pub support_votes: i128,
     pub deadline: u64,
+    AuditLog(u64),
+    AuditLogCount,
 }
 
 #[contracttype]
@@ -688,7 +690,9 @@ impl PredictionMarket {
         env.storage().persistent().extend_ttl(&cost_key, 100, 1_000_000);
 
         env.storage()
+            
             .persistent()
+            
             .extend_ttl(&DataKey::Market(market_id), 100, 1_000_000);
 
         // Hot write: total_shares → Instance
@@ -2076,6 +2080,44 @@ impl PredictionMarket {
             .unwrap_or(0)
     }
 
+    /// Store an audit log hash on-chain. Only callable by admin.
+    /// `cid_hash` is the SHA-256 hash of the IPFS CID for the audit entry.
+    pub fn store_audit_hash(env: Env, admin: Address, cid_hash: BytesN<32>) {
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can store audit hashes");
+        admin.require_auth();
+
+        // Increment the audit log counter
+        let count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLog(count), &cid_hash);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditLogCount, &(count + 1));
+    }
+
+    /// Retrieve an audit log hash by its sequential ID.
+    pub fn get_audit_hash(env: Env, log_id: u64) -> BytesN<32> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLog(log_id))
+            .unwrap()
+    }
+
+    /// Get the total number of audit log entries stored on-chain.
+    pub fn get_audit_log_count(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditLogCount)
+            .unwrap_or(0)
+    }
+
     /// Get pause state for a market (hot read from Instance).
     pub fn get_is_paused(env: Env, market_id: u64) -> bool {
         env.storage()
@@ -2512,10 +2554,53 @@ mod tests {
         let (env, client, admin, _, deadline) = setup();
         let market = client.get_market(&1u64);
         assert_eq!(market.id, 1u64);
+        assert_eq!(
+            market.question,
+            String::from_str(&env, "Will BTC exceed $100k by end of 2025?")
+        );
         assert_eq!(market.options.len(), 2);
         assert_eq!(market.deadline, deadline);
         assert_eq!(market.status, MarketStatus::Active);
         soroban_sdk::log!(&env, "✅ Market stored: id={}, status={:?}", market.id, market.status);
+        assert!(!market.resolved);
+
+        // Visual validation — log stored market data
+        soroban_sdk::log!(
+            &env,
+            "✅ Market stored: id={}, deadline={}, resolved={}",
+            market.id,
+            market.deadline,
+            market.resolved
+        );
+    }
+
+    #[test]
+    fn test_store_and_get_audit_hash() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Initially zero audit logs
+        assert_eq!(client.get_audit_log_count(), 0);
+
+        // Store a mock CID hash (32 bytes)
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        client.store_audit_hash(&admin, &hash);
+
+        assert_eq!(client.get_audit_log_count(), 1);
+        assert_eq!(client.get_audit_hash(&0u64), hash);
+
+        // Store a second hash
+        let hash2 = BytesN::from_array(&env, &[2u8; 32]);
+        client.store_audit_hash(&admin, &hash2);
+
+        assert_eq!(client.get_audit_log_count(), 2);
+        assert_eq!(client.get_audit_hash(&1u64), hash2);
     }
 
     #[test]

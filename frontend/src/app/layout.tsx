@@ -4,6 +4,7 @@ import { BettingSlipProvider } from "../context/BettingSlipContext";
 import { WalletProvider } from "../context/WalletContext";
 import BettingSlipWrapper from "../components/BettingSlipWrapper";
 import ReduxProvider from "../components/ReduxProvider";
+import ReactQueryProvider from "../components/ReactQueryProvider";
 import SkipLink from "../components/SkipLink";
 import ReactQueryProvider from "../components/ReactQueryProvider";
 import ThemeScript from "../components/ThemeScript";
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SkipLink />
         <OfflineBanner />
         <ReduxProvider>
+          {/* ReactQueryProvider enables useIPFSMetadata and future query hooks */}
           <ReactQueryProvider>
             {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
             <WalletProvider>
@@ -56,4 +58,3 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
-
