@@ -13,6 +13,59 @@ Set `NEXT_PUBLIC_API_URL` in `.env.local` to point at the backend (default: `htt
 
 ---
 
+## Reputation Badges (Issue #118)
+
+Users who consistently make accurate predictions are recognized with a tiered badge system. Badges appear on the profile page header (96px) and as small icons (24px) in leaderboard rows.
+
+### Tier Thresholds
+
+| Tier    | Min Markets | Min Accuracy | Glow Color |
+|---------|-------------|--------------|------------|
+| 🥉 Bronze  | 10+         | —            | `#cd7f32` (copper)    |
+| 🥈 Silver  | 50+         | 55%+         | `#c0c0c0` (silver)    |
+| 🥇 Gold    | 100+        | 65%+         | `#ffd700` (gold)      |
+| 💎 Diamond | 200+        | 75%+         | `#38bdf8` (ice blue)  |
+
+Tiers are evaluated from highest to lowest — the first matching tier wins. Both conditions (markets AND accuracy) must be satisfied. Bronze has no accuracy gate.
+
+### Adding a New Tier
+
+1. Add a new entry to `BADGE_TIERS` in `src/utils/badgeTier.ts` (keep sorted highest-first by `minMarkets`).
+2. Add the corresponding SVG to `/public/badges/<tier>.svg` — include an `aria-label` attribute.
+3. Add the glow hex color to `BADGE_GLOW_COLORS` in the same file.
+4. Add the new `BadgeTier` union type value in `badgeTier.ts`.
+
+### Components & Files
+
+| File | Purpose |
+|------|---------|
+| `src/utils/badgeTier.ts` | `getBadgeTier(marketsCount, accuracyPct)` — pure tier computation + constants |
+| `src/utils/__tests__/badgeTier.test.ts` | Unit tests (>90% coverage, all tiers + edge cases) |
+| `src/components/ReputationBadge.tsx` | `ReputationBadge` (icon only) + `ReputationBadgeWithLabel` (icon + tier name) |
+| `src/hooks/useUserBadge.ts` | Fetches `GET /api/users/:wallet/stats`, computes tier |
+| `src/app/profile/page.tsx` | Profile page — badge at 96px, tier progression, recent predictions |
+| `src/app/leaderboard/page.tsx` | Leaderboard table with badge icons at 24px per row |
+| `src/components/LeaderboardRow.tsx` | Single leaderboard row component |
+| `public/badges/bronze.svg` | Bronze badge SVG asset |
+| `public/badges/silver.svg` | Silver badge SVG asset |
+| `public/badges/gold.svg` | Gold badge SVG asset |
+| `public/badges/diamond.svg` | Diamond badge SVG asset |
+
+### API Contract
+
+```
+GET /api/users/:wallet/stats
+Response: { markets_count: number, accuracy_pct: number }
+```
+
+### Running Tests
+
+```bash
+npm test -- --testPathPattern="badgeTier"
+```
+
+---
+
 ## Live Activity Feed (Issue #13)
 
 ### What it does
@@ -59,12 +112,49 @@ Coverage threshold: **95% lines/functions, 90% branches** on `useRecentActivity.
 
 ---
 
+## Market Detail Page (Issue #12)
+
+The `/market/[id]` route provides the individual market detail page ("Bet" view) with:
+
+- **Dynamic Market Loading**: Fetches market data by ID from the API
+- **Live Pool Size Updates**: Polls every 5 seconds for real-time pool data
+- **Odds Calculation**: Displays current odds based on bet distribution
+- **Responsive Tabs**: Three tabs for About, Positions, and Activity
+- **Betting Panel**: Stake XLM on Yes/No outcomes with potential payout display
+- **Wallet Integration**: Connects with Stellar wallet for betting
+
+### Market Detail Files
+
+| File | Description |
+|------|-------------|
+| `app/market/[id]/page.tsx` | Route wrapper with React Query provider |
+| `app/market/[id]/MarketDetailPage.tsx` | Main market detail component |
+| `app/market/[id]/__tests__/MarketDetailPage.test.tsx` | Comprehensive test suite |
+| `app/market/[id]/README.md` | Detailed component documentation |
+
+### Features
+
+- ✅ Mobile-perfect (iPhone 14 optimized)
+- ✅ High-contrast dark theme
+- ✅ Real-time odds calculation
+- ✅ Tabbed interface (About, Positions, Activity)
+- ✅ React Query for live data polling
+- ✅ Input validation
+- ✅ Error handling with fallbacks
+
+---
+
 ## Project Structure
 
 ```
 src/
   app/
     page.tsx          # Main page — markets grid + activity feed
+    market/
+      [id]/
+        page.tsx           # Market detail route
+        MarketDetailPage.tsx  # Market detail component
+        README.md          # Component documentation
     layout.tsx
     globals.css       # Tailwind base + activity-fade-in keyframe
   components/

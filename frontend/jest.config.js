@@ -9,6 +9,8 @@ module.exports = {
         "**/hooks/__tests__/**/*.test.ts",
         "**/store/__tests__/**/*.test.ts",
         "!**/hooks/__tests__/useMarketSearch.test.ts",
+        "!**/hooks/__tests__/useBatchTransaction.test.ts",
+        "!**/hooks/__tests__/useMarkets.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -16,6 +18,7 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useRecentActivity.ts",
         "src/hooks/useFormPersistence.ts",
+        "src/hooks/useOnboarding.ts",
         "src/store/notificationSlice.ts",
       ],
       coverageThreshold: {
@@ -28,9 +31,11 @@ module.exports = {
       testEnvironment: "jest-environment-jsdom",
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
+        "**/app/**/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
         "**/hooks/__tests__/useMarketSearch.test.ts",
         "**/hooks/__tests__/useBatchTransaction.test.ts",
+        "**/hooks/__tests__/useMarkets.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -43,7 +48,11 @@ module.exports = {
       collectCoverageFrom: [
         "src/hooks/useMarketSearch.ts",
         "src/hooks/useBatchTransaction.ts",
+        "src/hooks/useMarkets.ts",
+        "src/hooks/useMarket.ts",
+        "src/hooks/usePlaceBet.ts",
         "src/components/VirtualizedOrderBook.tsx",
+        "src/components/LiveActivityFeed.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

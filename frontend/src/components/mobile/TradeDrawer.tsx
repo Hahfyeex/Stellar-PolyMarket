@@ -1,18 +1,15 @@
 "use client";
 import { useRef, useState, useEffect } from "react";
+import type { Market } from "../../types/market";
+import MarketResolutionTracker from "../MarketResolutionTracker";
 import { trackEvent } from "../../lib/firebase";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
+import StakePresets from "../StakePresets";
 
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-}
+const HORIZON = "https://horizon-testnet.stellar.org";
+
+
 
 interface Props {
   market: Market | null;
@@ -43,6 +40,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const isExpired = market ? new Date(market.end_date) <= new Date() : false;
 
   // Reset drag when drawer opens/closes
   useEffect(() => {
@@ -183,8 +181,11 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                   <button
                     key={i}
                     onClick={() => setSelectedOutcome(i)}
+                    disabled={market.resolved || isExpired}
                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
-                      ${selectedOutcome === i
+                      ${market.resolved && market.winning_outcome === i
+                        ? "bg-green-600 text-white"
+                        : selectedOutcome === i
                         ? "bg-blue-600 text-white"
                         : "bg-gray-800 text-gray-300 hover:bg-gray-700"
                       }`}
@@ -213,6 +214,12 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                       {loading ? "..." : "Bet"}
                     </button>
                   </div>
+                  <StakePresets
+                    amount={amount}
+                    onSelect={setAmount}
+                    walletBalance={xlmBalance}
+                    disabled={loading}
+                  />
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">
@@ -251,6 +258,9 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 </p>
               )}
 
+              <div className="mt-5">
+                <MarketResolutionTracker market={market} />
+              </div>
               {/* What-If Simulator — shown when an outcome is selected */}
               {selectedOutcome !== null && (
                 <WhatIfSimulator
