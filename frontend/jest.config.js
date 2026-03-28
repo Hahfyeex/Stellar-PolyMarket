@@ -63,6 +63,11 @@ module.exports = {
         "src/components/OfflineBanner.tsx",
         "src/components/ShareCard.tsx",
         "src/components/ShareModal.tsx",
+        "src/components/onboarding/OnboardingWizard.tsx",
+        "src/components/onboarding/StepWallet.tsx",
+        "src/components/onboarding/StepMarkets.tsx",
+        "src/components/onboarding/StepBetting.tsx",
+        "src/components/onboarding/StepPayouts.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
