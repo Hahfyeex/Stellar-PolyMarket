@@ -22,4 +22,5 @@ export interface Market {
   resolution_state?: ResolutionState;
   resolution_notes?: string | null;
   resolution_sources?: ResolutionSource[];
+  asset?: { code: string; issuer: string };
 }

@@ -1,0 +1,70 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -----------------------------------------------------------------------
+    // App Check enforcement
+    // Rejects any request that does not carry a valid App Check token.
+    // This blocks curl, bots, and any client that has not been issued a
+    // token by reCAPTCHA Enterprise / DeviceCheck.
+    //
+    // request.app.token.time is only present when App Check is active.
+    // -----------------------------------------------------------------------
+    function isAppCheckValid() {
+      return request.app != null;
+    }
+
+    // Helper function to validate wallet address format
+    function isValidWalletAddress(address) {
+      return address is string
+        && address.size() >= 56
+        && address.size() <= 56
+        && address.matches('^G[A-Z2-7]{55}$');
+    }
+
+    // Helper function to validate comment text
+    function isValidCommentText(text) {
+      return text is string
+        && text.size() > 0
+        && text.size() <= 500;
+    }
+
+    // Market Comments Collection
+    match /marketComments/{commentId} {
+      // Read: App Check required; no auth needed to browse comments
+      allow read: if isAppCheckValid();
+
+      // Create: valid App Check token + authenticated user + schema check
+      allow create: if isAppCheckValid()
+        && request.auth != null
+        && request.resource.data.keys().hasAll(['marketId', 'walletAddress', 'text', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['marketId', 'walletAddress', 'text', 'createdAt'])
+        && request.resource.data.marketId is int
+        && request.resource.data.marketId > 0
+        && isValidWalletAddress(request.resource.data.walletAddress)
+        && request.resource.data.walletAddress == request.auth.uid
+        && isValidCommentText(request.resource.data.text)
+        && request.resource.data.createdAt == request.time;
+
+      // Update: App Check + owner only, immutable fields preserved
+      allow update: if isAppCheckValid()
+        && request.auth != null
+        && request.auth.uid == resource.data.walletAddress
+        && request.resource.data.walletAddress == resource.data.walletAddress
+        && request.resource.data.marketId == resource.data.marketId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && isValidCommentText(request.resource.data.text);
+
+      // Delete: App Check + owner only
+      allow delete: if isAppCheckValid()
+        && request.auth != null
+        && request.auth.uid == resource.data.walletAddress;
+    }
+
+    // Deny everything else – no App Check bypass possible
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

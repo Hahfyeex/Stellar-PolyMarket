@@ -1,32 +1,60 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useWallet } from "../hooks/useWallet";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useWalletContext } from "../context/WalletContext";
 import MarketCard from "../components/MarketCard";
+import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+import MarketFilters from "../components/MarketFilters";
 import NotificationManager from "../components/NotificationManager";
 import LiveActivityFeed from "../components/LiveActivityFeed";
+import SocialTicker from "../components/SocialTicker";
+import NotificationInbox from "../components/NotificationInbox";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
 import type { Market } from "../types/market";
+import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
+import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
+import ContractErrorBoundary from "../components/ContractErrorBoundary";
+import { store } from "../store";
+import { trackEvent } from "../lib/firebase";
+import { useTheme } from "../hooks/useTheme";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+import OnboardingWizard from "../components/onboarding/OnboardingWizard";
+import ThemeToggle from "../components/ThemeToggle";
+import { useMarkets } from "../hooks/useMarkets";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function Home() {
-  const { publicKey, connecting, error, connect, disconnect } = useWallet();
-  const [markets, setMarkets] = useState<Market[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
+  const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
-  async function fetchMarkets() {
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets`);
-      const data = await res.json();
-      setMarkets(data.markets || []);
-    } catch {
-      setMarkets(DEMO_MARKETS);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Restore filter state from URL params on mount
+  const [filters, setFilters] = useState<SearchFilters>(() => ({
+    query: searchParams.get("q") ?? "",
+    category: searchParams.get("category") ?? "",
+    status: searchParams.get("status") ?? "",
+    sort: (searchParams.get("sort") as SortKey) ?? "newest",
+  }));
 
-  useEffect(() => { fetchMarkets(); }, []);
+  const filteredMarkets = useMarketSearch(markets, filters);
+
+  const handleHelpClick = () => {
+    trackEvent("help_doc_read", {
+      source: "navbar_help_button",
+      user_wallet_connected: !!publicKey,
+    });
+
+    // Open help documentation
+    const helpUrl = "https://docs.stella-polymarket.com/help";
+    window.open(helpUrl, "_blank");
+  };
+
+  const refetchMarkets = () => queryClient.invalidateQueries({ queryKey: ["markets"] });
 
   // Auto-select first active market for the FAB
   useEffect(() => {
@@ -37,10 +65,37 @@ export default function Home() {
   const pageContent = (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
-      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-800">
-        <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-[var(--border-default)]">
+        <div className="flex items-center gap-4">
+          <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+          <Link href="/markets/new" className="text-sm text-gray-300 transition-colors hover:text-white">
+            Create Market
+          </Link>
+          <Link href="/portfolio" className="text-sm text-gray-300 transition-colors hover:text-white">
+            Portfolio
+          </Link>
+          <ThemeToggle />
+          <button
+            onClick={handleHelpClick}
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            title="Help & Documentation"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="w-5 h-5"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </button>
+        </div>
         {publicKey ? (
           <div className="flex items-center gap-3">
+            <NotificationInbox walletAddress={publicKey} apiUrl={process.env.NEXT_PUBLIC_API_URL} />
             <span className="text-sm text-gray-400">
               {publicKey.slice(0, 6)}...{publicKey.slice(-4)}
             </span>
@@ -63,24 +118,39 @@ export default function Home() {
       </nav>
 
       {/* Mobile top bar */}
-      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-gray-800">
+      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-[var(--border-default)]">
         <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
-        {publicKey ? (
-          <button
-            onClick={disconnect}
-            className="text-xs border border-gray-600 px-3 py-1.5 rounded-lg"
-          >
-            {publicKey.slice(0, 4)}...{publicKey.slice(-3)}
-          </button>
-        ) : (
-          <button
-            onClick={connect}
-            disabled={connecting}
-            className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
-          >
-            {connecting ? "..." : "Connect"}
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          <Link href="/markets/new" className="text-xs text-gray-300">
+            Create
+          </Link>
+          <Link href="/portfolio" className="text-xs text-gray-300">
+            Portfolio
+          </Link>
+          <ThemeToggle />
+          {publicKey ? (
+            <>
+              <NotificationInbox
+                walletAddress={publicKey}
+                apiUrl={process.env.NEXT_PUBLIC_API_URL}
+              />
+              <button
+                onClick={disconnect}
+                className="text-xs border border-gray-600 px-3 py-1.5 rounded-lg"
+              >
+                {publicKey.slice(0, 4)}...{publicKey.slice(-3)}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={connect}
+              disabled={connecting}
+              className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            >
+              {connecting ? "..." : "Connect"}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -88,6 +158,11 @@ export default function Home() {
           <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{error}</p>
         </div>
       )}
+
+      {/* Social proof ticker — real-time recent bets strip */}
+      <SocialTicker apiUrl={process.env.NEXT_PUBLIC_API_URL} />
+
+      <InsufficientGasModal isOpen={isGasModalOpen} onClose={() => setIsGasModalOpen(false)} />
 
       {/* Hero */}
       <section className="flex flex-col items-center justify-center py-10 md:py-16 px-4 text-center">
@@ -104,7 +179,10 @@ export default function Home() {
       <section className="grid grid-cols-3 gap-3 max-w-2xl mx-auto px-4 pb-8 text-center">
         {[
           { label: "Active Markets", value: markets.filter((m) => !m.resolved).length },
-          { label: "Total Staked", value: `${markets.reduce((s, m) => s + parseFloat(m.total_pool || "0"), 0).toFixed(0)} XLM` },
+          {
+            label: "Total Staked",
+            value: `${markets.reduce((s, m) => s + parseFloat(m.total_pool || "0"), 0).toFixed(0)} XLM`,
+          },
           { label: "Markets", value: markets.length },
         ].map((stat) => (
           <div key={stat.label} className="bg-gray-900 rounded-xl p-4">
@@ -118,14 +196,26 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-4 pb-6 flex flex-col lg:flex-row gap-6">
         {/* Markets */}
         <div className="flex-1">
+          {/* Discovery cards — personalised / trending top 6 */}
+          <div className="mb-8">
+            <MarketDiscoveryGrid
+              onCardClick={(m) => setActiveMarket(markets.find((mk) => mk.id === m.id) ?? null)}
+            />
+          </div>
+
           <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
+          <MarketFilters filters={filters} onChange={setFilters} />
           {loading ? (
-            <p className="text-gray-400">Loading markets...</p>
-          ) : markets.length === 0 ? (
-            <p className="text-gray-400">No markets yet.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <MarketCardSkeleton key={i} />
+              ))}
+            </div>
+          ) : filteredMarkets.length === 0 ? (
+            <p className="text-gray-400">No markets found.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {markets.map((market) => (
+              {filteredMarkets.map((market) => (
                 <div
                   key={market.id}
                   onClick={() => setActiveMarket(market)}
@@ -133,11 +223,13 @@ export default function Home() {
                     activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
                   }`}
                 >
-                  <MarketCard
-                    market={market}
-                    walletAddress={publicKey}
-                    onBetPlaced={fetchMarkets}
-                  />
+                  <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
+                    <MarketCard
+                      market={market}
+                      walletAddress={publicKey}
+                      onBetPlaced={refetchMarkets}
+                    />
+                  </ContractErrorBoundary>
                 </div>
               ))}
             </div>
@@ -155,23 +247,22 @@ export default function Home() {
 
   return (
     <>
+      {/* Onboarding wizard — shown once to new users, persisted in localStorage */}
+      <OnboardingWizard />
+
       {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell
           activeMarket={activeMarket}
           walletAddress={publicKey}
-          onBetPlaced={fetchMarkets}
+          onBetPlaced={refetchMarkets}
         >
-          <PullToRefresh onRefresh={fetchMarkets}>
-            {pageContent}
-          </PullToRefresh>
+          <PullToRefresh onRefresh={refetchMarkets}>{pageContent}</PullToRefresh>
         </MobileShell>
       </div>
 
       {/* Desktop layout: plain */}
-      <div className="hidden md:block">
-        {pageContent}
-      </div>
+      <div className="hidden md:block">{pageContent}</div>
     </>
   );
 }
