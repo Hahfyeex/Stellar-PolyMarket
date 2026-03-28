@@ -20,24 +20,31 @@ const PAGE_SIZE = 50;
 export function useOrderBook(apiUrl: string, marketId: number) {
   const [rows, setRows] = useState<OrderBookRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
   const knownIds = useRef<Set<number>>(new Set());
 
-  async function fetchPage(page: number): Promise<OrderBookRow[]> {
+  async function fetchPage(page: number): Promise<{ rows: OrderBookRow[]; hasMore: boolean }> {
     const res = await fetch(
       `${apiUrl}/api/markets/${marketId}/bets?page=${page}&limit=${PAGE_SIZE}`
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    return (data.bets ?? []) as OrderBookRow[];
+    return {
+      rows: (data.bets ?? []) as OrderBookRow[],
+      hasMore: Boolean(data.meta?.hasMore),
+    };
   }
 
   // Initial load + live polling for new rows
   useEffect(() => {
     let cancelled = false;
+    knownIds.current = new Set();
+    setRows([]);
+    setHasMore(true);
 
     async function poll() {
       try {
-        const fresh = await fetchPage(1);
+        const { rows: fresh, hasMore: nextHasMore } = await fetchPage(1);
         if (cancelled) return;
         const newRows = fresh.filter((r) => !knownIds.current.has(r.id));
         if (newRows.length > 0) {
@@ -45,6 +52,7 @@ export function useOrderBook(apiUrl: string, marketId: number) {
           // Prepend new rows so latest bets appear at the top
           setRows((prev) => [...newRows, ...prev]);
         }
+        setHasMore(nextHasMore);
         setError(null);
       } catch (err: any) {
         if (!cancelled) setError(err.message);
@@ -53,18 +61,25 @@ export function useOrderBook(apiUrl: string, marketId: number) {
 
     poll();
     const timer = setInterval(poll, POLL_MS);
-    return () => { cancelled = true; clearInterval(timer); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiUrl, marketId]);
 
   /** Called by VirtualizedOrderBook's infinite scroll handler */
-  const loadMore = useCallback(async (page: number): Promise<OrderBookRow[]> => {
-    const pageRows = await fetchPage(page);
-    const newRows = pageRows.filter((r) => !knownIds.current.has(r.id));
-    newRows.forEach((r) => knownIds.current.add(r.id));
-    return newRows;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiUrl, marketId]);
+  const loadMore = useCallback(
+    async (page: number): Promise<OrderBookRow[]> => {
+      const { rows: pageRows, hasMore: nextHasMore } = await fetchPage(page);
+      setHasMore(nextHasMore);
+      const newRows = pageRows.filter((r) => !knownIds.current.has(r.id));
+      newRows.forEach((r) => knownIds.current.add(r.id));
+      return newRows;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [apiUrl, marketId]
+  );
 
-  return { rows, error, loadMore };
+  return { rows, error, hasMore, loadMore };
 }

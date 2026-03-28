@@ -36,6 +36,24 @@ pub struct EventContractInitialized {
     pub ledger_timestamp: u64,
 }
 
+/// Emitted by `pause`.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventContractPaused {
+    pub version: u32,
+    pub pauser: Address,
+    pub ledger_timestamp: u64,
+}
+
+/// Emitted by `unpause`.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventContractUnpaused {
+    pub version: u32,
+    pub pauser: Address,
+    pub ledger_timestamp: u64,
+}
+
 /// Emitted by `create_market`.
 #[contracttype]
 #[derive(Clone)]
@@ -179,6 +197,16 @@ pub struct EventFeeRateUpdated {
     pub ledger_timestamp: u64,
 }
 
+/// Emitted by `set_min_bet`.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventMinBetUpdated {
+    pub version: u32,
+    pub old_min: i128,
+    pub new_min: i128,
+    pub ledger_timestamp: u64,
+}
+
 /// Emitted by `create_market` when a non-zero creation fee is collected.
 #[contracttype]
 #[derive(Clone)]
@@ -200,6 +228,28 @@ pub fn emit_contract_initialized(env: &Env, admin: &Address) {
         EventContractInitialized {
             version: EVENT_VERSION,
             admin: admin.clone(),
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_contract_paused(env: &Env, pauser: &Address) {
+    env.events().publish(
+        (symbol_short!("CtrPause"),),
+        EventContractPaused {
+            version: EVENT_VERSION,
+            pauser: pauser.clone(),
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_contract_unpaused(env: &Env, pauser: &Address) {
+    env.events().publish(
+        (symbol_short!("CtrUnps"),),
+        EventContractUnpaused {
+            version: EVENT_VERSION,
+            pauser: pauser.clone(),
             ledger_timestamp: env.ledger().timestamp(),
         },
     );
@@ -406,6 +456,18 @@ pub fn emit_fee_rate_updated(env: &Env, old_rate_bps: u32, new_rate_bps: u32) {
             version: EVENT_VERSION,
             old_rate_bps,
             new_rate_bps,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_min_bet_updated(env: &Env, old_min: i128, new_min: i128) {
+    env.events().publish(
+        (symbol_short!("MinBetUp"),),
+        EventMinBetUpdated {
+            version: EVENT_VERSION,
+            old_min,
+            new_min,
             ledger_timestamp: env.ledger().timestamp(),
         },
     );

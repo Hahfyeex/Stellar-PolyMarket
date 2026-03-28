@@ -2,8 +2,8 @@
  * @jest-environment jsdom
  *
  * Unit tests for VirtualizedOrderBook component.
- * Covers: rendering, empty state, row content, live updates (appendRows),
- * infinite scroll trigger, loading indicator, 500+ row dataset.
+ * Covers: rendering, empty state, row content, live prepends,
+ * explicit load-more behavior, loading indicator, 500+ row dataset.
  */
 import React from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
@@ -21,24 +21,11 @@ import VirtualizedOrderBook, {
 
 jest.mock("react-window", () => ({
   FixedSizeList: React.forwardRef(function MockFixedSizeList(
-    { children: RowRenderer, itemCount, itemSize, height, onItemsRendered }: any,
+    { children: RowRenderer, itemCount, itemSize, height }: any,
     _ref: any
   ) {
     // Simulate the visible window: render up to 20 items (enough for tests)
     const visibleCount = Math.min(itemCount, 20);
-
-    // Fire onItemsRendered so infinite-scroll logic can be tested
-    React.useEffect(() => {
-      if (onItemsRendered && itemCount > 0) {
-        onItemsRendered({
-          overscanStartIndex: 0,
-          overscanStopIndex: visibleCount - 1,
-          visibleStartIndex: 0,
-          visibleStopIndex: visibleCount - 1,
-        });
-      }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [itemCount]);
 
     return (
       <div data-testid="order-book-list" style={{ height, overflow: "auto" }}>
@@ -102,21 +89,13 @@ describe("VirtualizedOrderBook", () => {
   });
 
   it("renders the FixedSizeList", () => {
-    render(
-      <VirtualizedOrderBook
-        marketId={1}
-        outcomes={OUTCOMES}
-        initialRows={[makeRow(1)]}
-      />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[makeRow(1)]} />);
     expect(screen.getByTestId("order-book-list")).toBeInTheDocument();
   });
 
   it("renders a row for each visible item", () => {
     const rows = [makeRow(1), makeRow(2), makeRow(3)];
-    render(
-      <VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={rows} />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={rows} />);
     expect(screen.getByTestId("order-row-1")).toBeInTheDocument();
     expect(screen.getByTestId("order-row-2")).toBeInTheDocument();
     expect(screen.getByTestId("order-row-3")).toBeInTheDocument();
@@ -125,64 +104,36 @@ describe("VirtualizedOrderBook", () => {
   // ── Row content ────────────────────────────────────────────────────────────
 
   it("displays abbreviated wallet address", () => {
-    render(
-      <VirtualizedOrderBook
-        marketId={1}
-        outcomes={OUTCOMES}
-        initialRows={[makeRow(1)]}
-      />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[makeRow(1)]} />);
     // GABC00000001XYZ → GABC…0XYZ (first 4 + last 4)
     expect(screen.getByText(/GABC/)).toBeInTheDocument();
   });
 
   it("displays outcome badge", () => {
-    render(
-      <VirtualizedOrderBook
-        marketId={1}
-        outcomes={OUTCOMES}
-        initialRows={[makeRow(1, 0)]}
-      />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[makeRow(1, 0)]} />);
     expect(screen.getByText("Yes")).toBeInTheDocument();
   });
 
   it("displays XLM amount", () => {
-    render(
-      <VirtualizedOrderBook
-        marketId={1}
-        outcomes={OUTCOMES}
-        initialRows={[makeRow(1)]}
-      />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[makeRow(1)]} />);
     expect(screen.getByText("10.00 XLM")).toBeInTheDocument();
   });
 
   it("displays relative timestamp", () => {
-    render(
-      <VirtualizedOrderBook
-        marketId={1}
-        outcomes={OUTCOMES}
-        initialRows={[makeRow(1)]}
-      />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[makeRow(1)]} />);
     // Row 1 was created 1s ago
     expect(screen.getByText(/ago|just now/)).toBeInTheDocument();
   });
 
   it("uses outcome_name when provided", () => {
     const row: OrderBookRow = { ...makeRow(1), outcome_name: "Draw" };
-    render(
-      <VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[row]} />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[row]} />);
     expect(screen.getByText("Draw")).toBeInTheDocument();
   });
 
   it("falls back to outcomes array when outcome_name is empty", () => {
     const row: OrderBookRow = { ...makeRow(1, 1), outcome_name: "" };
-    render(
-      <VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[row]} />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[row]} />);
     expect(screen.getByText("No")).toBeInTheDocument();
   });
 
@@ -190,9 +141,7 @@ describe("VirtualizedOrderBook", () => {
 
   it("renders 500+ rows without crashing", () => {
     const rows = make500Rows();
-    render(
-      <VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={rows} />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={rows} />);
     expect(screen.getByTestId("virtualized-order-book")).toBeInTheDocument();
     // Only up to 20 rows are rendered by the mock (virtualization)
     expect(screen.getByTestId("order-row-1")).toBeInTheDocument();
@@ -200,9 +149,7 @@ describe("VirtualizedOrderBook", () => {
 
   it("only renders a windowed subset of 500 rows (virtualization)", () => {
     const rows = make500Rows();
-    render(
-      <VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={rows} />
-    );
+    render(<VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={rows} />);
     // Mock renders max 20 — row 21 should NOT be in the DOM
     expect(screen.queryByTestId("order-row-21")).not.toBeInTheDocument();
     expect(screen.getByTestId("order-row-1")).toBeInTheDocument();
@@ -218,64 +165,107 @@ describe("VirtualizedOrderBook", () => {
     expect(LIST_HEIGHT).toBe(400);
   });
 
-  // ── Infinite scroll ────────────────────────────────────────────────────────
+  // ── Live prepends ─────────────────────────────────────────────────────────
 
-  it("calls onLoadMore when visible window reaches near the end", async () => {
+  it("prepends new incoming rows without dropping existing rows", () => {
+    const initial = [makeRow(2), makeRow(3)];
+    const { rerender } = render(
+      <VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={initial} />
+    );
+
+    rerender(
+      <VirtualizedOrderBook
+        marketId={1}
+        outcomes={OUTCOMES}
+        initialRows={[makeRow(1), ...initial]}
+      />
+    );
+
+    expect(screen.getByTestId("order-row-1")).toBeInTheDocument();
+    expect(screen.getByTestId("order-row-2")).toBeInTheDocument();
+    expect(screen.getByTestId("order-row-3")).toBeInTheDocument();
+  });
+
+  // ── Load more button ──────────────────────────────────────────────────────
+
+  it("renders a load more button when more pages are available", () => {
+    render(
+      <VirtualizedOrderBook
+        marketId={1}
+        outcomes={OUTCOMES}
+        initialRows={Array.from({ length: 15 }, (_, i) => makeRow(i + 1))}
+        onLoadMore={jest.fn()}
+        hasMore
+      />
+    );
+
+    expect(screen.getByTestId("order-book-load-more")).toBeInTheDocument();
+  });
+
+  it("calls onLoadMore when the user clicks load more", async () => {
     const onLoadMore = jest.fn().mockResolvedValue([makeRow(21)]);
-    // 15 rows — mock renders all 15, visibleStopIndex=14, threshold=10 → 14 >= 15-10=5 → triggers
     const rows = Array.from({ length: 15 }, (_, i) => makeRow(i + 1));
 
+    render(
+      <VirtualizedOrderBook
+        marketId={1}
+        outcomes={OUTCOMES}
+        initialRows={rows}
+        onLoadMore={onLoadMore}
+        hasMore
+      />
+    );
+
     await act(async () => {
-      render(
-        <VirtualizedOrderBook
-          marketId={1}
-          outcomes={OUTCOMES}
-          initialRows={rows}
-          onLoadMore={onLoadMore}
-        />
-      );
+      fireEvent.click(screen.getByTestId("order-book-load-more"));
     });
 
     expect(onLoadMore).toHaveBeenCalledWith(2);
   });
 
-  it("does not call onLoadMore when list is short and not near end", async () => {
+  it("does not render the load more button when there are no more pages", () => {
     const onLoadMore = jest.fn().mockResolvedValue([]);
-    // 1 row — visibleStopIndex=0, threshold=10 → 0 >= 1-10=-9 → triggers
-    // Actually with 1 row it will trigger. Use 0 rows (empty state skips list entirely)
     render(
       <VirtualizedOrderBook
         marketId={1}
         outcomes={OUTCOMES}
-        initialRows={[]}
+        initialRows={[makeRow(1)]}
         onLoadMore={onLoadMore}
+        hasMore={false}
       />
     );
-    // Empty state renders no list, so onItemsRendered never fires
-    expect(onLoadMore).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("order-book-load-more")).not.toBeInTheDocument();
   });
 
   it("shows loading indicator while fetching more", async () => {
     let resolveLoad!: (rows: OrderBookRow[]) => void;
     const onLoadMore = jest.fn(
-      () => new Promise<OrderBookRow[]>((res) => { resolveLoad = res; })
+      () =>
+        new Promise<OrderBookRow[]>((res) => {
+          resolveLoad = res;
+        })
     );
     const rows = Array.from({ length: 15 }, (_, i) => makeRow(i + 1));
 
+    render(
+      <VirtualizedOrderBook
+        marketId={1}
+        outcomes={OUTCOMES}
+        initialRows={rows}
+        onLoadMore={onLoadMore}
+        hasMore
+      />
+    );
+
     await act(async () => {
-      render(
-        <VirtualizedOrderBook
-          marketId={1}
-          outcomes={OUTCOMES}
-          initialRows={rows}
-          onLoadMore={onLoadMore}
-        />
-      );
+      fireEvent.click(screen.getByTestId("order-book-load-more"));
     });
 
     expect(screen.getByTestId("order-book-loading")).toBeInTheDocument();
 
-    await act(async () => { resolveLoad([]); });
+    await act(async () => {
+      resolveLoad([]);
+    });
     expect(screen.queryByTestId("order-book-loading")).not.toBeInTheDocument();
   });
 
@@ -284,15 +274,18 @@ describe("VirtualizedOrderBook", () => {
     const onLoadMore = jest.fn().mockResolvedValue([newRow]);
     const rows = Array.from({ length: 15 }, (_, i) => makeRow(i + 1));
 
+    render(
+      <VirtualizedOrderBook
+        marketId={1}
+        outcomes={OUTCOMES}
+        initialRows={rows}
+        onLoadMore={onLoadMore}
+        hasMore
+      />
+    );
+
     await act(async () => {
-      render(
-        <VirtualizedOrderBook
-          marketId={1}
-          outcomes={OUTCOMES}
-          initialRows={rows}
-          onLoadMore={onLoadMore}
-        />
-      );
+      fireEvent.click(screen.getByTestId("order-book-load-more"));
     });
 
     // Row 100 should appear at least once after append
@@ -303,15 +296,18 @@ describe("VirtualizedOrderBook", () => {
     const onLoadMore = jest.fn().mockResolvedValue([]);
     const rows = Array.from({ length: 15 }, (_, i) => makeRow(i + 1));
 
+    render(
+      <VirtualizedOrderBook
+        marketId={1}
+        outcomes={OUTCOMES}
+        initialRows={rows}
+        onLoadMore={onLoadMore}
+        hasMore
+      />
+    );
+
     await act(async () => {
-      render(
-        <VirtualizedOrderBook
-          marketId={1}
-          outcomes={OUTCOMES}
-          initialRows={rows}
-          onLoadMore={onLoadMore}
-        />
-      );
+      fireEvent.click(screen.getByTestId("order-book-load-more"));
     });
 
     // Called once but returned empty — no new rows appended
@@ -322,11 +318,7 @@ describe("VirtualizedOrderBook", () => {
 
   it("renders column headers", () => {
     render(
-      <VirtualizedOrderBook
-        marketId={1}
-        outcomes={OUTCOMES}
-        initialRows={[makeRow(1)]}
-      />
+      <VirtualizedOrderBook marketId={1} outcomes={OUTCOMES} initialRows={[makeRow(1)]} hasMore />
     );
     expect(screen.getByText("Wallet")).toBeInTheDocument();
     expect(screen.getByText("Outcome")).toBeInTheDocument();

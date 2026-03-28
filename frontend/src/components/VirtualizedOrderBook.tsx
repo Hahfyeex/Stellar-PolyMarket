@@ -23,7 +23,7 @@
  *     next page and append to dataRef.
  */
 import { useRef, useCallback, useEffect, useState } from "react";
-import { FixedSizeList, ListChildComponentProps, ListOnItemsRenderedProps } from "react-window";
+import { FixedSizeList, ListChildComponentProps } from "react-window";
 import { formatWallet, formatRelativeTime } from "../hooks/useRecentActivity";
 
 /** Height of each row in pixels — must be fixed for FixedSizeList */
@@ -31,9 +31,6 @@ export const ITEM_SIZE = 48;
 
 /** Height of the visible scrolling window in pixels */
 export const LIST_HEIGHT = 400;
-
-/** Fetch next page when this many rows remain before the end */
-const PREFETCH_THRESHOLD = 10;
 
 export interface OrderBookRow {
   id: number;
@@ -49,8 +46,9 @@ interface Props {
   outcomes: string[];
   /** Initial rows (first page) */
   initialRows?: OrderBookRow[];
-  /** Called when the user scrolls near the bottom; should return the next page */
+  /** Called when the user requests the next page */
   onLoadMore?: (page: number) => Promise<OrderBookRow[]>;
+  hasMore?: boolean;
 }
 
 /** Outcome badge colours cycle through a small palette */
@@ -66,23 +64,47 @@ export default function VirtualizedOrderBook({
   outcomes,
   initialRows = [],
   onLoadMore,
+  hasMore = false,
 }: Props) {
-  // Hold rows in a ref so appends don't trigger a full re-render
-  const dataRef = useRef<OrderBookRow[]>(initialRows);
+  // Hold rows in a ref so prepends/appends do not force a full re-render of existing rows.
+  const dataRef = useRef<OrderBookRow[]>([]);
+  const knownIdsRef = useRef<Set<number>>(new Set());
   // itemCount drives react-window's scroll math — update this to trigger a repaint
-  const [itemCount, setItemCount] = useState(initialRows.length);
+  const [itemCount, setItemCount] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const pageRef = useRef(1);
 
   // react-window list ref — used to imperatively scroll if needed
   const listRef = useRef<FixedSizeList>(null);
 
-  // Sync dataRef when initialRows prop changes (e.g. first API response arrives)
+  // Reset the order book when the market changes.
   useEffect(() => {
     dataRef.current = initialRows;
+    knownIdsRef.current = new Set(initialRows.map((row) => row.id));
     setItemCount(initialRows.length);
-    // FixedSizeList re-renders automatically when itemCount state changes;
-    // no resetAfterIndex needed (that's a VariableSizeList API).
+    pageRef.current = 1;
+  }, [marketId]);
+
+  // Live prepends: only prepend truly new rows pushed in from polling.
+  useEffect(() => {
+    if (initialRows.length === 0) {
+      if (dataRef.current.length === 0) setItemCount(0);
+      return;
+    }
+
+    const incoming = initialRows.filter((row) => !knownIdsRef.current.has(row.id));
+    if (dataRef.current.length === 0) {
+      dataRef.current = initialRows;
+      knownIdsRef.current = new Set(initialRows.map((row) => row.id));
+      setItemCount(initialRows.length);
+      return;
+    }
+
+    if (incoming.length === 0) return;
+
+    incoming.forEach((row) => knownIdsRef.current.add(row.id));
+    dataRef.current = [...incoming, ...dataRef.current];
+    setItemCount(dataRef.current.length);
   }, [initialRows]);
 
   /**
@@ -91,35 +113,30 @@ export default function VirtualizedOrderBook({
    * while existing rows keep their cached layout (fixed height = no remeasure).
    */
   const appendRows = useCallback((newRows: OrderBookRow[]) => {
-    dataRef.current = [...dataRef.current, ...newRows];
+    const unseenRows = newRows.filter((row) => !knownIdsRef.current.has(row.id));
+    if (unseenRows.length === 0) return;
+    unseenRows.forEach((row) => knownIdsRef.current.add(row.id));
+    dataRef.current = [...dataRef.current, ...unseenRows];
     // Updating itemCount is sufficient — FixedSizeList recalculates scroll
     // height from itemCount * itemSize without touching existing rows.
     setItemCount(dataRef.current.length);
   }, []);
 
-  /**
-   * Infinite scroll handler — fires on every visible-window change.
-   * Fetches the next page when the user is within PREFETCH_THRESHOLD rows of the end.
-   */
-  const handleItemsRendered = useCallback(
-    async ({ visibleStopIndex }: ListOnItemsRenderedProps) => {
-      if (!onLoadMore || loadingMore) return;
-      if (visibleStopIndex >= dataRef.current.length - PREFETCH_THRESHOLD) {
-        setLoadingMore(true);
-        try {
-          const nextPage = pageRef.current + 1;
-          const rows = await onLoadMore(nextPage);
-          if (rows.length > 0) {
-            pageRef.current = nextPage;
-            appendRows(rows);
-          }
-        } finally {
-          setLoadingMore(false);
-        }
+  const handleLoadMore = useCallback(async () => {
+    if (!onLoadMore || loadingMore || !hasMore) return;
+
+    setLoadingMore(true);
+    try {
+      const nextPage = pageRef.current + 1;
+      const rows = await onLoadMore(nextPage);
+      if (rows.length > 0) {
+        pageRef.current = nextPage;
+        appendRows(rows);
       }
-    },
-    [onLoadMore, loadingMore, appendRows]
-  );
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [appendRows, hasMore, loadingMore, onLoadMore]);
 
   /** Row renderer — called by react-window for each visible row only */
   const Row = useCallback(
@@ -127,7 +144,8 @@ export default function VirtualizedOrderBook({
       const row = dataRef.current[index];
       if (!row) return null;
 
-      const outcomeName = row.outcome_name || outcomes[row.outcome_index] || `#${row.outcome_index}`;
+      const outcomeName =
+        row.outcome_name || outcomes[row.outcome_index] || `#${row.outcome_index}`;
       const badgeColor = BADGE_COLORS[row.outcome_index % BADGE_COLORS.length];
 
       return (
@@ -175,7 +193,10 @@ export default function VirtualizedOrderBook({
   }
 
   return (
-    <div data-testid="virtualized-order-book" className="rounded-xl border border-gray-800 overflow-hidden">
+    <div
+      data-testid="virtualized-order-book"
+      className="rounded-xl border border-gray-800 overflow-hidden"
+    >
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-2 bg-gray-800/60 text-xs text-gray-400 font-medium">
         <span className="w-20 shrink-0">Wallet</span>
@@ -195,21 +216,33 @@ export default function VirtualizedOrderBook({
         width="100%"
         itemCount={itemCount}
         itemSize={ITEM_SIZE}
-        onItemsRendered={handleItemsRendered}
         data-testid="order-book-list"
       >
         {Row}
       </FixedSizeList>
 
-      {/* Loading indicator shown while fetching next page */}
-      {loadingMore && (
-        <div
-          data-testid="order-book-loading"
-          className="flex items-center justify-center py-2 text-xs text-gray-500"
-        >
-          Loading more…
-        </div>
-      )}
+      <div className="border-t border-gray-800/60 bg-gray-900/80 p-3">
+        {loadingMore && (
+          <div
+            data-testid="order-book-loading"
+            className="flex items-center justify-center py-2 text-xs text-gray-500"
+          >
+            Loading more...
+          </div>
+        )}
+
+        {onLoadMore && hasMore ? (
+          <button
+            type="button"
+            data-testid="order-book-load-more"
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+            className="w-full rounded-lg border border-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loadingMore ? "Loading..." : "Load more"}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

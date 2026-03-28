@@ -4,12 +4,15 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useWallet } from "../../../hooks/useWallet";
-import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
+import { formatWallet } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
 import OddsTicker from "../../../components/OddsTicker";
 import BetConfirmationModal from "../../../components/BetConfirmationModal";
+import StakePresets from "../../../components/StakePresets";
 import { useMarket } from "../../../hooks/useMarket";
 import { usePlaceBet } from "../../../hooks/usePlaceBet";
+import VirtualizedOrderBook from "../../../components/VirtualizedOrderBook";
+import { useOrderBook } from "../../../hooks/useOrderBook";
 
 // =============================================================================
 // Types
@@ -312,50 +315,32 @@ function PositionsTab({ positions, outcomes }: PositionsTabProps) {
 }
 
 interface ActivityTabProps {
-  bets: Bet[];
+  marketId: number;
   outcomes: string[];
 }
 
-function ActivityTab({ bets, outcomes }: ActivityTabProps) {
-  if (bets.length === 0) {
+function ActivityTab({ marketId, outcomes }: ActivityTabProps) {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
+  const { rows, error, hasMore, loadMore } = useOrderBook(apiUrl, marketId);
+
+  if (error && rows.length === 0) {
     return (
       <div className="bg-gray-900 rounded-xl p-8 border border-gray-800 text-center">
-        <p className="text-gray-400">No activity yet</p>
+        <p className="text-red-400">Failed to load activity.</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-      <div className="divide-y divide-gray-800">
-        {bets.map((bet) => (
-          <div key={bet.id} className="p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                  bet.outcome_index === 0
-                    ? "bg-green-900 text-green-300"
-                    : "bg-red-900 text-red-300"
-                }`}
-              >
-                {outcomes[bet.outcome_index]?.[0] || "?"}
-              </div>
-              <div>
-                <p className="text-white font-medium">
-                  <span className="font-mono text-sm">{formatWallet(bet.wallet_address)}</span>
-                  <span className="text-gray-400 ml-2 text-sm">
-                    bet on {outcomes[bet.outcome_index] || `Option ${bet.outcome_index + 1}`}
-                  </span>
-                </p>
-                <p className="text-gray-500 text-xs">{formatRelativeTime(bet.created_at)}</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-white font-semibold">{parseFloat(bet.amount).toFixed(2)} XLM</p>
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="space-y-3">
+      <VirtualizedOrderBook
+        marketId={marketId}
+        outcomes={outcomes}
+        initialRows={rows}
+        onLoadMore={loadMore}
+        hasMore={hasMore}
+      />
+      {error ? <p className="text-xs text-gray-500">{error}</p> : null}
     </div>
   );
 }
@@ -370,14 +355,13 @@ interface BettingPanelProps {
   onBetPlaced: () => void;
 }
 
-const HORIZON = "https://horizon-testnet.stellar.org";
-
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const { publicKey, connecting, connect } = useWallet();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const xlmBalance = null;
 
   const betMutation = usePlaceBet(market.id);
 
@@ -534,6 +518,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           {message.text}
         </div>
       )}
+      <div className="md:hidden pt-4">{/* Mobile Spacer */}</div>
 
       {selectedOutcome !== null && (
         <BetConfirmationModal
@@ -710,7 +695,9 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
             {activeTab === "positions" && (
               <PositionsTab positions={positions} outcomes={market.outcomes} />
             )}
-            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={market.outcomes} />}
+            {activeTab === "activity" && (
+              <ActivityTab marketId={market.id} outcomes={market.outcomes} />
+            )}
 
             {/* Mobile Sticky Betting Panel */}
             <div className="fixed bottom-0 left-0 right-0 bg-gray-950 border-t border-gray-800 p-4 md:static md:mt-6 md:bg-transparent md:border-0 md:p-0 z-20">
