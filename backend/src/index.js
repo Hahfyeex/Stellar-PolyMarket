@@ -108,6 +108,7 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
 app.use("/api/archive", require("./routes/archive"));
 app.use("/api/portfolio", require("./routes/portfolio"));
+app.use("/api/analytics", require("./routes/analytics"));
 
 
 // GraphQL endpoint (graphql-yoga as Express middleware)
