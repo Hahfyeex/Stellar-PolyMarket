@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(deprecated)]
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, Map,
 };
@@ -11,6 +12,9 @@ use crate::access::{
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
 use math::normalize_scalar;
+mod lmsr;
+use lmsr::lmsr_cost;
+mod position_token;
 
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
@@ -28,9 +32,8 @@ pub enum FeeMode {
 pub const MAX_BATCH_SIZE: u32 = 25;
 /// Liveness window: 1 hour in seconds. Resolution can only be finalised after this delay.
 pub const LIVENESS_WINDOW: u64 = 3_600;
-
-/// Liveness window for disputes (approx 24 hours in ledgers/seconds)
-pub const LIVENESS_WINDOW: u64 = 86_400;
+/// Liveness window for disputes: 24 hours in seconds.
+pub const DISPUTE_WINDOW: u64 = 86_400;
 
 /// Calculates dynamic platform fee in Basis Points (BPS).
 /// Pure function: O(1) time complexity, O(1) space complexity.
@@ -197,17 +200,11 @@ impl PredictionMarket {
         condition_outcome: Option<u32>,
     ) {
         creator.require_auth();
-        check_role(&env, Role::Admin);
-        panic_if_paused(&env);
+        check_role(&env, AccessRole::Admin);
+        check_platform_active(&env);
         assert!(lmsr_b > 0, "lmsr_b must be positive");
 
-        // Graceful shutdown guard — checked before any other work
-        let active: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::GlobalStatus)
-            .unwrap_or(true);
-        assert!(active, "Platform is shut down");
+        // Graceful shutdown guard — checked via check_platform_active above
 
         assert!(
             !env.storage().persistent().has(&DataKey::Market(id)),
@@ -465,8 +462,7 @@ impl PredictionMarket {
     /// Requires admin authorization. No redeployment needed — config is stored in
     /// Instance storage and takes effect on the next create_market call.
     pub fn update_fee(env: Env, new_fee: i128, new_destination: Address, new_mode: FeeMode) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
         assert!(new_fee >= 0, "Fee must be non-negative");
         env.storage().instance().set(&DataKey::CreationFee, &new_fee);
         env.storage().instance().set(&DataKey::FeeDestination, &new_destination);
@@ -491,8 +487,7 @@ impl PredictionMarket {
     /// `max_amount` — maximum bet in stroops (must be >= min_amount).
     /// Pass 0 for `max_amount` to remove the cap (sets to i128::MAX internally).
     pub fn update_bet_limits(env: Env, min_amount: i128, max_amount: i128) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        check_role(&env, AccessRole::Admin);
         assert!(min_amount >= 1, "min must be >= 1");
         let effective_max = if max_amount == 0 { i128::MAX } else { max_amount };
         assert!(effective_max >= min_amount, "max must be >= min");
@@ -1204,9 +1199,8 @@ impl PredictionMarket {
         expected: soroban_sdk::BytesN<32>,
     ) -> bool {
         // Only admin may trigger proof verification
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        check_role(&env, AccessRole::Admin);
         caller.require_auth();
-        assert_eq!(caller, admin, "unauthorized");
 
         // Normalize both scalars to canonical range [0, r) before comparison.
         // This prevents a prover from bypassing equality by supplying s + k*r.
