@@ -27,6 +27,7 @@ import PoolOwnershipChart from "../../../components/PoolOwnershipChart";
 import RelatedMarketsCarousel from "../../../components/RelatedMarketsCarousel";
 import ContractErrorBoundary from "../../../components/ContractErrorBoundary";
 import SocialSentiment from "../../../components/SocialSentiment";
+import SimulatorPanel from "../../../components/SimulatorPanel";
 import { store } from "../../../store";
 
 interface Market {
@@ -269,6 +270,13 @@ export default function MarketDetailPage() {
                 <div className="skeleton h-12 w-full rounded-xl" />
                 <div className="skeleton h-12 w-full rounded-xl" />
                 <div className="skeleton h-12 w-full rounded-xl" />
+              </div>
+            )}
+            
+            {/* What-If Simulator Panel */}
+            {!loading && market && (
+              <div className="mt-6">
+                <SimulatorPanel market={market} />
               </div>
             )}
           </div>

@@ -4,6 +4,8 @@ const db = require("../db");
 const redis = require("../utils/redis");
 const logger = require("../utils/logger");
 const eventBus = require("../bots/eventBus");
+const { StrKey } = require("@stellar/stellar-sdk");
+const { sanitizeError } = require("../utils/errors");
 
 const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
@@ -12,6 +14,17 @@ router.post("/", async (req, res) => {
   const { marketId, outcomeIndex, amount, walletAddress } = req.body;
   if (!marketId || outcomeIndex === undefined || !amount || !walletAddress) {
     return res.status(400).json({ error: "marketId, outcomeIndex, amount, and walletAddress are required" });
+  }
+
+  // #488: Validate Stellar wallet address format
+  const isValidAddress = 
+    walletAddress.length === 56 && 
+    walletAddress.startsWith('G') && 
+    StrKey.isValidEd25519PublicKey(walletAddress);
+
+  if (!isValidAddress) {
+    logger.warn({ wallet_address: walletAddress }, "Bet rejected: invalid Stellar wallet address format");
+    return res.status(400).json({ error: "Invalid Stellar wallet address format" });
   }
   try {
     // Check market exists and is not resolved
@@ -67,8 +80,7 @@ router.post("/", async (req, res) => {
     res.status(201).json({ bet: bet.rows[0] });
 
   } catch (err) {
-    logger.error({ err, market_id: marketId, wallet_address: walletAddress }, "Failed to place bet");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
@@ -158,8 +170,7 @@ router.post("/payout/:marketId", async (req, res) => {
 
     res.json({ payouts });
   } catch (err) {
-    logger.error({ err, market_id: req.params.marketId }, "Failed to distribute payouts");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
@@ -179,8 +190,7 @@ router.get("/recent", async (req, res) => {
     logger.debug({ activity_count: result.rows.length, limit }, "Recent activity fetched");
     res.json({ activity: result.rows });
   } catch (err) {
-    logger.error({ err }, "Failed to fetch recent activity");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
@@ -222,8 +232,7 @@ router.get("/my-positions", async (req, res) => {
       limit,
     });
   } catch (err) {
-    logger.error({ err, wallet_address: walletAddress }, "Failed to fetch user positions");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
