@@ -128,6 +128,10 @@ pub enum DataKey {
     /// true = active (default), false = graceful shutdown.
     /// Only blocks create_market; existing markets resolve and pay out normally.
     GlobalStatus,
+    /// Hot: current admin address (Two-step transfer state)
+    Admin,
+    /// Hot: pending admin transfer destination (Two-step transfer state)
+    PendingAdmin,
     /// Transient: mutex flag to prevent reentrancy in batch_distribute
     Busy,
     /// Persistent: individual pool balance per outcome (market_id, outcome_index)
@@ -292,6 +296,13 @@ impl PredictionMarket {
         bootstrap_super_admin(&env, &admin);
         // Legacy Instance write for backward-compat shim
         set_role(&env, AccessRole::Admin, &admin);
+
+        // Seed current admin in Instance storage for all admin checks
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .extend_ttl(&DataKey::Admin, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+
         set_platform_status(&env, AccessPlatformStatus::Active);
         emit_contract_initialized(&env, &admin);
     }
@@ -311,6 +322,53 @@ impl PredictionMarket {
     /// Read the address currently assigned to a role (returns None if unset).
     pub fn get_role(env: Env, role: Role) -> Option<Address> {
         get_role_address(&env, role)
+    }
+
+    /// Propose an admin transfer (current admin must authorise).
+    /// Stores pending admin and extends TTL for the key.
+    pub fn propose_admin_transfer(env: Env, caller: Address, new_admin: Address) {
+        let current_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic!("Admin not initialised"));
+        assert!(caller == current_admin, "Only admin may propose transfer");
+        caller.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(&DataKey::PendingAdmin, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+    }
+
+    /// Accept a pending admin transfer (new admin must authorise and match pending).
+    pub fn accept_admin_transfer(env: Env, new_admin: Address) {
+        new_admin.require_auth();
+
+        let pending_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .unwrap_or_else(|| panic!("No pending admin transfer"));
+
+        assert!(pending_admin == new_admin, "No pending admin transfer");
+
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic!("Admin not initialised"));
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(&DataKey::Admin, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+
+        emit_admin_transferred(&env, &old_admin, &new_admin);
     }
 
     /// Update the whitelist status of a token (admin only).
@@ -3231,6 +3289,53 @@ mod tests {
         let rando = Address::generate(&env);
         // Note: we do NOT call mock_all_auths() at all in this test
         client.update_fee(&100i128, &rando, &FeeMode::Treasury);
+    }
+
+    #[test]
+    fn test_admin_transfer_flow() {
+        let (env, client, admin, _, _) = setup();
+        let new_admin = Address::generate(&env);
+
+        client.propose_admin_transfer(&admin, &new_admin);
+        client.accept_admin_transfer(&new_admin);
+
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap();
+        assert_eq!(stored_admin, new_admin);
+
+        assert!(!env.storage().instance().has(&DataKey::PendingAdmin));
+    }
+
+    #[test]
+    #[should_panic(expected = "No pending admin transfer")]
+    fn test_accept_admin_transfer_without_pending_panics() {
+        let (env, client, _admin, _, _) = setup();
+        let new_admin = Address::generate(&env);
+
+        client.accept_admin_transfer(&new_admin);
+    }
+
+    #[test]
+    #[should_panic(expected = "not authorized")]
+    fn test_accept_admin_transfer_wrong_address_panics() {
+        let env = Env::default();
+        let contract_id = env.register(PredictionMarket, ());
+        let client = PredictionMarketClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let pending_admin = Address::generate(&env);
+        client.propose_admin_transfer(&admin, &pending_admin);
+
+        // Force non-root auth path so wrong address isn't permitted.
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let wrong_admin = Address::generate(&env);
+        client.accept_admin_transfer(&wrong_admin);
     }
 
     /// Admin can update fee to 0 to disable it (free market creation).
