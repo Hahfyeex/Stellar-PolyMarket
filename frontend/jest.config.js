@@ -11,6 +11,7 @@ module.exports = {
         "!**/hooks/__tests__/useMarketSearch.test.ts",
         "!**/hooks/__tests__/useBatchTransaction.test.ts",
         "!**/hooks/__tests__/useMarkets.test.ts",
+        "!**/hooks/__tests__/useOnlineStatus.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -37,6 +38,7 @@ module.exports = {
         "**/hooks/__tests__/useMarketSearch.test.ts",
         "**/hooks/__tests__/useBatchTransaction.test.ts",
         "**/hooks/__tests__/useMarkets.test.ts",
+        "**/hooks/__tests__/useOnlineStatus.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -52,8 +54,10 @@ module.exports = {
         "src/hooks/useMarkets.ts",
         "src/hooks/useMarket.ts",
         "src/hooks/usePlaceBet.ts",
+        "src/hooks/useOnlineStatus.ts",
         "src/components/VirtualizedOrderBook.tsx",
         "src/components/LiveActivityFeed.tsx",
+        "src/components/OfflineBanner.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

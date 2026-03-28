@@ -16,6 +16,7 @@
  */
 import { useBettingSlip, MAX_BETS } from "../context/BettingSlipContext";
 import { useBatchTransaction } from "../hooks/useBatchTransaction";
+import { useOnlineStatus } from "../hooks/useOnlineStatus";
 
 interface Props {
   walletAddress: string | null;
@@ -28,6 +29,7 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
     clearBets();
     onBatchPlaced?.();
   });
+  const isOnline = useOnlineStatus();
 
   async function handleSubmit() {
     if (!walletAddress || !bets.length) return;
@@ -141,14 +143,27 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
             )}
 
             {walletAddress ? (
-              <button
-                data-testid="submit-batch"
-                onClick={handleSubmit}
-                disabled={submitting || bets.length === 0}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-3 rounded-xl text-sm font-bold transition-colors"
-              >
-                {submitting ? "Submitting..." : `Place ${bets.length} Bet${bets.length > 1 ? "s" : ""}`}
-              </button>
+              <div className="relative group">
+                <button
+                  data-testid="submit-batch"
+                  onClick={handleSubmit}
+                  disabled={submitting || bets.length === 0 || !isOnline}
+                  aria-disabled={!isOnline}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-3 rounded-xl text-sm font-bold transition-colors"
+                >
+                  {submitting ? "Submitting..." : `Place ${bets.length} Bet${bets.length > 1 ? "s" : ""}`}
+                </button>
+                {!isOnline && (
+                  <div
+                    role="tooltip"
+                    data-testid="offline-bet-tooltip"
+                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ backgroundColor: "var(--bg-elevated)", color: "var(--status-warning)" }}
+                  >
+                    You&apos;re offline — bet submission unavailable
+                  </div>
+                )}
+              </div>
             ) : (
               <p className="text-gray-400 text-xs text-center py-2">
                 Connect your wallet to submit bets
