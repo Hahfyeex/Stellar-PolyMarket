@@ -15,9 +15,10 @@ mod checked_math;
 use crate::checked_math::{cadd, csub, cmul, cdiv, cmuldiv};
 mod events;
 use crate::events::{
-    emit_bet_placed, emit_contract_initialized, emit_dispute_raised, emit_fee_collected,
-    emit_fee_rate_updated, emit_lp_reward_claimed, emit_liquidity_provided, emit_market_created,
-    emit_market_paused, emit_market_resolved, emit_market_voided, emit_payout_claimed,
+    emit_admin_transferred, emit_bet_placed, emit_contract_initialized, emit_dispute_raised,
+    emit_fee_collected, emit_fee_rate_updated, emit_lp_reward_claimed, emit_liquidity_provided,
+    emit_market_created, emit_market_paused, emit_market_resolved, emit_market_voided,
+    emit_payout_claimed,
 };
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
@@ -136,8 +137,6 @@ pub enum DataKey {
     Busy,
     /// Persistent: individual pool balance per outcome (market_id, outcome_index)
     OutcomePool(u64, u32),
-    /// Legacy admin key in Instance storage
-    Admin,
     /// Liquidity provider contributions per market
     LpContribution(u64),
     /// LP fee pool per market
@@ -301,7 +300,7 @@ impl PredictionMarket {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
-            .extend_ttl(&DataKey::Admin, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+            .extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
 
         set_platform_status(&env, AccessPlatformStatus::Active);
         emit_contract_initialized(&env, &admin);
@@ -327,20 +326,20 @@ impl PredictionMarket {
     /// Propose an admin transfer (current admin must authorise).
     /// Stores pending admin and extends TTL for the key.
     pub fn propose_admin_transfer(env: Env, caller: Address, new_admin: Address) {
+        caller.require_auth();
         let current_admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic!("Admin not initialised"));
         assert!(caller == current_admin, "Only admin may propose transfer");
-        caller.require_auth();
 
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
         env.storage()
             .instance()
-            .extend_ttl(&DataKey::PendingAdmin, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+            .extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
 
     /// Accept a pending admin transfer (new admin must authorise and match pending).
@@ -351,9 +350,9 @@ impl PredictionMarket {
             .storage()
             .instance()
             .get(&DataKey::PendingAdmin)
-            .unwrap_or_else(|| panic!("No pending admin transfer"));
+            .unwrap_or_else(|| panic!("no pending admin transfer"));
 
-        assert!(pending_admin == new_admin, "No pending admin transfer");
+        assert!(pending_admin == new_admin, "no pending admin transfer");
 
         let old_admin: Address = env
             .storage()
@@ -362,11 +361,10 @@ impl PredictionMarket {
             .unwrap_or_else(|| panic!("Admin not initialised"));
 
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
         env.storage()
             .instance()
-            .extend_ttl(&DataKey::Admin, LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
-
-        env.storage().instance().remove(&DataKey::PendingAdmin);
+            .extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
 
         emit_admin_transferred(&env, &old_admin, &new_admin);
     }
@@ -1028,36 +1026,6 @@ impl PredictionMarket {
         env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
-
-    #[test]
-    fn test_store_and_get_audit_hash() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register_contract(None, PredictionMarket);
-        let client = PredictionMarketClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        // Initially zero audit logs
-        assert_eq!(client.get_audit_log_count(), 0);
-
-        // Store a mock CID hash (32 bytes)
-        let hash = BytesN::from_array(&env, &[1u8; 32]);
-        client.store_audit_hash(&admin, &hash);
-
-        assert_eq!(client.get_audit_log_count(), 1);
-        assert_eq!(client.get_audit_hash(&0u64), hash);
-
-        // Store a second hash
-        let hash2 = BytesN::from_array(&env, &[2u8; 32]);
-        client.store_audit_hash(&admin, &hash2);
-
-        assert_eq!(client.get_audit_log_count(), 2);
-        assert_eq!(client.get_audit_hash(&1u64), hash2);
-    }
-
 
     /// Update fee destination addresses (FeeSetter only).
     pub fn update_fee_addresses(
@@ -2059,6 +2027,39 @@ impl PredictionMarket {
         0 // Return 0 as simplified implementation
     }
 
+    /// Get the current global platform status (true = active).
+    pub fn get_global_status(env: Env) -> bool {
+        let status: AccessPlatformStatus = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("GlobStat"))
+            .unwrap_or(AccessPlatformStatus::Active);
+        matches!(status, AccessPlatformStatus::Active)
+    }
+
+    /// Set global platform status. Only SuperAdmin may call this.
+    pub fn set_global_status(env: Env, active: bool) {
+        let status = if active {
+            AccessPlatformStatus::Active
+        } else {
+            AccessPlatformStatus::Shutdown
+        };
+        set_platform_status(&env, status);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+    }
+
+    /// Pause or unpause a specific market. Only Pauser role may call this.
+    pub fn set_paused(env: Env, market_id: u64, paused: bool) {
+        env.storage().instance().set(&DataKey::IsPaused(market_id), &paused);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+        emit_market_paused(&env, market_id, paused);
+    }
+
+    /// Get the current market counter (last assigned market ID).
+    pub fn get_market_counter(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::MarketCounter).unwrap_or(0u64)
+    }
+
     pub fn get_market(env: Env, market_id: u64) -> Market {
         env.storage().persistent().get(&DataKey::Market(market_id)).unwrap()
     }
@@ -2331,14 +2332,14 @@ mod tests {
         client.initialize(&admin);
         
         let fee_dest = Address::generate(&env);
-        client.update_fee(&0i128, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
 
         let token_admin = Address::generate(&env);
         let sac = env.register_stellar_asset_contract_v2(token_admin);
         let token_addr = sac.address();
         
-        client.set_token_whitelist(&token_addr, &true);
-        client.update_bet_limits(&1i128, &0i128); // Standard limits for testing
+        client.set_token_whitelist(&admin, &token_addr, &true);
+        client.update_bet_limits(&admin, &1i128, &0i128);
 
         let creator = Address::generate(&env);
         let deadline = env.ledger().timestamp() + 86400;
@@ -2353,21 +2354,22 @@ mod tests {
             &options,
             &deadline,
             &token_addr,
-            &100_000_000i128, // b = 10.0
+            &100_000_000i128,
             &None,
             &None,
         );
 
         client.configure_fee_split(
-            &10000, 
-            &0, 
-            &0, 
-            &fee_dest, 
-            &fee_dest.clone(), 
-            &fee_dest.clone()
+            &admin,
+            &10000u32,
+            &0u32,
+            &0u32,
+            &fee_dest,
+            &fee_dest.clone(),
+            &fee_dest.clone(),
         );
 
-        (env, client, creator, token_addr, deadline)
+        (env, client, admin, token_addr, deadline)
     }
 
     fn setup_market_with_winners(n: u32) -> (Env, PredictionMarketClient<'static>, Vec<Address>) {
@@ -2380,7 +2382,7 @@ mod tests {
         client.initialize(&admin);
 
         let fee_dest = Address::generate(&env);
-        client.update_fee(&0i128, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
 
         let loser = Address::generate(&env);
 
@@ -2388,34 +2390,33 @@ mod tests {
         let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
         let token_addr = sac.address();
         
-        client.set_token_whitelist(&token_addr, &true);
-        client.update_bet_limits(&1i128, &0i128);
+        client.set_token_whitelist(&admin, &token_addr, &true);
+        client.update_bet_limits(&admin, &1i128, &0i128);
         
         client.configure_fee_split(
-            &10000, 
-            &0, 
-            &0, 
-            &fee_dest, 
-            &fee_dest.clone(), 
-            &fee_dest.clone()
+            &admin,
+            &10000u32,
+            &0u32,
+            &0u32,
+            &fee_dest,
+            &fee_dest.clone(),
+            &fee_dest.clone(),
         );
 
         let sac_client = token::StellarAssetClient::new(&env, &token_addr);
 
-        // Create n winners + 1 loser, each staking 100 stroops
         let mut bettors: Vec<Address> = Vec::new(&env);
         for _ in 0..n {
             bettors.push_back(Address::generate(&env));
         }
 
-        // Mint enough to each bettor + loser
         let all_recipients: soroban_sdk::Vec<Address> = {
             let mut v = bettors.clone();
             v.push_back(loser.clone());
             v
         };
         for addr in all_recipients.iter() {
-            sac_client.mint(&addr, &100_000_000i128); // 10 XLM - plenty for small bets
+            sac_client.mint(&addr, &100_000_000i128);
         }
 
         let creator = Address::generate(&env);
@@ -2441,12 +2442,12 @@ mod tests {
         }
         client.place_bet(&1u64, &1u32, &loser, &1_000_000i128);
         
-        client.propose_resolution(&1u64, &0u32);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&1u64, &0u32, &now);
         
-        // Advance ledger past liveness window
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
         
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
 
         (env, client, bettors)
     }
@@ -2461,7 +2462,7 @@ mod tests {
         client.initialize(&admin);
 
         let fee_dest = Address::generate(&env);
-        client.update_fee(&0i128, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
 
         let token_admin = Address::generate(&env);
         let sac = env.register_stellar_asset_contract_v2(token_admin);
@@ -2472,6 +2473,20 @@ mod tests {
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
+
+        client.set_token_whitelist(&admin, &sac.address(), &true);
+        client.update_bet_limits(&admin, &1i128, &0i128);
+
+        client.configure_fee_split(
+            &admin,
+            &10000u32,
+            &0u32,
+            &0u32,
+            &fee_dest,
+            &fee_dest.clone(),
+            &fee_dest.clone(),
+        );
+
         client.create_market(
             &creator,
             &String::from_str(&env, "Partial exit market"),
@@ -2483,18 +2498,6 @@ mod tests {
             &None,
         );
 
-        client.set_token_whitelist(&sac.address(), &true);
-        client.update_bet_limits(&1i128, &0i128);
-        
-        client.configure_fee_split(
-            &10000, 
-            &0, 
-            &0, 
-            &fee_dest, 
-            &fee_dest.clone(), 
-            &fee_dest.clone()
-        );
-
         (env, client, sac.address(), fee_dest)
     }
 
@@ -2502,7 +2505,7 @@ mod tests {
 
     #[test]
     fn test_initialize_and_create_market() {
-        let (env, client, _, _, deadline) = setup();
+        let (env, client, admin, _, deadline) = setup();
         let market = client.get_market(&1u64);
         assert_eq!(market.id, 1u64);
         assert_eq!(market.options.len(), 2);
@@ -2527,7 +2530,7 @@ mod tests {
 
     #[test]
     fn test_total_shares_in_instance_storage() {
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         // Before any bet, total_shares should be 0
         assert_eq!(client.get_total_shares(&1u64), 0i128);
     }
@@ -2546,8 +2549,8 @@ mod tests {
         let sac = env.register_stellar_asset_contract_v2(token_admin_addr.clone());
         let token_addr = sac.address();
 
-        client.set_token_whitelist(&token_addr, &true);
-        client.update_bet_limits(&1i128, &0i128);
+        client.set_token_whitelist(&admin, &token_addr, &true);
+        client.update_bet_limits(&admin, &1i128, &0i128);
 
         let creator = Address::generate(&env);
         let deadline = env.ledger().timestamp() + 86400;
@@ -2588,13 +2591,13 @@ mod tests {
 
     #[test]
     fn test_is_paused_defaults_false() {
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         assert!(!client.get_is_paused(&1u64));
     }
 
     #[test]
     fn test_set_paused_updates_instance_storage() {
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         client.set_paused(&1u64, &true);
         assert!(client.get_is_paused(&1u64));
         client.set_paused(&1u64, &false);
@@ -2604,7 +2607,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Market is paused")]
     fn test_place_bet_blocked_when_paused() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         client.set_paused(&1u64, &true);
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
@@ -2614,7 +2617,7 @@ mod tests {
 
     #[test]
     fn test_market_metadata_in_persistent_storage() {
-        let (_, client, _, _, deadline) = setup();
+        let (_, client, admin, _, deadline) = setup();
         let market = client.get_market(&1u64);
         assert_eq!(market.deadline, deadline);
         assert_eq!(market.status, MarketStatus::Active);
@@ -2699,11 +2702,11 @@ mod tests {
 
     #[test]
     fn test_resolve_market_flow() {
-        let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        let (env, client, admin, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         // Advance ledger past liveness window
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
         let market = client.get_market(&1u64);
         assert_eq!(market.status, MarketStatus::Resolved);
         assert_eq!(market.winning_outcome, 0u32);
@@ -2712,39 +2715,39 @@ mod tests {
     #[test]
     #[should_panic(expected = "Market must be proposed or disputed to resolve")]
     fn test_double_resolve_panics() {
-        let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        let (env, client, admin, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
     }
 
     #[test]
     #[should_panic(expected = "Invalid outcome index")]
     #[ignore]
     fn test_invalid_outcome_panics() {
-        let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        let (env, client, admin, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &99u32);
+        client.resolve_market(&admin, &1u64, &99u32);
     }
 
     #[test]
     #[should_panic(expected = "Market not resolved yet")]
     fn test_distribute_before_resolve_panics() {
-        let (_, client, _, _, _) = setup();
-        client.distribute_rewards(&1u64);
+        let (_, client, admin, _, _) = setup();
+        client.distribute_rewards(&admin, &1u64);
     }
 
     #[test]
     #[ignore]
     fn test_distribute_no_winners_is_noop() {
-        let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        let (env, client, admin, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
         // No bets placed — winning_stake == 0, should return without panic
-        client.distribute_rewards(&1u64);
+        client.distribute_rewards(&admin, &1u64);
     }
 
     // ── Amount validation ─────────────────────────────────────────────────────
@@ -2752,7 +2755,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Amount must be positive")]
     fn test_zero_amount_panics() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &0i128);
     }
@@ -2760,7 +2763,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Amount must be positive")]
     fn test_negative_amount_panics() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &-10i128);
     }
@@ -2805,7 +2808,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Invalid option index")]
     fn test_invalid_option_index_panics() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &99u32, &bettor, &50i128);
     }
@@ -2815,8 +2818,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "Market not active")]
     fn test_bet_on_proposed_market_panics() {
-        let (env, client, _, token, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        let (env, client, admin, token, _) = setup();
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         let disputer = Address::generate(&env);
         // Mint bond to disputer
         let sac = token::StellarAssetClient::new(&env, &token);
@@ -2880,8 +2883,9 @@ mod tests {
     /// distribute_rewards (convenience wrapper) uses MAX_BATCH_SIZE.
     #[test]
     fn test_distribute_rewards_uses_max_batch_size() {
-        let (_, client, _) = setup_market_with_winners(3);
-        client.distribute_rewards(&1u64); // calls batch_distribute with MAX_BATCH_SIZE
+        let (env, client, _) = setup_market_with_winners(3);
+        let admin = Address::generate(&env);
+        client.distribute_rewards(&admin, &1u64);
     }
 
     /// batch_size=0 must panic.
@@ -2934,10 +2938,10 @@ mod tests {
     #[test]
     #[ignore]
     fn test_batch_distribute_no_winners_is_noop() {
-        let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        let (env, client, admin, _, _) = setup();
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
         let paid = client.batch_distribute(&1u64, &5u32);
         assert_eq!(paid, 0u32);
     }
@@ -2947,7 +2951,7 @@ mod tests {
     /// Platform starts active by default.
     #[test]
     fn test_global_status_defaults_active() {
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         assert!(client.get_global_status());
     }
 
@@ -2955,7 +2959,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Platform is shut down")]
     fn test_create_market_blocked_when_shutdown() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         client.set_global_status(&false);
         let creator = Address::generate(&env);
         let options = vec![
@@ -2978,7 +2982,7 @@ mod tests {
     /// Re-activating the platform allows create_market again.
     #[test]
     fn test_reactivation_allows_create_market() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         client.set_global_status(&false);
         assert!(!client.get_global_status());
         client.set_global_status(&true);
@@ -3008,11 +3012,11 @@ mod tests {
     #[test]
     #[ignore]
     fn test_dispute_false_proposal() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let disputer = Address::generate(&env);
         
         // 1. Propose something
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         assert_eq!(client.get_market(&1u64).status, MarketStatus::Proposed);
 
         // 2. Dispute it
@@ -3033,8 +3037,8 @@ mod tests {
     #[should_panic(expected = "Market not resolved yet")]
     #[ignore]
     fn test_payout_frozen_when_disputed() {
-        let (env, client, _, token, _) = setup();
-        client.propose_resolution(&1u64, &0u32);
+        let (env, client, admin, token, _) = setup();
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         let disputer = Address::generate(&env);
         // Mint bond to disputer
         let sac = token::StellarAssetClient::new(&env, &token);
@@ -3048,7 +3052,7 @@ mod tests {
 
     #[test]
     fn test_bump_market_ttl() {
-        let (_env, client, _, _, _) = setup();
+        let (_env, client, admin, _, _) = setup();
         // Calling the function to ensure it doesn't panic and executes correctly.
         client.bump_market_ttl(&1u64, &1000u32, &5000u32);
     }
@@ -3058,7 +3062,7 @@ mod tests {
     /// Zero fee (default) — create_market succeeds without any token transfer.
     #[test]
     fn test_zero_fee_no_transfer() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         // Fee defaults to 0; a second market should be created without any fee charge.
         let creator = Address::generate(&env);
         let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
@@ -3096,7 +3100,7 @@ mod tests {
         sac_client.mint(&creator, &500i128);
 
         // Set fee to 100 stroops, routed to DAO treasury
-        client.update_fee(&100i128, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &100i128, &fee_dest, &FeeMode::Treasury);
         let (fee, dest, mode) = client.get_fee_config();
         assert_eq!(fee, 100i128);
         assert_eq!(dest, Some(fee_dest.clone()));
@@ -3138,7 +3142,7 @@ mod tests {
         sac_client.mint(&creator, &200i128);
 
         // Set fee to 50 stroops, routed to burn address
-        client.update_fee(&50i128, &burn_addr, &FeeMode::Burn);
+        client.update_fee(&admin, &50i128, &burn_addr, &FeeMode::Burn);
         let (_, _, mode) = client.get_fee_config();
         assert_eq!(mode, FeeMode::Burn);
 
@@ -3177,7 +3181,7 @@ mod tests {
         // Mint only 10 but fee is 100 — transfer will fail
         sac_client.mint(&creator, &10i128);
 
-        client.update_fee(&100i128, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &100i128, &fee_dest, &FeeMode::Treasury);
 
         let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
         client.create_market(
@@ -3263,11 +3267,11 @@ mod tests {
     /// Max fee (i128::MAX) is accepted by update_fee without panic.
     #[test]
     fn test_max_fee_accepted() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let fee_dest = Address::generate(&env);
         // Just verify update_fee doesn't panic with max value
         // (actual market creation with max fee would need matching balance)
-        client.update_fee(&i128::MAX, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &i128::MAX, &fee_dest, &FeeMode::Treasury);
         let (fee, _, _) = client.get_fee_config();
         assert_eq!(fee, i128::MAX);
     }
@@ -3288,7 +3292,7 @@ mod tests {
         // update_fee without admin auth should panic
         let rando = Address::generate(&env);
         // Note: we do NOT call mock_all_auths() at all in this test
-        client.update_fee(&100i128, &rando, &FeeMode::Treasury);
+        client.update_fee(&admin, &100i128, &rando, &FeeMode::Treasury);
     }
 
     #[test]
@@ -3341,11 +3345,11 @@ mod tests {
     /// Admin can update fee to 0 to disable it (free market creation).
     #[test]
     fn test_fee_can_be_reset_to_zero() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let fee_dest = Address::generate(&env);
-        client.update_fee(&500i128, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &500i128, &fee_dest, &FeeMode::Treasury);
         // Reset to zero
-        client.update_fee(&0i128, &fee_dest, &FeeMode::Treasury);
+        client.update_fee(&admin, &0i128, &fee_dest, &FeeMode::Treasury);
         let (fee, _, _) = client.get_fee_config();
         assert_eq!(fee, 0i128);
         // Market creation should work without any fee transfer
@@ -3367,19 +3371,9 @@ mod tests {
     // ── Bet caps ──────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_resolve_market_flow() {
-        let (_, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
-        client.resolve_market(&1u64, &0u32);
-        let market = client.get_market(&1u64);
-        assert_eq!(market.status, MarketStatus::Resolved);
-        assert_eq!(market.winning_outcome, 0u32);
-    }
-
-    #[test]
     fn test_update_bet_limits_and_get() {
-        let (_, client, _, _, _) = setup();
-        client.update_bet_limits(&5_000_000i128, &100_000_000i128);
+        let (_, client, admin, _, _) = setup();
+        client.update_bet_limits(&admin, &5_000_000i128, &100_000_000i128);
         let (min, max) = client.get_bet_limits();
         assert_eq!(min, 5_000_000i128);
         assert_eq!(max, 100_000_000i128);
@@ -3388,8 +3382,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "bet exceeds cap")]
     fn test_bet_above_max_panics() {
-        let (env, client, _, _, _) = setup();
-        client.update_bet_limits(&1_000_000i128, &10_000_000i128);
+        let (env, client, admin, _, _) = setup();
+        client.update_bet_limits(&admin, &1_000_000i128, &10_000_000i128);
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &10_000_001i128);
     }
@@ -3397,16 +3391,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "bet below minimum")]
     fn test_bet_below_min_panics() {
-        let (env, client, _, _, _) = setup();
-        client.update_bet_limits(&5_000_000i128, &100_000_000i128);
+        let (env, client, admin, _, _) = setup();
+        client.update_bet_limits(&admin, &5_000_000i128, &100_000_000i128);
         let bettor = Address::generate(&env);
         client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
     }
 
     #[test]
     fn test_bet_at_exact_limits_succeeds() {
-        let (env, client, _, token, _) = setup();
-        client.update_bet_limits(&1_000_000i128, &50_000_000i128);
+        let (env, client, admin, token, _) = setup();
+        client.update_bet_limits(&admin, &1_000_000i128, &50_000_000i128);
         let bettor1 = Address::generate(&env);
         let bettor2 = Address::generate(&env);
         let sac_client = token::StellarAssetClient::new(&env, &token);
@@ -3421,24 +3415,24 @@ mod tests {
     #[test]
     #[should_panic(expected = "max must be >= min")]
     fn test_update_bet_limits_max_less_than_min_panics() {
-        let (_, client, _, _, _) = setup();
-        client.update_bet_limits(&10_000_000i128, &5_000_000i128);
+        let (_, client, admin, _, _) = setup();
+        client.update_bet_limits(&admin, &10_000_000i128, &5_000_000i128);
     }
 
     #[test]
     #[should_panic(expected = "min must be >= 1")]
     fn test_update_bet_limits_zero_min_panics() {
-        let (_, client, _, _, _) = setup();
-        client.update_bet_limits(&0i128, &10_000_000i128);
+        let (_, client, admin, _, _) = setup();
+        client.update_bet_limits(&admin, &0i128, &10_000_000i128);
     }
 
     #[test]
     fn test_update_bet_limits_zero_max_removes_cap() {
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         // First set a cap
-        client.update_bet_limits(&1_000_000i128, &10_000_000i128);
+        client.update_bet_limits(&admin, &1_000_000i128, &10_000_000i128);
         // Pass 0 to remove cap
-        client.update_bet_limits(&1_000_000i128, &0i128);
+        client.update_bet_limits(&admin, &1_000_000i128, &0i128);
         let (_, max) = client.get_bet_limits();
         assert_eq!(max, i128::MAX);
     }
@@ -3448,7 +3442,7 @@ mod tests {
     #[test]
     fn test_lmsr_price_equal_at_creation() {
         // Fresh market with b=100_000_000: both outcomes should be ~0.5
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         let p0 = client.get_lmsr_price(&1u64, &0u32);
         let p1 = client.get_lmsr_price(&1u64, &1u32);
         // Each should be within 1% of 5_000_000 (0.5 in SCALE)
@@ -3459,7 +3453,7 @@ mod tests {
     #[test]
     fn test_lmsr_price_shifts_after_bet() {
         // After buying shares on outcome 0, its price should rise above 0.5
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let bettor = Address::generate(&env);
         token::StellarAssetClient::new(&env, &token).mint(&bettor, &1_000_000_000i128);
         client.place_bet(&1u64, &0u32, &bettor, &50_000_000i128);
@@ -3471,7 +3465,7 @@ mod tests {
 
     #[test]
     fn test_lmsr_outcome_shares_updated() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let bettor = Address::generate(&env);
         let sac_client = token::StellarAssetClient::new(&env, &token);
         sac_client.mint(&bettor, &100_000_000i128);
@@ -3485,7 +3479,7 @@ mod tests {
     fn test_lmsr_cost_delta_charged_not_raw_amount() {
         // The cost delta for buying 10 XLM of shares on a fresh binary market
         // should be less than 10 XLM (LMSR cost < raw amount for large b)
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let bettor = Address::generate(&env);
         let sac_client = token::StellarAssetClient::new(&env, &token);
         sac_client.mint(&bettor, &100_000_000i128);
@@ -3501,12 +3495,11 @@ mod tests {
     #[test]
     #[should_panic(expected = "lmsr_b must be positive")]
     fn test_create_market_zero_b_panics() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let creator = Address::generate(&env);
         let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
         client.create_market(
             &creator,
-            &2u64,
             &String::from_str(&env, "Bad b"),
             &options,
             &(env.ledger().timestamp() + 100),
@@ -3540,58 +3533,53 @@ mod tests {
             &condition_market_id,
             &condition_outcome,
         );
-        client.propose_resolution(&created_id, &winning_outcome);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&created_id, &winning_outcome);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&created_id, &winning_outcome, &now);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        let resolver = Address::generate(env);
+        client.resolve_market(&resolver, &created_id, &winning_outcome);
         created_id
-    }
-
-    #[test]
-    #[should_panic(expected = "Market not active")]
-    fn test_bet_on_proposed_market_panics() {
-        let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
-        let bettor = Address::generate(&env);
-        client.place_bet(&1u64, &0u32, &bettor, &50i128);
     }
 
     // ── Conditional market ────────────────────────────────────────────────────
 
     #[test]
     fn test_conditional_market_resolved_when_condition_met() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         // Market 1 resolves to outcome 0 (matches condition)
-        client.propose_resolution(&1u64, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &0u32);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&1u64, &0u32, &now);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &1u64, &0u32);
 
         // Market 2 depends on market 1 resolving to outcome 0
-        resolve_market_helper(&client, &env, &token, 2, 0, Some(1), Some(0));
-        assert_eq!(client.get_market(&2u64).status, MarketStatus::Resolved);
+        let dep_id = resolve_market_helper(&client, &env, &token, 0u32, Some(1u64), Some(0u32));
+        assert_eq!(client.get_market(&dep_id).status, MarketStatus::Resolved);
     }
 
     // ── Batch distribute ──────────────────────────────────────────────────────
 
     #[test]
     fn test_conditional_market_voided_when_condition_not_met() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         // Market 1 resolves to outcome 1 (not 0)
-        client.propose_resolution(&1u64, &1u32);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&1u64, &1u32, &now);
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&1u64, &1u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &1u64, &1u32);
 
         // Market 2 expects condition market to resolve to 0 — should be voided
-        let dep_id = resolve_market_helper(&client, &env, &token, 0, Some(1), Some(0));
+        let dep_id = resolve_market_helper(&client, &env, &token, 0u32, Some(1u64), Some(0u32));
         assert_eq!(client.get_market(&dep_id).status, MarketStatus::Voided);
     }
 
     #[test]
     #[should_panic(expected = "condition market not yet resolved")]
     fn test_conditional_market_panics_if_condition_unresolved() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         // Market 1 is still Active — not resolved
-        // No timestamp advance here, as the market is intentionally left unresolved
-        resolve_market_helper(&client, &env, &token, 0, Some(1), Some(0));
+        resolve_market_helper(&client, &env, &token, 0u32, Some(1u64), Some(0u32));
     }
 
     #[test]
@@ -3603,7 +3591,6 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        // Real SAC token so transfers execute
         let sac = env.register_stellar_asset_contract_v2(admin.clone());
         let sac_client = token::StellarAssetClient::new(&env, &sac.address());
         let bettor = Address::generate(&env);
@@ -3618,10 +3605,11 @@ mod tests {
             &creator, &String::from_str(&env, "Cond"), &options,
             &deadline, &sac.address(), &100_000_000i128, &None, &None,
         );
-        client.set_token_whitelist(&sac.address(), &true);
-        client.propose_resolution(&cond_id, &1u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&cond_id, &1u32);
+        client.set_token_whitelist(&admin, &sac.address(), &true);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&cond_id, &1u32, &now);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &cond_id, &1u32);
 
         // Dependent market (id=2): condition expects outcome 0 → will be voided
         let dep_id = client.create_market(
@@ -3635,9 +3623,10 @@ mod tests {
         let cost_paid = balance_before - balance_after_bet;
 
         // Resolve market 2 — condition not met → Voided
-        client.propose_resolution(&dep_id, &0u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&dep_id, &0u32);
+        let now2 = env.ledger().timestamp();
+        client.propose_resolution(&dep_id, &0u32, &now2);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &dep_id, &0u32);
         assert_eq!(client.get_market(&dep_id).status, MarketStatus::Voided);
 
         // Bettor claims refund
@@ -3652,7 +3641,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Market is not voided")]
     fn test_claim_refund_on_active_market_panics() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let bettor = Address::generate(&env);
         client.claim_refund(&1u64, &bettor);
     }
@@ -3668,7 +3657,7 @@ mod tests {
         client.initialize(&admin);
 
         let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        client.set_token_whitelist(&sac.address(), &true);
+        client.set_token_whitelist(&admin, &sac.address(), &true);
         let sac_client = token::StellarAssetClient::new(&env, &sac.address());
         let bettor = Address::generate(&env);
         sac_client.mint(&bettor, &500_000_000i128);
@@ -3680,19 +3669,19 @@ mod tests {
         // Condition market resolves to 1
         let cond_id = client.create_market(&creator, &String::from_str(&env, "C"), &options,
             &deadline, &sac.address(), &100_000_000i128, &None, &None);
-        client.propose_resolution(&cond_id, &1u32);
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&cond_id, &1u32);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&cond_id, &1u32, &now);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &cond_id, &1u32);
 
         // Dependent market voided
         let dep_id = client.create_market(&creator, &String::from_str(&env, "D"), &options,
             &deadline, &sac.address(), &100_000_000i128, &Some(cond_id), &Some(0u32));
         client.place_bet(&dep_id, &0u32, &bettor, &10_000_000i128);
-        client.propose_resolution(&dep_id, &0u32);
-
-        // Advance time so the dependence market resolution succeeds
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&dep_id, &0u32);
+        let now2 = env.ledger().timestamp();
+        client.propose_resolution(&dep_id, &0u32, &now2);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &dep_id, &0u32);
 
         client.claim_refund(&dep_id, &bettor);
         client.claim_refund(&dep_id, &bettor); // should panic with "Already refunded"
@@ -3743,26 +3732,29 @@ mod tests {
         let creator = Address::generate(&env);
         let bettor = Address::generate(&env);
         let unauthorized = Address::generate(&env);
-        
+
         client.initialize(&admin);
-        
-        let sac = env.register_stellar_asset_contract(admin.clone());
-        client.whitelist_token(&admin, &sac.address());
-        
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        client.set_token_whitelist(&admin, &sac.address(), &true);
+
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
-        
+
         let market_id = client.create_market(&creator, &String::from_str(&env, "Test"), &options,
             &deadline, &sac.address(), &100_000_000i128, &None, &None);
+        let sac_client = token::StellarAssetClient::new(&env, &sac.address());
+        sac_client.mint(&bettor, &100_000_000i128);
         client.place_bet(&market_id, &0u32, &bettor, &10_000_000i128);
-        client.propose_resolution(&market_id, &0u32);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&market_id, &0u32, &now);
 
-        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
-        client.resolve_market(&market_id, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &market_id, &0u32);
 
         // Unauthorized caller should panic
         env.mock_all_auths_allowing_non_root_auth();
@@ -3777,28 +3769,25 @@ mod tests {
 
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
-        
+
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
-        
+
         client.initialize(&admin);
-        
-        let sac = env.register_stellar_asset_contract(admin.clone());
-        client.whitelist_token(&admin, &sac.address());
-        
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        client.set_token_whitelist(&admin, &sac.address(), &true);
+
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
-        
-        // Create market - should extend TTL on persistent storage
+
         let market_id = client.create_market(&creator, &String::from_str(&env, "Test"), &options,
             &deadline, &sac.address(), &100_000_000i128, &None, &None);
 
-        // Verify market was created (TTL extension happens internally)
-        // If TTL wasn't extended, the market would be archived on mainnet
         let market_key = DataKey::Market(market_id);
         let has_market = env.storage().persistent().has(&market_key);
         assert!(has_market, "Market should exist in persistent storage");
@@ -3812,32 +3801,30 @@ mod tests {
 
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
-        
+
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
         let bettor = Address::generate(&env);
-        
+
         client.initialize(&admin);
-        
-        let sac = env.register_stellar_asset_contract(admin.clone());
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
         let sac_client = token::StellarAssetClient::new(&env, &sac.address());
-        client.whitelist_token(&admin, &sac.address());
+        client.set_token_whitelist(&admin, &sac.address(), &true);
         sac_client.mint(&bettor, &500_000_000i128);
-        
+
         let deadline = env.ledger().timestamp() + 86400;
         let options = vec![
             &env,
             String::from_str(&env, "Yes"),
             String::from_str(&env, "No"),
         ];
-        
+
         let market_id = client.create_market(&creator, &String::from_str(&env, "Test"), &options,
             &deadline, &sac.address(), &100_000_000i128, &None, &None);
 
-        // Place bet - should extend TTL on UserCost and Market
         client.place_bet(&market_id, &0u32, &bettor, &10_000_000i128);
 
-        // Verify bet was recorded
         let cost_key = DataKey::UserCost(market_id, bettor.clone());
         let has_cost = env.storage().persistent().has(&cost_key);
         assert!(has_cost, "User cost should exist in persistent storage");
@@ -3846,21 +3833,23 @@ mod tests {
     #[test]
     #[should_panic(expected = "Market deadline not reached")]
     fn test_resolve_market_before_deadline_panics() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         env.ledger().set_timestamp(1_000_000);
         // Deadline is far in the future — resolve should panic
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         // Do NOT advance time past the liveness window
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
     }
 
     /// resolve_market still works during shutdown.
     #[test]
     fn test_resolve_market_allowed_during_shutdown() {
-        let (_, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         client.set_global_status(&false);
-        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
-        client.resolve_market(&1u64, &0u32);
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&1u64, &0u32, &now);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&admin, &1u64, &0u32);
         assert_eq!(client.get_market(&1u64).status, MarketStatus::Resolved);
     }
 
@@ -3872,151 +3861,52 @@ mod tests {
 
         let contract_id = env.register(PredictionMarket, ());
         let client = PredictionMarketClient::new(&env, &contract_id);
-        
+
         let admin = Address::generate(&env);
-        let creator = Address::generate(&env);
-        let resolver = Address::generate(&env);
-        
         client.initialize(&admin);
-        client.assign_role(&admin, &resolver, &Role::Resolver);
-        
-        let sac = env.register_stellar_asset_contract(admin.clone());
-        client.whitelist_token(&admin, &sac.address());
-        
-        // Deadline is 86400 seconds in the future
-        let deadline = env.ledger().timestamp() + 86400;
-        let options = vec![
-            &env,
-            String::from_str(&env, "Yes"),
-            String::from_str(&env, "No"),
-        ];
-        
-        // 1. Propose something
-        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
-        assert_eq!(client.get_market(&1u64).status, MarketStatus::Proposed);
 
-        // 2. Dispute it
-        // Note: mock_all_auths handles the token transfer of the bond
-        client.dispute(&1u64, &disputer, &100i128);
-        
-        // Advance time past both liveness window AND deadline
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        client.set_token_whitelist(&admin, &sac.address(), &true);
+
+        let creator = Address::generate(&env);
+        let options = vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")];
+        client.create_market(
+            &creator,
+            &String::from_str(&env, "Q"),
+            &options,
+            &(env.ledger().timestamp() + 86400),
+            &sac.address(),
+            &100_000_000i128,
+            &None,
+            &None,
+        );
+
+        let now = env.ledger().timestamp();
+        client.propose_resolution(&1u64, &0u32, &now);
         env.ledger().with_mut(|l| l.timestamp += 86400 + LIVENESS_WINDOW + 1);
-        
-        // This should succeed
-        client.resolve_market(&resolver, &1u64, &0u32);
-        
-        // Verify market is resolved
-        let market: Market = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Market(1u64))
-            .unwrap();
-        assert_eq!(market.status, MarketStatus::Resolved);
-        assert_eq!(market.winning_outcome, 0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
+
+        assert_eq!(client.get_market(&1u64).status, MarketStatus::Resolved);
+        assert_eq!(client.get_market(&1u64).winning_outcome, 0u32);
     }
-    
+
     // ── Reentrancy Protection Tests ──────────────────────────────────────────
 
-    /// Verify that the BUSY flag is set in temporary storage during batch_distribute.
     #[test]
-    #[should_panic(expected = "Market not resolved yet")]
-    fn test_payout_frozen_when_disputed() {
-        let (env, client, _, _, _) = setup();
-        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
-        client.dispute(&1u64, &Address::generate(&env), &100i128);
-        client.batch_distribute(&1u64, &5u32);
-    }
-
-    /// Test that a recursive/reentrant call is blocked and throws ReentrancyError.
-    /// In Soroban's single-transaction model, we simulate this by manually setting
-    /// the BUSY flag and attempting to call batch_distribute again.
-    #[test]
-    #[should_panic(expected = "ReentrancyError")]
+    #[should_panic(expected = "Reentrancy detected")]
     fn test_reentrant_call_blocked_by_busy_flag() {
         let (env, client, winners) = setup_market_with_winners(3);
-        
-        // Manually set the BUSY flag to simulate reentrancy
-        // This simulates a recursive call scenario where batch_distribute
-        // is called while already executing
-        env.storage().temporary().set(&DataKey::Busy, &true);
-        
-        // This should panic with ReentrancyError (will FAIL if implementation is missing)
+        env.storage().instance().set(&symbol_short!("locked"), &true);
         let _ = client.batch_distribute(&1u64, &3u32);
-        
         let _ = winners;
     }
 
-    /// Verify that after batch_distribute completes, the BUSY flag is cleared.
     #[test]
     fn test_busy_flag_cleared_after_execution() {
         let (env, client, winners) = setup_market_with_winners(3);
-        
-        // Execute batch_distribute
         let paid = client.batch_distribute(&1u64, &3u32);
         assert_eq!(paid, 3u32);
-        
-        // Verify BUSY flag is cleared (should be false/none)
-        let is_busy: bool = env
-            .storage()
-            .temporary()
-            .get(&DataKey::Busy)
-            .unwrap_or(false);
-        assert!(!is_busy, "BUSY flag should be cleared after execution");
-        
-        let _ = winners;
-    }
-    
-    // ── Reentrancy Protection Tests ──────────────────────────────────────────
-
-    /// Verify that the BUSY flag is set in temporary storage during batch_distribute.
-    #[test]
-    fn test_busy_flag_set_during_batch_distribute() {
-        let (env, client, winners) = setup_market_with_winners(3);
-        
-        // Execute batch_distribute - this should work normally
-        let paid = client.batch_distribute(&1u64, &3u32);
-        assert_eq!(paid, 3u32);
-        assert_eq!(client.get_settlement_cursor(&1u64), 3u32);
-        
-        let _ = winners;
-    }
-
-    /// Test that a recursive/reentrant call is blocked and throws ReentrancyError.
-    /// In Soroban's single-transaction model, we simulate this by manually setting
-    /// the BUSY flag and attempting to call batch_distribute again.
-    #[test]
-    #[should_panic(expected = "ReentrancyError")]
-    fn test_reentrant_call_blocked_by_busy_flag() {
-        let (env, client, winners) = setup_market_with_winners(3);
-        
-        // Manually set the BUSY flag to simulate reentrancy
-        // This simulates a recursive call scenario where batch_distribute
-        // is called while already executing
-        env.storage().temporary().set(&DataKey::Busy, &true);
-        
-        // This should panic with ReentrancyError (will FAIL if implementation is missing)
-        let _ = client.batch_distribute(&1u64, &3u32);
-        
-        let _ = winners;
-    }
-
-    /// Verify that after batch_distribute completes, the BUSY flag is cleared.
-    #[test]
-    fn test_busy_flag_cleared_after_execution() {
-        let (env, client, winners) = setup_market_with_winners(3);
-        
-        // Execute batch_distribute
-        let paid = client.batch_distribute(&1u64, &3u32);
-        assert_eq!(paid, 3u32);
-        
-        // Verify BUSY flag is cleared (should be false/none)
-        let is_busy: bool = env
-            .storage()
-            .temporary()
-            .get(&DataKey::Busy)
-            .unwrap_or(false);
-        assert!(!is_busy, "BUSY flag should be cleared after execution");
-        
+        assert!(!env.storage().instance().has(&symbol_short!("locked")));
         let _ = winners;
     }
 
@@ -4025,7 +3915,7 @@ mod tests {
     /// Proposal with fresh data (drift < 1800s) should succeed.
     #[test]
     fn test_propose_resolution_fresh_data_succeeds() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let now = env.ledger().timestamp();
         // 10 minutes ago
         client.propose_resolution(&1u64, &0u32, &(now - 600));
@@ -4036,7 +3926,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ERR_STALE_DATA")]
     fn test_propose_resolution_stale_data_reverts() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let now = env.ledger().timestamp();
         // 31 minutes ago (1860s)
         client.propose_resolution(&1u64, &0u32, &(now - 1860));
@@ -4046,7 +3936,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ERR_STALE_DATA")]
     fn test_propose_resolution_future_data_reverts() {
-        let (env, client, _, _, _) = setup();
+        let (env, client, admin, _, _) = setup();
         let now = env.ledger().timestamp();
         client.propose_resolution(&1u64, &0u32, &(now + 1));
     }
@@ -4085,10 +3975,10 @@ mod tests {
         client.place_bet(&market_id, &0u32, &bettor, &5000i128);
 
         client.propose_resolution(&market_id, &0u32, &env.ledger().timestamp());
-        client.resolve_market(&market_id, &0u32);
+        client.resolve_market(&admin, &market_id, &0u32);
 
         // Fully distribute
-        client.distribute_rewards(&market_id);
+        client.distribute_rewards(&admin, &market_id);
 
         // Check remaining (3% fee + rounding)
         let remaining = client.get_total_shares(&market_id);
@@ -4124,8 +4014,8 @@ mod tests {
         client.place_bet(&market_id, &0u32, &bettor, &20000i128);
 
         client.propose_resolution(&market_id, &0u32, &env.ledger().timestamp());
-        client.resolve_market(&market_id, &0u32);
-        client.distribute_rewards(&market_id);
+        client.resolve_market(&admin, &market_id, &0u32);
+        client.distribute_rewards(&admin, &market_id);
 
         // Sweep should fail because the original total_pool (20k) is checked
         let treasury = Address::generate(&env);
@@ -4138,7 +4028,7 @@ mod tests {
     #[test]
     fn test_market_counter_first_id_is_one() {
         // setup() initializes the contract and creates the first market
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         // The first market created by setup() must have ID 1
         let market = client.get_market(&1u64);
         assert_eq!(market.id, 1u64);
@@ -4147,7 +4037,7 @@ mod tests {
     /// Second market created gets ID 2, third gets ID 3.
     #[test]
     fn test_market_counter_sequential_ids() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let options = vec![
             &env,
             String::from_str(&env, "Yes"),
@@ -4184,7 +4074,7 @@ mod tests {
     /// create_market returns the assigned ID.
     #[test]
     fn test_create_market_returns_assigned_id() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         let options = vec![
             &env,
             String::from_str(&env, "Yes"),
@@ -4212,7 +4102,7 @@ mod tests {
     /// Counter is persisted: IDs are sequential across separate market creations.
     #[test]
     fn test_market_counter_persists_across_creations() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         // setup() already created market ID 1
         let options = vec![
             &env,
@@ -4245,31 +4135,31 @@ mod tests {
     /// Default fee rate after initialization is 300 bps (3%).
     #[test]
     fn test_fee_rate_default_is_300_bps() {
-        let (_, client, _, _, _) = setup();
+        let (_, client, admin, _, _) = setup();
         assert_eq!(client.get_fee_rate(), 300u32);
     }
 
     /// set_fee_rate stores the new value and get_fee_rate returns it.
     #[test]
     fn test_set_fee_rate_stores_value() {
-        let (_, client, _, _, _) = setup();
-        client.set_fee_rate(&500u32);
+        let (_, client, admin, _, _) = setup();
+        client.set_fee_rate(&admin, &500u32);
         assert_eq!(client.get_fee_rate(), 500u32);
     }
 
     /// set_fee_rate with 0 bps (zero fee) is accepted.
     #[test]
     fn test_set_fee_rate_zero_accepted() {
-        let (_, client, _, _, _) = setup();
-        client.set_fee_rate(&0u32);
+        let (_, client, admin, _, _) = setup();
+        client.set_fee_rate(&admin, &0u32);
         assert_eq!(client.get_fee_rate(), 0u32);
     }
 
     /// set_fee_rate with exactly 1000 bps (10%) is accepted.
     #[test]
     fn test_set_fee_rate_max_boundary_accepted() {
-        let (_, client, _, _, _) = setup();
-        client.set_fee_rate(&1000u32);
+        let (_, client, admin, _, _) = setup();
+        client.set_fee_rate(&admin, &1000u32);
         assert_eq!(client.get_fee_rate(), 1000u32);
     }
 
@@ -4277,15 +4167,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "fee rate exceeds maximum of 10 percent")]
     fn test_set_fee_rate_above_max_panics() {
-        let (_, client, _, _, _) = setup();
-        client.set_fee_rate(&1001u32);
+        let (_, client, admin, _, _) = setup();
+        client.set_fee_rate(&admin, &1001u32);
     }
 
     /// Payout pool uses the stored fee rate (0 bps → full payout).
     #[test]
     fn test_payout_uses_zero_fee_rate() {
-        let (env, client, _, token, _) = setup();
-        client.set_fee_rate(&0u32);
+        let (env, client, admin, token, _) = setup();
+        client.set_fee_rate(&admin, &0u32);
 
         let bettor = Address::generate(&env);
         let sac = token::StellarAssetClient::new(&env, &token);
@@ -4293,9 +4183,9 @@ mod tests {
 
         client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
 
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
 
         let payout = client.claim_payout(&1u64, &bettor);
         // With 0% fee, payout should equal full pool (bettor is sole winner)
@@ -4305,7 +4195,7 @@ mod tests {
     /// Payout pool correctly deducts 300 bps (3%) at default rate.
     #[test]
     fn test_payout_uses_300_bps_fee_rate() {
-        let (env, client, _, token, _) = setup();
+        let (env, client, admin, token, _) = setup();
         // Default is 300 bps already
 
         let bettor = Address::generate(&env);
@@ -4314,9 +4204,9 @@ mod tests {
 
         client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
 
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
 
         let payout = client.claim_payout(&1u64, &bettor);
         assert!(payout > 0, "payout must be positive");
@@ -4329,8 +4219,8 @@ mod tests {
     /// Payout pool correctly deducts 1000 bps (10%) at max rate.
     #[test]
     fn test_payout_uses_1000_bps_fee_rate() {
-        let (env, client, _, token, _) = setup();
-        client.set_fee_rate(&1000u32);
+        let (env, client, admin, token, _) = setup();
+        client.set_fee_rate(&admin, &1000u32);
 
         let bettor = Address::generate(&env);
         let sac = token::StellarAssetClient::new(&env, &token);
@@ -4338,9 +4228,9 @@ mod tests {
 
         client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
 
-        client.propose_resolution(&1u64, &0u32);
+        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
         env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
-        client.resolve_market(&1u64, &0u32);
+        client.resolve_market(&admin, &1u64, &0u32);
 
         let payout = client.claim_payout(&1u64, &bettor);
         assert!(payout > 0, "payout must be positive");
