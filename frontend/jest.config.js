@@ -46,8 +46,7 @@ module.exports = {
         "src/hooks/useMarketSearch.ts",
         "src/hooks/useBatchTransaction.ts",
         "src/components/VirtualizedOrderBook.tsx",
-        "src/app/error.tsx",
-        "src/app/not-found.tsx",
+        "src/components/LiveActivityFeed.tsx",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
