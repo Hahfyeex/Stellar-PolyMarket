@@ -10,6 +10,7 @@ const {
 const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
 const eventBus = require("../bots/eventBus");
+const { getOrSet, invalidateAll, invalidateMarket, listKey, detailKey, TTL } = require("../utils/cache");
 
 // GET /api/markets — list all markets with pagination
 router.get("/", async (req, res) => {
@@ -50,31 +51,28 @@ router.get("/", async (req, res) => {
       }
       offset = parsedOffset;
     }
-    
-    // Get total count for pagination meta
-    const countResult = await db.query("SELECT COUNT(*) as total FROM markets");
-    const total = parseInt(countResult.rows[0].total, 10);
-    
-    // Fetch markets with pagination
-    const result = await db.query(
-      "SELECT * FROM markets ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-      [limit, offset]
-    );
-    
-    const markets = result.rows;
-    const hasMore = offset + markets.length < total;
-    
-    logger.debug({ market_count: markets.length, total, limit, offset }, "Markets fetched with pagination");
-    
-    res.json({
-      markets,
-      meta: {
-        total,
-        limit,
-        offset,
-        hasMore
-      }
+
+    // Cache-aside: check Redis first, fall back to DB on miss or Redis failure
+    const key = listKey(limit, offset);
+    const data = await getOrSet(key, TTL.LIST, async () => {
+      // Cache miss — query the database
+      const countResult = await db.query("SELECT COUNT(*) as total FROM markets");
+      const total = parseInt(countResult.rows[0].total, 10);
+
+      const result = await db.query(
+        "SELECT * FROM markets ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+        [limit, offset]
+      );
+
+      const markets = result.rows;
+      const hasMore = offset + markets.length < total;
+
+      logger.debug({ market_count: markets.length, total, limit, offset }, "Markets fetched with pagination");
+
+      return { markets, meta: { total, limit, offset, hasMore } };
     });
+
+    res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed to fetch markets");
     res.status(500).json({ error: err.message });
@@ -126,6 +124,9 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
       message: "Market created successfully and published immediately"
     });
 
+    // Invalidate the market list cache so the new market appears immediately
+    await invalidateAll();
+
     // Emit market.created so registered bot strategies can seed initial liquidity
     eventBus.emit("market.created", {
       marketId: result.rows[0].id,
@@ -149,29 +150,30 @@ const { calculateConfidenceScore } = require("../utils/analytics");
 // GET /api/markets/:id
 router.get("/:id", async (req, res) => {
   try {
-    const market = await db.query("SELECT * FROM markets WHERE id = $1", [req.params.id]);
-    if (!market.rows.length) {
+    const key = detailKey(req.params.id);
+    const data = await getOrSet(key, TTL.DETAIL, async () => {
+      const market = await db.query("SELECT * FROM markets WHERE id = $1", [req.params.id]);
+      if (!market.rows.length) return null; // signal not-found
+
+      const betsResult = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
+      const bets = betsResult.rows;
+      const confidenceScore = calculateConfidenceScore(bets);
+
+      logger.debug({
+        market_id: req.params.id,
+        bets_count: bets.length,
+        confidence_score: confidenceScore,
+      }, "Market details fetched with confidence score");
+
+      return { market: { ...market.rows[0], confidence_score: confidenceScore }, bets };
+    });
+
+    if (!data) {
       logger.warn({ market_id: req.params.id }, "Market not found");
       return res.status(404).json({ error: "Market not found" });
     }
 
-    const betsResult = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
-    const bets = betsResult.rows;
-    const confidenceScore = calculateConfidenceScore(bets);
-
-    logger.debug({
-      market_id: req.params.id,
-      bets_count: bets.length,
-      confidence_score: confidenceScore,
-    }, "Market details fetched with confidence score");
-
-    res.json({
-      market: {
-        ...market.rows[0],
-        confidence_score: confidenceScore,
-      },
-      bets,
-    });
+    res.json(data);
   } catch (err) {
     logger.error({ err, market_id: req.params.id }, "Failed to fetch market details");
     res.status(500).json({ error: err.message });
@@ -281,6 +283,9 @@ router.post("/:id/resolve", async (req, res) => {
       status: "RESOLVED",
     }, "Market resolved");
     
+    // Invalidate both the detail cache and the list cache on resolution
+    await invalidateAll(req.params.id);
+
     // Trigger notification
     triggerNotification(req.params.id, "RESOLVED");
 

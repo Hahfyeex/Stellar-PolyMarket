@@ -20,24 +20,15 @@ import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
 import OnboardingWizard from "../components/onboarding/OnboardingWizard";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-  status: string;
-}
+import ThemeToggle from "../components/ThemeToggle";
+import { useMarkets } from "../hooks/useMarkets";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
-  const { theme, toggleTheme } = useTheme();
   const searchParams = useSearchParams();
-  const [markets, setMarkets] = useState<Market[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
@@ -62,45 +53,7 @@ export default function Home() {
     window.open(helpUrl, "_blank");
   };
 
-  async function fetchMarkets() {
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets`);
-      const data = await res.json();
-      const newMarkets = data.markets || [];
-      
-      // Detect resolution transitions
-      newMarkets.forEach((newMarket: Market) => {
-        const oldMarket = markets.find(m => m.id === newMarket.id);
-        if (oldMarket && !oldMarket.resolved && newMarket.resolved) {
-          // Market just resolved - show toast notification
-          const event = new CustomEvent('showToast', {
-            detail: {
-              message: `Market "${newMarket.question}" has been resolved. Claim your payout now.`,
-              type: 'success'
-            }
-          });
-          window.dispatchEvent(event);
-        }
-      });
-      
-      setMarkets(newMarkets);
-    } catch {
-      setMarkets(DEMO_MARKETS);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    fetchMarkets();
-    
-    // Poll for market updates every 30 seconds
-    const pollInterval = setInterval(() => {
-      fetchMarkets();
-    }, 30_000);
-    
-    return () => clearInterval(pollInterval);
-  }, []);
+  const refetchMarkets = () => queryClient.invalidateQueries({ queryKey: ["markets"] });
 
   // Auto-select first active market for the FAB
   useEffect(() => {
@@ -111,19 +64,13 @@ export default function Home() {
   const pageContent = (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
-      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-[var(--border-default)]">
         <div className="flex items-center gap-4">
           <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
-          <button
-            onClick={toggleTheme}
-            className="text-gray-400 hover:text-white transition-colors text-xl"
-            title="Toggle Theme"
-          >
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
+          <ThemeToggle />
           <button
             onClick={handleHelpClick}
-            className="text-gray-400 hover:text-white transition-colors"
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
             title="Help & Documentation"
           >
             <svg
@@ -164,15 +111,10 @@ export default function Home() {
       </nav>
 
       {/* Mobile top bar */}
-      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-gray-800">
+      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-[var(--border-default)]">
         <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
         <div className="flex items-center gap-3">
-          <button
-            onClick={toggleTheme}
-            className="text-gray-400 hover:text-white transition-colors text-lg"
-          >
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
+          <ThemeToggle />
           {publicKey ? (
             <>
               <NotificationInbox
@@ -272,7 +214,7 @@ export default function Home() {
                     <MarketCard
                       market={market}
                       walletAddress={publicKey}
-                      onBetPlaced={fetchMarkets}
+                      onBetPlaced={refetchMarkets}
                     />
                   </ContractErrorBoundary>
                 </div>
@@ -300,9 +242,9 @@ export default function Home() {
         <MobileShell
           activeMarket={activeMarket}
           walletAddress={publicKey}
-          onBetPlaced={fetchMarkets}
+          onBetPlaced={refetchMarkets}
         >
-          <PullToRefresh onRefresh={fetchMarkets}>{pageContent}</PullToRefresh>
+          <PullToRefresh onRefresh={refetchMarkets}>{pageContent}</PullToRefresh>
         </MobileShell>
       </div>
 

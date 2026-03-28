@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useWallet } from "../../../hooks/useWallet";
 import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
 import OddsTicker from "../../../components/OddsTicker";
 import BetConfirmationModal from "../../../components/BetConfirmationModal";
+import { useMarket } from "../../../hooks/useMarket";
+import { usePlaceBet } from "../../../hooks/usePlaceBet";
 
 // =============================================================================
 // Types
@@ -34,11 +36,6 @@ interface Bet {
   created_at: string;
 }
 
-interface MarketDetailData {
-  market: Market;
-  bets: Bet[];
-}
-
 interface Position {
   wallet_address: string;
   outcome_index: number;
@@ -47,17 +44,8 @@ interface Position {
 }
 
 // =============================================================================
-// API Functions
+// Demo Data
 // =============================================================================
-
-async function fetchMarketDetail(id: string): Promise<MarketDetailData> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets/${id}`);
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: "Failed to fetch market" }));
-    throw new Error(error.error || "Failed to fetch market");
-  }
-  return res.json();
-}
 
 async function fetchPoolSize(marketId: number): Promise<{ pool_size: string }> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/reserves`);
@@ -66,28 +54,6 @@ async function fetchPoolSize(marketId: number): Promise<{ pool_size: string }> {
   const marketReserve = data.markets?.find((m: any) => m.market_id === marketId);
   return { pool_size: marketReserve?.xlm_balance ?? "0" };
 }
-
-async function placeBetAPI(data: {
-  marketId: number;
-  outcomeIndex: number;
-  amount: number;
-  walletAddress: string;
-}): Promise<{ bet: Bet }> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: "Failed to place bet" }));
-    throw new Error(error.error || "Failed to place bet");
-  }
-  return res.json();
-}
-
-// =============================================================================
-// Demo Data
-// =============================================================================
 
 const DEMO_MARKET: Market = {
   id: 1,
@@ -103,11 +69,41 @@ const DEMO_MARKET: Market = {
 };
 
 const DEMO_BETS: Bet[] = [
-  { id: 1, wallet_address: "GABC1234ABCD", outcome_index: 0, amount: "100", created_at: new Date(Date.now() - 60000).toISOString() },
-  { id: 2, wallet_address: "GDEF5678EFGH", outcome_index: 1, amount: "50", created_at: new Date(Date.now() - 120000).toISOString() },
-  { id: 3, wallet_address: "GIJK9012IJKL", outcome_index: 0, amount: "200", created_at: new Date(Date.now() - 180000).toISOString() },
-  { id: 4, wallet_address: "GMNO3456MNOP", outcome_index: 0, amount: "75", created_at: new Date(Date.now() - 300000).toISOString() },
-  { id: 5, wallet_address: "GQRST7890STU", outcome_index: 1, amount: "150", created_at: new Date(Date.now() - 600000).toISOString() },
+  {
+    id: 1,
+    wallet_address: "GABC1234ABCD",
+    outcome_index: 0,
+    amount: "100",
+    created_at: new Date(Date.now() - 60000).toISOString(),
+  },
+  {
+    id: 2,
+    wallet_address: "GDEF5678EFGH",
+    outcome_index: 1,
+    amount: "50",
+    created_at: new Date(Date.now() - 120000).toISOString(),
+  },
+  {
+    id: 3,
+    wallet_address: "GIJK9012IJKL",
+    outcome_index: 0,
+    amount: "200",
+    created_at: new Date(Date.now() - 180000).toISOString(),
+  },
+  {
+    id: 4,
+    wallet_address: "GMNO3456MNOP",
+    outcome_index: 0,
+    amount: "75",
+    created_at: new Date(Date.now() - 300000).toISOString(),
+  },
+  {
+    id: 5,
+    wallet_address: "GQRST7890STU",
+    outcome_index: 1,
+    amount: "150",
+    created_at: new Date(Date.now() - 600000).toISOString(),
+  },
 ];
 
 // =============================================================================
@@ -117,17 +113,17 @@ const DEMO_BETS: Bet[] = [
 function calculateOdds(bets: Bet[], outcomeIndex: number): number {
   const totalPool = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
   if (totalPool === 0) return 0.5;
-  
+
   const outcomeStake = bets
     .filter((bet) => bet.outcome_index === outcomeIndex)
     .reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
-  
+
   return outcomeStake / totalPool;
 }
 
 function calculatePositions(bets: Bet[]): Position[] {
   const positionMap = new Map<string, Position>();
-  
+
   bets.forEach((bet) => {
     const key = `${bet.wallet_address}-${bet.outcome_index}`;
     const existing = positionMap.get(key);
@@ -143,7 +139,7 @@ function calculatePositions(bets: Bet[]): Position[] {
       });
     }
   });
-  
+
   return Array.from(positionMap.values()).sort((a, b) => b.total_amount - a.total_amount);
 }
 
@@ -189,22 +185,28 @@ function AboutTab({ market, poolSize }: AboutTabProps) {
       {/* Market Info */}
       <div className="bg-gray-900 rounded-xl p-5 border border-gray-800 space-y-4">
         <h3 className="text-lg font-semibold text-white">Market Details</h3>
-        
+
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-gray-400 text-sm">Pool Size</p>
-            <p className="text-white font-semibold text-xl">{parseFloat(poolSize).toFixed(2)} XLM</p>
+            <p className="text-white font-semibold text-xl">
+              {parseFloat(poolSize).toFixed(2)} XLM
+            </p>
           </div>
           <div>
             <p className="text-gray-400 text-sm">Total Staked</p>
-            <p className="text-white font-semibold text-xl">{parseFloat(market.total_pool).toFixed(2)} XLM</p>
+            <p className="text-white font-semibold text-xl">
+              {parseFloat(market.total_pool).toFixed(2)} XLM
+            </p>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-gray-400 text-sm">Ends</p>
-            <p className="text-white font-medium">{new Date(market.end_date).toLocaleDateString()}</p>
+            <p className="text-white font-medium">
+              {new Date(market.end_date).toLocaleDateString()}
+            </p>
           </div>
           <div>
             <p className="text-gray-400 text-sm">Status</p>
@@ -215,11 +217,15 @@ function AboutTab({ market, poolSize }: AboutTabProps) {
                 market.resolved
                   ? "bg-green-800 text-green-300"
                   : new Date(market.end_date) <= new Date()
-                  ? "bg-yellow-800 text-yellow-300"
-                  : "bg-blue-800 text-blue-300"
+                    ? "bg-yellow-800 text-yellow-300"
+                    : "bg-blue-800 text-blue-300"
               }`}
             >
-              {market.resolved ? "Resolved" : new Date(market.end_date) <= new Date() ? "Ended" : "Active"}
+              {market.resolved
+                ? "Resolved"
+                : new Date(market.end_date) <= new Date()
+                  ? "Ended"
+                  : "Active"}
             </span>
           </div>
         </div>
@@ -255,14 +261,22 @@ function PositionsTab({ positions, outcomes }: PositionsTabProps) {
         <table className="w-full">
           <thead className="bg-gray-800">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Trader</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Position</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Amount</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Bets</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
+                Trader
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
+                Position
+              </th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">
+                Amount
+              </th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">
+                Bets
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
-            {positions.map((position, index) => (
+            {positions.map((position) => (
               <tr key={`${position.wallet_address}-${position.outcome_index}`}>
                 <td className="px-4 py-4">
                   <span className="text-white font-mono text-sm">
@@ -356,28 +370,31 @@ interface BettingPanelProps {
   onBetPlaced: () => void;
 }
 
+const HORIZON = "https://horizon-testnet.stellar.org";
+
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const { publicKey, connecting, connect } = useWallet();
-  const queryClient = useQueryClient();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
 
-  const betMutation = useMutation({
-    mutationFn: placeBetAPI,
-    onSuccess: () => {
+  const betMutation = usePlaceBet(market.id);
+
+  // Sync mutation state to local message
+  useEffect(() => {
+    if (betMutation.isSuccess) {
       setMessage({ type: "success", text: "Bet placed successfully!" });
       setSelectedOutcome(null);
       setAmount("");
       onBetPlaced();
       setIsConfirmModalOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["market", market.id.toString()] });
-    },
-    onError: (error: Error) => {
-      setMessage({ type: "error", text: error.message });
-    },
-  });
+    }
+    if (betMutation.isError) {
+      setMessage({ type: "error", text: (betMutation.error as Error).message });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [betMutation.isSuccess, betMutation.isError]);
 
   function handleBet() {
     if (selectedOutcome === null || !amount || parseFloat(amount) <= 0) return;
@@ -420,9 +437,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.yes * 100} size="lg" />
           </div>
-          <div className="text-gray-400 text-xs mt-1">
-            ${(1 / odds.yes).toFixed(2)}
-          </div>
+          <div className="text-gray-400 text-xs mt-1">${(1 / odds.yes).toFixed(2)}</div>
           {selectedOutcome === 0 && (
             <div className="absolute top-2 right-2 w-3 h-3 bg-green-400 rounded-full" />
           )}
@@ -441,9 +456,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.no * 100} size="lg" />
           </div>
-          <div className="text-gray-400 text-xs mt-1">
-            ${(1 / odds.no).toFixed(2)}
-          </div>
+          <div className="text-gray-400 text-xs mt-1">${(1 / odds.no).toFixed(2)}</div>
           {selectedOutcome === 1 && (
             <div className="absolute top-2 right-2 w-3 h-3 bg-red-400 rounded-full" />
           )}
@@ -466,6 +479,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           />
           <span className="flex items-center px-3 text-gray-400 font-medium">XLM</span>
         </div>
+        <StakePresets
+          amount={amount}
+          onSelect={setAmount}
+          walletBalance={xlmBalance}
+          disabled={!canBet}
+        />
 
         {/* Potential Payout */}
         {selectedOutcome !== null && amount && parseFloat(amount) > 0 && (
@@ -507,7 +526,9 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       {message && (
         <div
           className={`text-sm text-center p-3 rounded-lg ${
-            message.type === "success" ? "bg-green-900/50 text-green-400" : "bg-red-900/50 text-red-400"
+            message.type === "success"
+              ? "bg-green-900/50 text-green-400"
+              : "bg-red-900/50 text-red-400"
           }`}
         >
           {message.text}
@@ -544,24 +565,12 @@ interface MarketDetailPageProps {
 export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TabType>("about");
   const { publicKey, disconnect } = useWallet();
-  const queryClient = useQueryClient();
 
-  // Fetch market detail
-  const {
-    data: marketData,
-    isLoading: marketLoading,
-    error: marketError,
-  } = useQuery<MarketDetailData, Error>({
-    queryKey: ["market", marketId],
-    queryFn: () => fetchMarketDetail(marketId),
-    refetchInterval: 5000,
-    retry: 1,
-  });
+  // Fetch market detail via shared hook
+  const { data: marketData, isLoading: marketLoading, error: marketError } = useMarket(marketId);
 
   // Fetch pool size from reserves (for on-chain balance)
-  const {
-    data: poolData,
-  } = useQuery<{ pool_size: string }>({
+  const { data: poolData } = useQuery<{ pool_size: string }>({
     queryKey: ["poolSize", marketData?.market.id],
     queryFn: () => fetchPoolSize(marketData!.market.id),
     enabled: !!marketData?.market.id,
@@ -576,9 +585,7 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
     no: calculateOdds(bets, 1),
   };
 
-  function handleBetPlaced() {
-    queryClient.invalidateQueries({ queryKey: ["market", marketId] });
-  }
+  function handleBetPlaced() {}
 
   const tabs: { id: TabType; label: string }[] = [
     { id: "about", label: "About" },
@@ -703,9 +710,7 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
             {activeTab === "positions" && (
               <PositionsTab positions={positions} outcomes={market.outcomes} />
             )}
-            {activeTab === "activity" && (
-              <ActivityTab bets={bets} outcomes={market.outcomes} />
-            )}
+            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={market.outcomes} />}
 
             {/* Mobile Sticky Betting Panel */}
             <div className="fixed bottom-0 left-0 right-0 bg-gray-950 border-t border-gray-800 p-4 md:static md:mt-6 md:bg-transparent md:border-0 md:p-0 z-20">

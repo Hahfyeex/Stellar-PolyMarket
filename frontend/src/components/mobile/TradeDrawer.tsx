@@ -5,6 +5,9 @@ import MarketResolutionTracker from "../MarketResolutionTracker";
 import { trackEvent } from "../../lib/firebase";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
+import StakePresets from "../StakePresets";
+
+const HORIZON = "https://horizon-testnet.stellar.org";
 
 
 
@@ -211,6 +214,12 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                       {loading ? "..." : "Bet"}
                     </button>
                   </div>
+                  <StakePresets
+                    amount={amount}
+                    onSelect={setAmount}
+                    walletBalance={xlmBalance}
+                    disabled={loading}
+                  />
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">

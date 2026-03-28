@@ -16,16 +16,15 @@ use crate::checked_math::{cadd, csub, cmul, cdiv, cmuldiv};
 mod events;
 use crate::events::{
     emit_bet_placed, emit_contract_initialized, emit_dispute_raised, emit_fee_collected,
-    emit_lp_reward_claimed, emit_liquidity_provided, emit_market_created, emit_market_paused,
-    emit_market_resolved, emit_market_voided, emit_payout_claimed,
+    emit_fee_rate_updated, emit_lp_reward_claimed, emit_liquidity_provided, emit_market_created,
+    emit_market_paused, emit_market_resolved, emit_market_voided, emit_payout_claimed,
 };
-mod lmsr;
-mod position_token;
-use crate::lmsr::{lmsr_cost, lmsr_price};
-
 // Internal ZK scalar normalization utility — must be declared before use
 mod math;
 use math::normalize_scalar;
+mod lmsr;
+mod position_token;
+use crate::lmsr::{lmsr_cost, lmsr_price};
 
 /// Fee routing mode: burn (send to issuer/lock address) or transfer to DAO treasury.
 #[contracttype]
@@ -66,6 +65,15 @@ pub const DISPUTE_WINDOW: u64 = 86_400;
 /// Threshold: 535_000 / 2 = 267_500 ledgers (~37 days)
 /// Extend to: 535_000 ledgers (~74 days)
 pub const LEDGER_TTL_EXTEND: u32 = 535_000;
+
+/// Reads the stored platform fee rate in basis points from Instance storage.
+/// Falls back to 300 bps (3%) if not set (e.g., before first initialize).
+fn read_fee_rate_bps(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::FeeRateBps)
+        .unwrap_or(300u32)
+}
 
 /// Calculates dynamic platform fee in Basis Points (BPS).
 /// Pure function: O(1) time complexity, O(1) space complexity.
@@ -124,32 +132,60 @@ pub enum DataKey {
     Busy,
     /// Persistent: individual pool balance per outcome (market_id, outcome_index)
     OutcomePool(u64, u32),
+    /// Legacy admin key in Instance storage
     Admin,
+    /// Liquidity provider contributions per market
     LpContribution(u64),
+    /// LP fee pool per market
     LpFeePool(u64),
+    /// User's total cost paid into a market (for refunds)
     UserCost(u64, Address),
+    /// User position map per market (legacy)
     UserPosition(u64),
+    /// LMSR b parameter per market
     LmsrB(u64),
+    /// LMSR outcome shares per market
     OutcomeShares(u64),
+    /// Market creation fee
     CreationFee,
+    /// Fee destination address
     FeeDestination,
+    /// Fee mode configuration
     FeeModeConfig,
+    /// Minimum bet amount
     MinBetAmount,
+    /// Maximum bet amount
     MaxBetAmount,
+    /// Fee split configuration
     FeeSplitConfig,
+    /// Treasury address for fee splits
     TreasuryAddress,
+    /// LP pool address for fee splits
     LPAddress,
+    /// Burn address for fee splits
     BurnAddress,
+    /// Nonce for gasless bets
     Nonce(Address),
+    /// Claim deadline timestamp per market
     ClaimDeadline(u64),
+    /// Dispute data per market
     Dispute(u64),
+    /// Whether a market has been swept
     MarketSwept(u64),
+    /// Original payout amounts per market
     OriginalPayouts(u64),
+    /// Claimed map per market
     Claimed(u64),
+    /// Global vault balance
     VaultBalance,
+    /// Whether settlement fee has been paid for a market
     SettlementFeePaid(u64),
+    /// Whether a specific payout has been claimed
     PayoutClaimed(u64, Address),
+    /// Whether a refund has been claimed
     RefundClaimed(u64, Address),
+    /// Platform fee rate in basis points (e.g. 300 = 3%). Stored in Instance storage.
+    FeeRateBps,
     /// Auto-incrementing market ID counter. Instance storage.
     MarketCounter,
 }
@@ -249,6 +285,7 @@ impl PredictionMarket {
         check_initialized(&env);
         admin.require_auth();
         env.storage().instance().set(&DataKey::Initialized, &true);
+        env.storage().instance().set(&DataKey::FeeRateBps, &300u32);
         env.storage().instance().set(&DataKey::MarketCounter, &0u64);
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
         // Bootstrap SuperAdmin in Persistent storage (new role system)
@@ -634,12 +671,13 @@ impl PredictionMarket {
         market.status = MarketStatus::Proposed;
         market.proposed_outcome = Some(winning_outcome);
         market.proposal_timestamp = env.ledger().timestamp();
+
         env.storage()
             .persistent()
             .set(&DataKey::Market(market_id), &market);
     }
 
-    /// Provide liquidity to a market pool.
+    /// Provide liquidity to an existing market.
     pub fn provide_liquidity(env: Env, market_id: u64, provider: Address, amount: i128) {
         provider.require_auth();
         assert!(amount > 0, "Amount must be positive");
@@ -695,18 +733,6 @@ impl PredictionMarket {
         emit_liquidity_provided(&env, market_id, &provider, amount);
     }
 
-    /// Batch-distribute rewards to at most `batch_size` winners per call.
-    ///
-    /// # Batch pattern
-    /// Winners are collected into a `Vec` once, then a `SettlementCursor` (Instance storage)
-    /// tracks the next unpaid index. Each invocation pays `batch_size` winners and advances
-    /// the cursor, so callers can page through 50+ winners across multiple transactions without
-    /// hitting the Soroban CPU ceiling (~100M instructions per tx).
-    ///
-    /// Enforces `batch_size <= MAX_BATCH_SIZE` to guarantee safe instruction headroom.
-    ///
-    /// Returns the number of winners paid in this call.
-    /// Batch-distribute rewards to at most `batch_size` winners per call.
     /// Sweep tiny fractional "Dust" from a resolved market into the treasury.
     /// Only callable by Admin if the market is Resolved and total_pool < 0.001 units.
     pub fn sweep_dust(env: Env, market_id: u64, treasury: Address) {
@@ -802,10 +828,7 @@ impl PredictionMarket {
             .get(&DataKey::AuditLogCount)
             .unwrap_or(0)
     }
-}
 
-#[contractimpl]
-impl PredictionMarket {
     /// Returns how many winners have already been paid out.
     pub fn get_settlement_cursor(env: Env, market_id: u64) -> u32 {
         env.storage()
@@ -832,6 +855,31 @@ impl PredictionMarket {
         env.storage().instance().set(&DataKey::CreationFee, &new_fee);
         env.storage().instance().set(&DataKey::FeeDestination, &new_destination);
         env.storage().instance().set(&DataKey::FeeModeConfig, &new_mode);
+    }
+
+    /// Set the platform fee rate in basis points.
+    /// Only callable by the FeeSetter role. Max 1000 bps (10%).
+    /// Emits FeeRateUpdated event on every update.
+    pub fn set_fee_rate(env: Env, caller: Address, new_rate_bps: u32) {
+        caller.require_auth();
+        require_role(&env, &caller, Role::FeeSetter);
+        assert!(new_rate_bps <= 1000, "fee rate exceeds maximum of 10 percent");
+        let old_rate_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeRateBps)
+            .unwrap_or(300u32);
+        env.storage().instance().set(&DataKey::FeeRateBps, &new_rate_bps);
+        env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
+        emit_fee_rate_updated(&env, old_rate_bps, new_rate_bps);
+    }
+
+    /// Get the current platform fee rate in basis points. Defaults to 300 (3%).
+    pub fn get_fee_rate(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::FeeRateBps)
+            .unwrap_or(300u32)
     }
 
     /// Get the current creation fee configuration.
@@ -922,6 +970,36 @@ impl PredictionMarket {
         env.storage().instance().set(&DataKey::FeeSplitConfig, &config);
         env.storage().instance().extend_ttl(LEDGER_TTL_EXTEND / 2, LEDGER_TTL_EXTEND);
     }
+
+    #[test]
+    fn test_store_and_get_audit_hash() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Initially zero audit logs
+        assert_eq!(client.get_audit_log_count(), 0);
+
+        // Store a mock CID hash (32 bytes)
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        client.store_audit_hash(&admin, &hash);
+
+        assert_eq!(client.get_audit_log_count(), 1);
+        assert_eq!(client.get_audit_hash(&0u64), hash);
+
+        // Store a second hash
+        let hash2 = BytesN::from_array(&env, &[2u8; 32]);
+        client.store_audit_hash(&admin, &hash2);
+
+        assert_eq!(client.get_audit_log_count(), 2);
+        assert_eq!(client.get_audit_hash(&1u64), hash2);
+    }
+
 
     /// Update fee destination addresses (FeeSetter only).
     pub fn update_fee_addresses(
@@ -1186,7 +1264,7 @@ impl PredictionMarket {
             .instance()
             .get(&DataKey::TotalShares(market_id))
             .unwrap_or(0);
-        let fee_bps = calculate_dynamic_fee(total_pool);
+        let fee_bps = read_fee_rate_bps(&env);
         emit_market_resolved(&env, market_id, winning_outcome, total_pool, fee_bps);
     }
 
@@ -1369,7 +1447,7 @@ impl PredictionMarket {
             return 0;
         }
 
-        let fee_bps = calculate_dynamic_fee(total_pool);
+        let fee_bps = read_fee_rate_bps(&env);
         let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool sweep");
 
         // Calculate and store original payouts for each winner
@@ -1614,7 +1692,7 @@ impl PredictionMarket {
     /// than Map iteration for typical market sizes (<100 bettors).
     ///
     /// Returns the number of winners paid in this call.
-    pub fn batch_distribute(env: &Env, market_id: u64, batch_size: u32) -> u32 {
+    pub fn batch_distribute(env: Env, market_id: u64, batch_size: u32) -> u32 {
         // Acquire re-entrancy lock
         acquire_reentrancy_lock(&env);
 
@@ -1660,7 +1738,7 @@ impl PredictionMarket {
             return 0;
         }
 
-        let fee_bps = calculate_dynamic_fee(total_pool);
+        let fee_bps = read_fee_rate_bps(env);
         let fee_amount = cmuldiv(total_pool, fee_bps as i128, 10000, "fee amount");
         let payout_pool = cmuldiv(total_pool, csub(10000, fee_bps as i128, "fee complement"), 10000, "payout pool distribute");
         let token_client = token::Client::new(env, &market.token);
@@ -1695,7 +1773,7 @@ impl PredictionMarket {
     /// Only the Resolver role can call this function. Unauthorized callers will panic.
     pub fn distribute_rewards(env: Env, resolver: Address, market_id: u64) {
         require_role(&env, &resolver, Role::Resolver);
-        Self::batch_distribute(&env, market_id, MAX_BATCH_SIZE);
+        Self::batch_distribute(env.clone(), market_id, MAX_BATCH_SIZE);
     }
 
     /// Batch payout processor for distributing rewards to multiple winners in a single transaction.
@@ -1784,7 +1862,7 @@ impl PredictionMarket {
 
         assert!(winning_stake > 0, "No winners to pay out");
 
-        let fee_bps = calculate_dynamic_fee(total_pool);
+        let fee_bps = read_fee_rate_bps(&env);
         let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
         let token_client = token::Client::new(&env, &market.token);
 
@@ -1871,7 +1949,7 @@ impl PredictionMarket {
         assert!(user_stake > 0, "No winning position found");
 
         let total_pool: i128 = env.storage().instance().get(&DataKey::TotalShares(market_id)).unwrap_or(0);
-        let fee_bps = calculate_dynamic_fee(total_pool);
+        let fee_bps = read_fee_rate_bps(&env);
         let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
         let fee_amount = (total_pool * fee_bps as i128) / 10000;
 
@@ -1977,7 +2055,7 @@ impl PredictionMarket {
             }
 
             let total_pool: i128 = env.storage().instance().get(&DataKey::TotalShares(market_id)).unwrap_or(0);
-            let fee_bps = calculate_dynamic_fee(total_pool);
+            let fee_bps = read_fee_rate_bps(&env);
             let payout_pool = (total_pool * (10000 - fee_bps as i128)) / 10000;
             let fee_amount = (total_pool * fee_bps as i128) / 10000;
 
@@ -3375,6 +3453,21 @@ mod tests {
     // ── Conditional market ────────────────────────────────────────────────────
 
     #[test]
+    fn test_conditional_market_resolved_when_condition_met() {
+        let (env, client, _, token, _) = setup();
+        // Market 1 resolves to outcome 0 (matches condition)
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        // Market 2 depends on market 1 resolving to outcome 0
+        resolve_market_helper(&client, &env, &token, 2, 0, Some(1), Some(0));
+        assert_eq!(client.get_market(&2u64).status, MarketStatus::Resolved);
+    }
+
+    // ── Batch distribute ──────────────────────────────────────────────────────
+
+    #[test]
     fn test_conditional_market_voided_when_condition_not_met() {
         let (env, client, _, token, _) = setup();
         // Market 1 resolves to outcome 1 (not 0)
@@ -3649,8 +3742,10 @@ mod tests {
     #[should_panic(expected = "Market deadline not reached")]
     fn test_resolve_market_before_deadline_panics() {
         let (env, client, _, _, _) = setup();
-        // Market deadline is in the future; resolve should panic
-        client.propose_resolution(&1u64, &0u32, &env.ledger().timestamp());
+        env.ledger().set_timestamp(1_000_000);
+        // Deadline is far in the future — resolve should panic
+        client.propose_resolution(&1u64, &0u32);
+        // Do NOT advance time past the liveness window
         client.resolve_market(&1u64, &0u32);
     }
 
@@ -4038,6 +4133,115 @@ mod tests {
             assert_eq!(new_id, prev_id + 1, "IDs must be strictly sequential");
             prev_id = new_id;
         }
+    }
+
+    // ── FeeRateBps tests ─────────────────────────────────────────────────────
+
+    /// Default fee rate after initialization is 300 bps (3%).
+    #[test]
+    fn test_fee_rate_default_is_300_bps() {
+        let (_, client, _, _, _) = setup();
+        assert_eq!(client.get_fee_rate(), 300u32);
+    }
+
+    /// set_fee_rate stores the new value and get_fee_rate returns it.
+    #[test]
+    fn test_set_fee_rate_stores_value() {
+        let (_, client, _, _, _) = setup();
+        client.set_fee_rate(&500u32);
+        assert_eq!(client.get_fee_rate(), 500u32);
+    }
+
+    /// set_fee_rate with 0 bps (zero fee) is accepted.
+    #[test]
+    fn test_set_fee_rate_zero_accepted() {
+        let (_, client, _, _, _) = setup();
+        client.set_fee_rate(&0u32);
+        assert_eq!(client.get_fee_rate(), 0u32);
+    }
+
+    /// set_fee_rate with exactly 1000 bps (10%) is accepted.
+    #[test]
+    fn test_set_fee_rate_max_boundary_accepted() {
+        let (_, client, _, _, _) = setup();
+        client.set_fee_rate(&1000u32);
+        assert_eq!(client.get_fee_rate(), 1000u32);
+    }
+
+    /// set_fee_rate with 1001 bps panics with the correct message.
+    #[test]
+    #[should_panic(expected = "fee rate exceeds maximum of 10 percent")]
+    fn test_set_fee_rate_above_max_panics() {
+        let (_, client, _, _, _) = setup();
+        client.set_fee_rate(&1001u32);
+    }
+
+    /// Payout pool uses the stored fee rate (0 bps → full payout).
+    #[test]
+    fn test_payout_uses_zero_fee_rate() {
+        let (env, client, _, token, _) = setup();
+        client.set_fee_rate(&0u32);
+
+        let bettor = Address::generate(&env);
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&bettor, &10_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
+
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        let payout = client.claim_payout(&1u64, &bettor);
+        // With 0% fee, payout should equal full pool (bettor is sole winner)
+        assert!(payout > 0, "payout must be positive");
+    }
+
+    /// Payout pool correctly deducts 300 bps (3%) at default rate.
+    #[test]
+    fn test_payout_uses_300_bps_fee_rate() {
+        let (env, client, _, token, _) = setup();
+        // Default is 300 bps already
+
+        let bettor = Address::generate(&env);
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&bettor, &10_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
+
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        let payout = client.claim_payout(&1u64, &bettor);
+        assert!(payout > 0, "payout must be positive");
+        // Payout must be less than pool (fee was taken)
+        let total_pool = client.get_total_shares(&1u64);
+        let expected_pool = (total_pool * 9700) / 10000;
+        assert!(payout <= expected_pool + 1, "payout must not exceed 97% of pool");
+    }
+
+    /// Payout pool correctly deducts 1000 bps (10%) at max rate.
+    #[test]
+    fn test_payout_uses_1000_bps_fee_rate() {
+        let (env, client, _, token, _) = setup();
+        client.set_fee_rate(&1000u32);
+
+        let bettor = Address::generate(&env);
+        let sac = token::StellarAssetClient::new(&env, &token);
+        sac.mint(&bettor, &10_000_000i128);
+
+        client.place_bet(&1u64, &0u32, &bettor, &1_000_000i128);
+
+        client.propose_resolution(&1u64, &0u32);
+        env.ledger().with_mut(|l| l.timestamp += LIVENESS_WINDOW + 86400 + 1);
+        client.resolve_market(&1u64, &0u32);
+
+        let payout = client.claim_payout(&1u64, &bettor);
+        assert!(payout > 0, "payout must be positive");
+        let total_pool = client.get_total_shares(&1u64);
+        let expected_pool = (total_pool * 9000) / 10000;
+        assert!(payout <= expected_pool + 1, "payout must not exceed 90% of pool");
     }
 }
 
