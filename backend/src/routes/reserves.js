@@ -1,77 +1,67 @@
+"use strict";
 const express = require("express");
 const router = express.Router();
-const { Horizon } = require("@stellar/stellar-sdk");
 const db = require("../db");
+const redis = require("../utils/redis");
 const logger = require("../utils/logger");
 
-const CACHE_TTL_MS = 60 * 1000; // 60 seconds
-let cache = { data: null, fetchedAt: 0 };
-
-const NETWORK = process.env.STELLAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
-const HORIZON_URL =
-  NETWORK === "mainnet"
-    ? "https://horizon.stellar.org"
-    : "https://horizon-testnet.stellar.org";
-const STELLAR_EXPERT_BASE =
-  NETWORK === "mainnet"
-    ? "https://stellar.expert/explorer/public/account"
-    : "https://stellar.expert/explorer/testnet/account";
-
-const server = new Horizon.Server(HORIZON_URL);
-
-async function fetchXLMBalance(contractAddress) {
-  try {
-    const account = await server.loadAccount(contractAddress);
-    const native = account.balances.find((b) => b.asset_type === "native");
-    return native ? native.balance : "0";
-  } catch (err) {
-    logger.warn({ contract_address: contractAddress, err: err.message }, "Failed to fetch XLM balance from Horizon");
-    return null;
-  }
-}
+const CACHE_KEY = "reserves:total";
+const CACHE_TTL_SECONDS = 60;
 
 // GET /api/reserves
-// Returns all active market contract addresses with their verified on-chain XLM balances.
-// Response is cached for 60 seconds to avoid Horizon rate limits.
+// Returns the total locked value (sum of total_pool) across all active markets.
+// Response is cached in Redis for 60 seconds.
 router.get("/", async (req, res) => {
-  const now = Date.now();
-
-  if (cache.data && now - cache.fetchedAt < CACHE_TTL_MS) {
-    logger.debug("Reserves served from cache");
-    return res.json({ ...cache.data, cached: true });
-  }
-
   try {
-    const result = await db.query(
-      "SELECT id, question, contract_address, resolved FROM markets WHERE contract_address IS NOT NULL ORDER BY created_at DESC"
-    );
+    const cached = await redis.get(CACHE_KEY);
+    if (cached) {
+      logger.debug("Reserves total served from cache");
+      return res.json({ ...JSON.parse(cached), cached: true });
+    }
 
-    const markets = await Promise.all(
-      result.rows.map(async (market) => {
-        const xlm_balance = await fetchXLMBalance(market.contract_address);
-        return {
-          market_id: market.id,
-          question: market.question,
-          contract_address: market.contract_address,
-          resolved: market.resolved,
-          xlm_balance: xlm_balance ?? "unavailable",
-          verification_link: `${STELLAR_EXPERT_BASE}/${market.contract_address}`,
-        };
-      })
+    const result = await db.query(
+      "SELECT COALESCE(SUM(total_pool::numeric), 0) AS total_locked FROM markets WHERE resolved = FALSE"
     );
 
     const payload = {
-      network: NETWORK,
-      fetched_at: new Date().toISOString(),
+      total_locked: result.rows[0].total_locked,
       cached: false,
-      markets,
     };
 
-    cache = { data: payload, fetchedAt: now };
-    logger.info({ markets_count: markets.length, network: NETWORK }, "Reserves fetched from Horizon");
+    await redis.set(CACHE_KEY, JSON.stringify(payload), "EX", CACHE_TTL_SECONDS);
+    logger.info({ total_locked: payload.total_locked }, "Reserves total fetched from DB");
     res.json(payload);
   } catch (err) {
-    logger.error({ err }, "Failed to fetch reserves");
+    logger.error({ err }, "Failed to fetch reserves total");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reserves/:marketId
+// Returns the locked pool balance for a specific market.
+router.get("/:marketId", async (req, res) => {
+  const { marketId } = req.params;
+
+  try {
+    const result = await db.query(
+      "SELECT id, total_pool, resolved FROM markets WHERE id = $1",
+      [marketId]
+    );
+
+    if (!result.rows.length) {
+      logger.warn({ market_id: marketId }, "Market not found for reserves lookup");
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    const market = result.rows[0];
+    logger.debug({ market_id: marketId }, "Market reserves fetched");
+    res.json({
+      market_id: market.id,
+      total_pool: market.total_pool,
+      resolved: market.resolved,
+    });
+  } catch (err) {
+    logger.error({ err, market_id: marketId }, "Failed to fetch market reserves");
     res.status(500).json({ error: err.message });
   }
 });
