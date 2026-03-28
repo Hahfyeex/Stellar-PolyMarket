@@ -1,20 +1,24 @@
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import type { Market } from "../types/market";
 import MarketResolutionTracker from "./MarketResolutionTracker";
 import Link from "next/link";
-import { trackEvent } from "../lib/firebase";
-import WhatIfSimulator from "./WhatIfSimulator";
 import { useBettingSlip } from "../context/BettingSlipContext";
 import { useToast } from "./ToastProvider";
 import PoolOwnershipChart from "./PoolOwnershipChart";
 import PayoutTooltip from "./PayoutTooltip";
+import PayoutTooltip from "./PayoutTooltip"; // Added missing PayoutTooltip import
 import { useFormPersistence } from "../hooks/useFormPersistence";
+import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { useTrustline } from "../hooks/useTrustline";
-import TrustlineModal from "./TrustlineModal";
+import { trackEvent } from "../lib/firebase";
+import type { Market } from "../types/market";
+import PoolOwnershipChart from "./PoolOwnershipChart";
+import ResolutionCenter from "./ResolutionCenter";
 import SlippageSettings from "./SlippageSettings";
 import SlippageWarningModal from "./SlippageWarningModal";
-import { useSlippageGuard } from "../hooks/useSlippageGuard";
+import Toast from "./Toast";
+import TrustlineModal from "./TrustlineModal";
+import WhatIfSimulator from "./WhatIfSimulator";
 import { useOptimisticBet } from "../hooks/useOptimisticBet";
 import OptimisticBetIndicator from "./OptimisticBetIndicator";
 import OddsTicker from "./OddsTicker";
@@ -29,7 +33,13 @@ interface Props {
   onRetry?: () => void;
 }
 
-export default function MarketCard({ market, walletAddress, onBetPlaced, isError = false, onRetry }: Props) {
+export default function MarketCard({
+  market,
+  walletAddress,
+  onBetPlaced,
+  isError = false,
+  onRetry,
+}: Props) {
   const router = useRouter();
   const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
 
@@ -52,15 +62,22 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
   } | null>(null);
 
   const { addBet } = useBettingSlip();
-  const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
-          checkAndRun, confirmTrustline, dismiss: dismissTrustline, retry: retryTrustline } = useTrustline();
+  const {
+    state: trustlineState,
+    pendingAsset,
+    errorMessage: trustlineError,
+    checkAndRun,
+    confirmTrustline,
+    dismiss: dismissTrustline,
+    retry: retryTrustline,
+  } = useTrustline();
   const { snapshotOdds, checkSlippage } = useSlippageGuard();
   const { submitBet: submitOptimisticBet, betsForMarket } = useOptimisticBet();
   const pendingBets = betsForMarket(market.id);
   const isExpired = new Date(market.end_date) <= new Date();
   const totalPool = parseFloat(market.total_pool);
   const outcomePool = totalPool / market.outcomes.length;
-  
+
   // Default odds for display in the ticker (until real per-outcome pool data is available)
   const defaultOdds = 100 / market.outcomes.length;
 
@@ -85,17 +102,52 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
     try {
       if (navigator.share) {
         await navigator.share(shareData);
-        trackEvent('share_market', { market_id: market.id, share_method: 'native' });
+        trackEvent("share_market", {
+          market_id: market.id,
+          share_method: "native_share_api",
+          market_question: market.question.substring(0, 50), // Truncate for privacy
+        });
       } else {
-        await navigator.clipboard.writeText(`${shareData.title}\n${shareData.url}`);
-        toastSuccess("Market link copied to clipboard!");
+        // Fallback: copy to clipboard
+        await navigator.clipboard.writeText(
+          `${shareData.title}\n${shareData.text}\n${shareData.url}`
+        );
+        trackEvent("share_market", {
+          market_id: market.id,
+          share_method: "clipboard",
+          market_question: market.question.substring(0, 50), // Truncate for privacy
+        });
+        setMessage("Market link copied to clipboard!");
+        setTimeout(() => setMessage(""), 3000);
       }
     } catch (err) {
-      toastError("Failed to share market link.");
-      console.error(err);
+      trackEvent("share_error", {
+        market_id: market.id,
+        error_message: err instanceof Error ? err.message.substring(0, 100) : "Unknown error",
+      });
     }
   };
 
+  async function placeBet() {
+    if (selectedOutcome === null || !amount || !walletAddress) return;
+
+    // Check slippage against current pool state before submitting
+    const check = checkSlippage(parseFloat(amount), outcomePool, totalPool, slippageTolerance);
+    if (check.exceeded) {
+      setSlippageWarning({
+        expectedPayout: check.expectedPayout,
+        currentPayout: check.currentPayout,
+      });
+      return;
+    }
+
+    // If this market uses a custom asset, run the trustline check first.
+    if (market.asset) {
+      await checkAndRun(market.asset, walletAddress, submitBet);
+    } else {
+      await submitBet();
+    }
+  }
 
   async function submitBet() {
     if (selectedOutcome === null || !amount || !walletAddress) return;
@@ -120,7 +172,6 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
       clearForm();
       onBetPlaced?.();
     }
-
   }
 
   const handlePlaceBetAction = async () => {
@@ -135,9 +186,12 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
     if (selectedOutcome === null || !amount || !walletAddress) return;
 
     const check = checkSlippage(parseFloat(amount), outcomePool, totalPool, slippageTolerance);
-    
+
     if (check.exceeded) {
-      setSlippageWarning({ expectedPayout: check.expectedPayout, currentPayout: check.currentPayout });
+      setSlippageWarning({
+        expectedPayout: check.expectedPayout,
+        currentPayout: check.currentPayout,
+      });
       return;
     }
 
@@ -171,17 +225,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
   }
 
   return (
-    <div 
-      ref={cardRef}
-      role="article"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-      aria-label={market.question}
-      className={`bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800 card-ripple hover:border-gray-700 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-        isPulsing ? (direction === "up" ? "pulse-green" : "pulse-red") : ""
-      }`}
-    >
-
+    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-4 border border-gray-800">
       <TrustlineModal
         state={trustlineState}
         asset={pendingAsset}
@@ -212,12 +256,31 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
               Resolved
             </span>
           )}
-          <button onClick={handleShareMarket} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 btn-press-scale transition-transform">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
-                <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
-              </svg>
+          <button
+            onClick={handleShareMarket}
+            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="w-4 h-4 text-gray-400"
+            >
+              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
+            </svg>
           </button>
-
+          {market.resolved ? (
+            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">
+              Resolved
+            </span>
+          ) : isExpired ? (
+            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">
+              Ended
+            </span>
+          ) : (
+            <span className="text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded-full">Live</span>
+          )}
         </div>
       </div>
 
@@ -226,7 +289,10 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
         &nbsp;·&nbsp;Ends: {new Date(market.end_date).toLocaleDateString()}
       </p>
 
-      <Link href={`/market/${market.id}`} className="text-blue-400 hover:text-blue-300 text-sm font-medium">
+      <Link
+        href={`/market/${market.id}`}
+        className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+      >
         View Details →
       </Link>
 
@@ -238,10 +304,14 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
             key={i}
             onClick={() => setSelectedOutcome(i)}
             disabled={market.resolved || isExpired}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 btn-press-scale
-              ${selectedOutcome === i ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}
-            `}
-
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
+              ${
+                market.resolved && market.winning_outcome === i
+                  ? "bg-green-600 text-white"
+                  : selectedOutcome === i
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
           >
             <span>{outcome}</span>
             <OddsTicker value={defaultOdds} size="sm" />
@@ -266,12 +336,17 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
             >
               {loading ? "Placing..." : "Bet"}
             </button>
-
           </div>
 
           <div className="flex items-center justify-between gap-3">
             <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
-            <button onClick={() => { clearForm(); setMessage(""); }} className="text-xs text-gray-500 hover:text-red-400">
+            <button
+              onClick={() => {
+                clearForm();
+                setMessage("");
+              }}
+              className="text-xs text-gray-500 hover:text-red-400"
+            >
               Clear form
             </button>
           </div>
@@ -288,19 +363,31 @@ export default function MarketCard({ market, walletAddress, onBetPlaced, isError
         </div>
       )}
 
-      {message && <p className={`text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>{message}</p>}
+      {message && (
+        <p className={`text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+          {message}
+        </p>
+      )}
 
       {/* Optimistic bet status indicators */}
       <OptimisticBetIndicator bets={pendingBets} />
 
-      {/* Queue-full toast (legacy removal) */}
-
+      {/* Queue-full toast */}
+      {showQueueFullToast && (
+        <Toast
+          message="Betting slip is full."
+          type="warning"
+          onDismiss={() => setShowQueueFullToast(false)}
+        />
+      )}
 
       {!market.resolved && !isExpired && selectedOutcome !== null && (
         <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
 
-      <MarketResolutionTracker market={market} compact />
+      <ResolutionCenter market={market} compact />
+
+      <ResolutionCenter market={market} compact />
     </div>
   );
 }

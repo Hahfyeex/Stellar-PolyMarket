@@ -71,6 +71,16 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
 
   async function submitBet() {
     if (selectedOutcome === null || !amount || !walletAddress) return;
+    const xlm = parseFloat(amount);
+    if (!isFinite(xlm) || xlm <= 0) {
+      setMessage("Error: Enter a valid positive amount");
+      return;
+    }
+    const stroops = Math.round(xlm * 1e7);
+    if (!Number.isInteger(stroops) || stroops <= 0) {
+      setMessage("Error: Amount too small");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -80,7 +90,7 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
         body: JSON.stringify({
           marketId: market.id,
           outcomeIndex: selectedOutcome,
-          amount: parseFloat(amount),
+          amount: stroops.toString(),
           walletAddress,
         }),
       });
@@ -95,11 +105,6 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
       setLoading(false);
     }
   }
-
-  const currentProb =
-    selectedOutcome !== null
-      ? ((1 / market.outcomes.length) * 100).toFixed(0)
-      : null;
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-4 sticky top-4">
@@ -137,12 +142,14 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
                   isWinner
                     ? "bg-green-900/40 border-green-600 text-green-300"
                     : selectedOutcome === i
-                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
-                    : "bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500"
+                      ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                      : "bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500"
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 <span>{outcome}</span>
-                <span className={`text-xs font-bold ${isWinner ? "text-green-400" : "text-gray-400"}`}>
+                <span
+                  className={`text-xs font-bold ${isWinner ? "text-green-400" : "text-gray-400"}`}
+                >
                   {prob}%
                 </span>
               </button>
@@ -206,13 +213,15 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
                 title="Add to betting slip"
                 onClick={() => {
                   if (selectedOutcome === null || !amount) return;
+                  const xlm = parseFloat(amount);
+                  if (!isFinite(xlm) || xlm <= 0) return;
                   addBet(
                     {
                       marketId: market.id,
                       marketTitle: market.question,
                       outcomeIndex: selectedOutcome,
                       outcomeName: market.outcomes[selectedOutcome],
-                      amount: parseFloat(amount),
+                      amount: Math.round(xlm * 1e7),
                     },
                     () => setShowQueueFullToast(true)
                   );
@@ -233,7 +242,9 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
           )}
 
           {message && (
-            <p className={`text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+            <p
+              className={`text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}
+            >
               {message}
             </p>
           )}
