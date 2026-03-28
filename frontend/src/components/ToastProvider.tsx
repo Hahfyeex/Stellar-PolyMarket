@@ -45,11 +45,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast, success, error, warning, info }}>
       {children}
-      <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+      {/* aria-live="polite" so screen readers announce new toasts without interrupting */}
+      <div
+        aria-live="polite"
+        aria-atomic="false"
+        aria-label="Notifications"
+        className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none"
+      >
         <AnimatePresence>
           {toasts.map((t) => (
             <motion.div
               key={t.id}
+              role="status"
               initial={{ x: 100, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 100, opacity: 0 }}
@@ -61,7 +68,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               }`}
             >
               <div className="flex-1 text-sm font-medium">{t.message}</div>
-              <button onClick={() => removeToast(t.id)} className="opacity-60 hover:opacity-100">✕</button>
+              <button
+                onClick={() => removeToast(t.id)}
+                aria-label="Dismiss notification"
+                className="opacity-60 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-current rounded"
+              >
+                ✕
+              </button>
             </motion.div>
           ))}
         </AnimatePresence>

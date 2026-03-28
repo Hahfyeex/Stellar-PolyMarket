@@ -421,6 +421,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
 
   const isExpired = new Date(market.end_date) <= new Date();
   const canBet = !market.resolved && !isExpired && publicKey;
+  const isPending = betMutation.isPending;
 
   return (
     <div className="bg-gray-900 rounded-xl p-5 border border-gray-800 space-y-4">
@@ -430,12 +431,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={() => setSelectedOutcome(0)}
-          disabled={!canBet}
+          disabled={!canBet || isPending}
           className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 0
               ? "bg-green-600 ring-2 ring-green-400 shadow-lg shadow-green-900/30"
               : "bg-gray-800 hover:bg-gray-700"
-          } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+          } ${!canBet || isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
 
           <div className="text-gray-400 text-xs mb-1">YES</div>
@@ -450,12 +451,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
 
         <button
           onClick={() => setSelectedOutcome(1)}
-          disabled={!canBet}
+          disabled={!canBet || isPending}
           className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 1
               ? "bg-red-600 ring-2 ring-red-400 shadow-lg shadow-red-900/30"
               : "bg-gray-800 hover:bg-gray-700"
-          } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+          } ${!canBet || isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
 
           <div className="text-gray-400 text-xs mb-1">NO</div>
@@ -478,7 +479,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            disabled={!canBet}
+            disabled={!canBet || isPending}
             className="flex-1 bg-gray-800 text-white rounded-lg px-4 py-3 text-lg outline-none border border-gray-700 focus:border-blue-500 disabled:opacity-50"
             min="0"
             step="0.01"
@@ -508,13 +509,14 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       {publicKey ? (
         <button
           onClick={handleBet}
-          disabled={!canBet || selectedOutcome === null || !amount || betMutation.isPending}
+          disabled={!canBet || selectedOutcome === null || !amount || isPending}
           className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
 
-          {betMutation.isPending ? (
+          {isPending ? (
             <span className="flex items-center justify-center gap-2">
-              <span className="animate-spin">⟳</span> Placing Bet...
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Confirming...
             </span>
           ) : (
             "Place Bet"
@@ -580,6 +582,9 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
 
   const market = marketData?.market ?? DEMO_MARKET;
   const bets = marketData?.bets ?? DEMO_BETS;
+  const outcomeDataAvailable = Array.isArray(market.outcomes) && market.outcomes.length > 0;
+  const outcomes = outcomeDataAvailable ? market.outcomes : ["Yes", "No"];
+  const marketWithOutcomes = { ...market, outcomes };
   const positions = calculatePositions(bets);
   const odds = {
     yes: calculateOdds(bets, 0),
@@ -704,19 +709,25 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
               </div>
             </div>
 
+            {!outcomeDataAvailable && (
+              <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 mb-6">
+                <p className="text-gray-400">Outcome data unavailable</p>
+              </div>
+            )}
+
             {/* Tab Content */}
             {activeTab === "about" && (
               <AboutTab market={market} poolSize={poolData?.pool_size ?? market.total_pool} />
             )}
             {activeTab === "positions" && (
-              <PositionsTab positions={positions} outcomes={market.outcomes} />
+              <PositionsTab positions={positions} outcomes={outcomes} />
             )}
-            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={market.outcomes} />}
+            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={outcomes} />}
 
             {/* Mobile Sticky Betting Panel */}
             <div className="fixed bottom-0 left-0 right-0 bg-gray-950 border-t border-gray-800 p-4 md:static md:mt-6 md:bg-transparent md:border-0 md:p-0 z-20">
               <div className="max-w-4xl mx-auto">
-                <BettingPanel market={market} odds={odds} onBetPlaced={handleBetPlaced} />
+                <BettingPanel market={marketWithOutcomes} odds={odds} onBetPlaced={handleBetPlaced} />
               </div>
             </div>
           </>
@@ -732,7 +743,11 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
 
       {/* Mobile layout */}
       <div className="block md:hidden">
-        <MobileShell activeMarket={market} walletAddress={publicKey} onBetPlaced={handleBetPlaced}>
+        <MobileShell
+          activeMarket={marketWithOutcomes}
+          walletAddress={publicKey}
+          onBetPlaced={handleBetPlaced}
+        >
           {pageContent}
         </MobileShell>
       </div>

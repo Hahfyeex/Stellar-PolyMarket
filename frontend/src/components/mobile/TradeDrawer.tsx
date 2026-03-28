@@ -11,10 +11,6 @@ import SlippageWarningModal from "../SlippageWarningModal";
 import { useSlippageCheck } from "../../hooks/useSlippageCheck";
 import { toStroops, calcPayoutStroops, stroopsToXlm } from "../../utils/slippageCalc";
 
-
-
-
-
 interface Props {
   market: Market | null;
   open: boolean;
@@ -70,6 +66,16 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   /** Submit the bet to the API — called after slippage check passes */
   async function submitBet() {
     if (selectedOutcome === null || !amount || !walletAddress || !market) return;
+    const xlm = parseFloat(amount);
+    if (!isFinite(xlm) || xlm <= 0) {
+      setMessage("Error: Enter a valid positive amount");
+      return;
+    }
+    const stroops = Math.round(xlm * 1e7);
+    if (!Number.isInteger(stroops) || stroops <= 0) {
+      setMessage("Error: Amount too small");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -79,7 +85,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
         body: JSON.stringify({
           marketId: market.id,
           outcomeIndex: selectedOutcome,
-          amount: parseFloat(amount),
+          amount: stroops.toString(),
           walletAddress,
         }),
       });
@@ -89,7 +95,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
       trackEvent("bet_placed", {
         market_id: market.id,
         outcome_index: selectedOutcome,
-        amount: parseFloat(amount),
+        amount: stroops,
         outcome_name: market.outcomes[selectedOutcome],
       });
       clearForm();
@@ -99,7 +105,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
       trackEvent("bet_error", {
         market_id: market?.id,
         error_message: err.message.substring(0, 100),
-        amount: parseFloat(amount) || 0,
+        amount: stroops,
       });
     } finally {
       setLoading(false);
@@ -109,10 +115,10 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   // Reset drag when drawer opens/closes
   useEffect(() => {
     if (!open) setDragY(0);
-    
+
     // Track begin_checkout event when bet modal opens
     if (open && market) {
-      trackEvent('begin_checkout', {
+      trackEvent("begin_checkout", {
         market_id: market.id,
         market_question: market.question.substring(0, 50), // Truncate for privacy
         total_pool: parseFloat(market.total_pool),
@@ -224,18 +230,20 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               </p>
 
               {/* Outcome buttons */}
-              <div className="flex gap-3 mb-5">
+              <div className="flex gap-3 mb-5" role="group" aria-label="Select outcome">
                 {market.outcomes.map((outcome, i) => (
                   <button
                     key={i}
                     onClick={() => setSelectedOutcome(i)}
                     disabled={market.resolved || isExpired}
+                    aria-pressed={selectedOutcome === i}
                     className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-colors
-                      ${market.resolved && market.winning_outcome === i
-                        ? "bg-green-600 text-white"
-                        : selectedOutcome === i
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                      ${
+                        market.resolved && market.winning_outcome === i
+                          ? "bg-green-600 text-white"
+                          : selectedOutcome === i
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-800 text-gray-300 hover:bg-gray-700"
                       }`}
                   >
                     {outcome}
@@ -247,16 +255,22 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               {walletAddress ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-3">
+                    <label htmlFor="trade-drawer-amount" className="sr-only">
+                      Stake amount in XLM
+                    </label>
                     <input
+                      id="trade-drawer-amount"
                       type="number"
                       placeholder="Amount (XLM)"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
+                      aria-label="Stake amount in XLM"
                     />
                     <button
                       onClick={placeBet}
                       disabled={loading || checking || selectedOutcome === null || !amount}
+                      aria-label="Place bet"
                       className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
                     >
                       {loading || checking ? "..." : "Bet"}
@@ -271,13 +285,13 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">
-                    <SlippageSettings
-                      value={slippageTolerance}
-                      onChange={setSlippageTolerance}
-                    />
+                    <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
                     <button
                       data-testid="clear-form"
-                      onClick={() => { clearForm(); setMessage(""); }}
+                      onClick={() => {
+                        clearForm();
+                        setMessage("");
+                      }}
                       className="text-xs text-gray-500 hover:text-red-400 transition-colors"
                     >
                       Clear form
@@ -291,7 +305,9 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               )}
 
               {message && (
-                <p className={`text-sm mt-3 ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+                <p
+                  className={`text-sm mt-3 ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}
+                >
                   {message}
                 </p>
               )}
