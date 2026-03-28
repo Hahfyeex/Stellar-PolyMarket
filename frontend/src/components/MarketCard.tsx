@@ -1,11 +1,14 @@
-import { useState, useEffect } from "react";
-import Link from "next/link"; // Added missing Link import
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import type { Market } from "../types/market";
+import MarketResolutionTracker from "./MarketResolutionTracker";
+import Link from "next/link";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
 import { useBettingSlip } from "../context/BettingSlipContext";
-import Toast from "./Toast";
+import { useToast } from "./ToastProvider";
 import PoolOwnershipChart from "./PoolOwnershipChart";
-import PayoutTooltip from "./PayoutTooltip"; // Added missing PayoutTooltip import
+import PayoutTooltip from "./PayoutTooltip";
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useTrustline } from "../hooks/useTrustline";
 import TrustlineModal from "./TrustlineModal";
@@ -14,26 +17,22 @@ import SlippageWarningModal from "./SlippageWarningModal";
 import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { useOptimisticBet } from "../hooks/useOptimisticBet";
 import OptimisticBetIndicator from "./OptimisticBetIndicator";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-  asset?: { code: string; issuer: string };
-}
+import OddsTicker from "./OddsTicker";
+import { useVolatilityPulse } from "../hooks/useVolatilityPulse";
 
 interface Props {
   market: Market;
   walletAddress: string | null;
   onBetPlaced?: () => void;
   showFullCard?: boolean;
+  isError?: boolean;
+  onRetry?: () => void;
 }
 
-export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
+export default function MarketCard({ market, walletAddress, onBetPlaced, isError = false, onRetry }: Props) {
+  const router = useRouter();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
+
   const {
     outcomeIndex: selectedOutcome,
     amount,
@@ -61,6 +60,13 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const isExpired = new Date(market.end_date) <= new Date();
   const totalPool = parseFloat(market.total_pool);
   const outcomePool = totalPool / market.outcomes.length;
+  
+  // Default odds for display in the ticker (until real per-outcome pool data is available)
+  const defaultOdds = 100 / market.outcomes.length;
+
+  // Volatility pulse animation state
+  const { isPulsing, direction } = useVolatilityPulse(defaultOdds);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   // Snapshot odds whenever the user selects an outcome or changes amount
   useEffect(() => {
@@ -82,13 +88,14 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         trackEvent('share_market', { market_id: market.id, share_method: 'native' });
       } else {
         await navigator.clipboard.writeText(`${shareData.title}\n${shareData.url}`);
-        setMessage("Market link copied!");
-        setTimeout(() => setMessage(""), 3000);
+        toastSuccess("Market link copied to clipboard!");
       }
     } catch (err) {
+      toastError("Failed to share market link.");
       console.error(err);
     }
   };
+
 
   async function submitBet() {
     if (selectedOutcome === null || !amount || !walletAddress) return;
@@ -104,15 +111,16 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         amount: parseFloat(amount),
         walletAddress,
       },
-      (reason) => setMessage(`Error: ${reason}`)
+      (reason) => toastError(`Bet failed: ${reason}`)
     );
 
     setLoading(false);
     if (success) {
-      setMessage("Bet placed successfully!");
+      toastSuccess("Bet placed successfully!");
       clearForm();
       onBetPlaced?.();
     }
+
   }
 
   const handlePlaceBetAction = async () => {
@@ -136,8 +144,44 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     await handlePlaceBetAction();
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      router.push(`/market/${market.id}`);
+    }
+  };
+
+  if (isError) {
+    return (
+      <div
+        role="article"
+        className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-red-800 items-center justify-center min-h-[200px]"
+      >
+        <p className="text-red-400 text-sm font-medium">Failed to load market</p>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800">
+    <div 
+      ref={cardRef}
+      role="article"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      aria-label={market.question}
+      className={`bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800 card-ripple hover:border-gray-700 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+        isPulsing ? (direction === "up" ? "pulse-green" : "pulse-red") : ""
+      }`}
+    >
+
       <TrustlineModal
         state={trustlineState}
         asset={pendingAsset}
@@ -162,11 +206,19 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
       <div className="flex justify-between items-start">
         <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
-        <button onClick={handleShareMarket} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
-              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
-            </svg>
-        </button>
+        <div className="flex items-center gap-2">
+          {market.resolved && (
+            <span className="badge-fade-in inline-block px-2 py-1 rounded-full text-xs font-medium bg-green-800 text-green-300">
+              Resolved
+            </span>
+          )}
+          <button onClick={handleShareMarket} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 btn-press-scale transition-transform">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
+                <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
+              </svg>
+          </button>
+
+        </div>
       </div>
 
       <p className="text-gray-400 text-sm">
@@ -186,11 +238,13 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             key={i}
             onClick={() => setSelectedOutcome(i)}
             disabled={market.resolved || isExpired}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-              ${selectedOutcome === i ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-300"}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 btn-press-scale
+              ${selectedOutcome === i ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}
             `}
+
           >
-            {outcome}
+            <span>{outcome}</span>
+            <OddsTicker value={defaultOdds} size="sm" />
           </button>
         ))}
       </div>
@@ -208,10 +262,11 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             <button
               onClick={placeBet}
               disabled={loading || selectedOutcome === null || !amount}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold btn-press-scale shadow-lg shadow-blue-900/30"
             >
               {loading ? "Placing..." : "Bet"}
             </button>
+
           </div>
 
           <div className="flex items-center justify-between gap-3">
@@ -238,14 +293,14 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       {/* Optimistic bet status indicators */}
       <OptimisticBetIndicator bets={pendingBets} />
 
-      {/* Queue-full toast */}
-      {showQueueFullToast && (
-        <Toast message="Betting slip is full." type="warning" onDismiss={() => setShowQueueFullToast(false)} />
-      )}
+      {/* Queue-full toast (legacy removal) */}
+
 
       {!market.resolved && !isExpired && selectedOutcome !== null && (
         <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
+
+      <MarketResolutionTracker market={market} compact />
     </div>
   );
 }

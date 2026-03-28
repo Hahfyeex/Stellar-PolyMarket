@@ -18,7 +18,7 @@ export type SortKey = "volume" | "end_date" | "newest";
 
 export interface SearchFilters {
   query: string;
-  /** Single category (legacy — kept for backward compat with existing URL param) */
+  /** Single category (legacy ï¿½ kept for backward compat with existing URL param) */
   category: string;
   /** Multi-select categories for chip filter; empty array = no filter */
   categories: string[];
@@ -32,7 +32,7 @@ function createFuse(markets: Market[]) {
       { name: "question", weight: 0.8 },
       { name: "category", weight: 0.2 },
     ],
-    threshold: 0.4,
+    threshold: 0.3,
     includeScore: true,
     minMatchCharLength: 2,
   });

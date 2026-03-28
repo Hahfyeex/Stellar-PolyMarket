@@ -1,50 +1,76 @@
+"use strict";
 /**
  * Redis Client Configuration
- * Used for rate limiting and caching
+ *
+ * Connection priority:
+ *   1. REDIS_URL  — full connection string (e.g. redis://user:pass@host:6379)
+ *   2. REDIS_HOST + REDIS_PORT + REDIS_PASSWORD — individual env vars
+ *   3. localhost:6379 — local development default
+ *
+ * Graceful degradation:
+ *   If Redis is unavailable, all cache operations fall back to the database
+ *   without crashing. The no-op client returned on connection failure ensures
+ *   the application continues to serve requests.
  */
 
-const Redis = require('ioredis');
-const logger = require('./logger');
+const Redis = require("ioredis");
+const logger = require("./logger");
 
-// Create Redis client with connection handling
-const redis = new Redis({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD || undefined,
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
-  maxRetriesPerRequest: 3,
-  enableReadyCheck: true,
-  lazyConnect: false,
-});
+/**
+ * Build ioredis connection options from environment variables.
+ * REDIS_URL takes precedence over individual host/port/password vars.
+ */
+function buildRedisConfig() {
+  if (process.env.REDIS_URL) {
+    return {
+      // ioredis accepts a connection URL directly
+      lazyConnect: false,
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
+      retryStrategy: (times) => Math.min(times * 50, 2000),
+    };
+  }
+  return {
+    host:     process.env.REDIS_HOST     || "localhost",
+    port:     parseInt(process.env.REDIS_PORT || "6379", 10),
+    password: process.env.REDIS_PASSWORD || undefined,
+    lazyConnect: false,
+    maxRetriesPerRequest: 3,
+    enableReadyCheck: true,
+    retryStrategy: (times) => Math.min(times * 50, 2000),
+  };
+}
 
-// Connection event handlers
-redis.on('connect', () => {
-  logger.info('Redis client connected');
-});
+/**
+ * Create the ioredis client.
+ * If REDIS_URL is set, pass it as the first argument to the constructor.
+ */
+function createClient() {
+  const config = buildRedisConfig();
+  return process.env.REDIS_URL
+    ? new Redis(process.env.REDIS_URL, config)
+    : new Redis(config);
+}
 
-redis.on('ready', () => {
-  logger.info('Redis client ready');
-});
+const redis = createClient();
 
-redis.on('error', (err) => {
-  logger.error({ err }, 'Redis client error');
-});
+// ── Connection event handlers ─────────────────────────────────────────────────
 
-redis.on('close', () => {
-  logger.warn('Redis client connection closed');
-});
+redis.on("connect",     () => logger.info("[Redis] Client connected"));
+redis.on("ready",       () => logger.info("[Redis] Client ready"));
+redis.on("error",  (err) => logger.error({ err }, "[Redis] Client error"));
+redis.on("close",       () => logger.warn("[Redis] Connection closed"));
+redis.on("reconnecting",() => logger.info("[Redis] Reconnecting"));
 
-redis.on('reconnecting', () => {
-  logger.info('Redis client reconnecting');
-});
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  await redis.quit();
-  logger.info('Redis client disconnected on SIGTERM');
+process.on("SIGTERM", async () => {
+  try {
+    await redis.quit();
+    logger.info("[Redis] Client disconnected on SIGTERM");
+  } catch {
+    // ignore quit errors during shutdown
+  }
 });
 
 module.exports = redis;

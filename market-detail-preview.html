@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en" style="background:#030712;color:#fff;font-family:'Inter',system-ui,sans-serif;">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Market Detail — Stella Polymarket</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#030712;color:#f9fafb;min-height:100vh}
+a{color:#60a5fa;text-decoration:none}
+/* Nav */
+.nav{display:flex;align-items:center;gap:12px;padding:14px 24px;border-bottom:1px solid #1f2937;position:sticky;top:0;z-index:30;background:rgba(3,7,18,.9);backdrop-filter:blur(8px)}
+.nav-brand{color:#60a5fa;font-weight:700;font-size:14px}
+.nav-sep{color:#374151}
+.nav-crumb{color:#9ca3af;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px}
+.back-btn{background:none;border:none;color:#9ca3af;cursor:pointer;display:flex;align-items:center}
+.back-btn:hover{color:#fff}
+/* Layout */
+.page{max-width:1280px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:24px}
+/* Hero */
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px}
+.badge-live{background:#1e3a8a;color:#93c5fd}
+.badge-resolved{background:#14532d;color:#86efac}
+.hero-title{font-size:clamp(18px,3vw,28px);font-weight:700;line-height:1.3;margin-top:8px}
+.hero-desc{color:#9ca3af;font-size:13px;line-height:1.6;max-width:720px;margin-top:6px}
+/* Main grid */
+.main-grid{display:grid;grid-template-columns:1fr 320px;gap:24px}
+@media(max-width:900px){.main-grid{grid-template-columns:1fr}}
+.left-col{display:flex;flex-direction:column;gap:20px}
+/* Cards */
+.card{background:#111827;border:1px solid #1f2937;border-radius:14px;padding:20px}
+.card-title{font-size:14px;font-weight:600;color:#fff;margin-bottom:14px}
+/* Chart */
+.chart-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.range-btns{display:flex;gap:4px}
+.range-btn{background:#1f2937;border:none;color:#9ca3af;font-size:11px;font-weight:500;padding:5px 10px;border-radius:8px;cursor:pointer;transition:.15s}
+.range-btn.active,.range-btn:hover{background:#2563eb;color:#fff}
+.chart-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x}
+/* Price tiles */
+.price-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}
+.price-tile{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:12px;text-align:center}
+.price-tile.winner{border-color:#16a34a}
+.tile-label{font-size:11px;color:#9ca3af;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile-value{font-size:26px;font-weight:700;color:#fff}
+.tile-value.green{color:#4ade80}
+.tile-value.blue{color:#60a5fa}
+.tile-sub{font-size:11px;color:#6b7280;margin-top:2px}
+/* Sentiment */
+.sentiment-bar{display:flex;height:12px;border-radius:999px;overflow:hidden;gap:1px;margin:10px 0}
+.sentiment-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.legend-item{display:flex;align-items:center;gap:6px;background:#1f2937;border-radius:8px;padding:6px 10px;font-size:11px}
+.legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.legend-name{color:#d1d5db}
+.legend-pct{font-weight:700}
+.sentiment-note{font-size:11px;color:#6b7280;margin-top:8px}
+/* Pool pie placeholder */
+.pie-placeholder{display:flex;align-items:center;justify-content:center;height:180px;position:relative}
+/* Comments */
+.comment-input-wrap{margin-bottom:14px}
+.comment-input{width:100%;background:#1f2937;color:#fff;border:1px solid #374151;border-radius:10px;padding:10px 12px;font-size:13px;resize:none;outline:none;font-family:inherit}
+.comment-input:focus{border-color:#3b82f6}
+.comment-actions{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+.char-count{font-size:11px;color:#6b7280}
+.btn-post{background:#2563eb;color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer}
+.btn-post:hover{background:#1d4ed8}
+.comment-list{display:flex;flex-direction:column;gap:10px}
+.comment-item{background:#1f2937;border:1px solid #374151;border-radius:10px;padding:12px}
+.comment-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#a855f7);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.comment-wallet{font-size:12px;font-weight:500;color:#fff}
+.comment-time{font-size:11px;color:#6b7280}
+.comment-text{font-size:13px;color:#d1d5db;line-height:1.5}
+/* Rules */
+.rules-text{font-size:13px;color:#9ca3af;line-height:1.6}
+.truth-label{font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-top:12px;margin-bottom:6px}
+.truth-link{display:inline-flex;align-items:center;gap:5px;color:#60a5fa;font-size:13px}
+.source-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.source-tag{font-size:11px;background:#1f2937;color:#d1d5db;padding:4px 10px;border-radius:999px;border:1px solid #374151}
+/* Trade modal */
+.trade-card{background:#111827;border:1px solid #1f2937;border-radius:14px;padding:20px;position:sticky;top:72px;display:flex;flex-direction:column;gap:14px}
+.trade-header{display:flex;align-items:center;justify-content:space-between}
+.trade-title{font-size:15px;font-weight:600}
+.outcome-list{display:flex;flex-direction:column;gap:8px}
+.outcome-btn{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:12px;border:1px solid #374151;background:#1f2937;color:#d1d5db;font-size:13px;font-weight:500;cursor:pointer;transition:.15s;width:100%;text-align:left}
+.outcome-btn:hover{border-color:#6b7280}
+.outcome-btn.selected{background:rgba(37,99,235,.15);border-color:#3b82f6;color:#93c5fd}
+.outcome-pct{font-size:11px;font-weight:700;color:#9ca3af}
+.outcome-btn.selected .outcome-pct{color:#60a5fa}
+.input-label{font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+.amount-input{width:100%;background:#1f2937;color:#fff;border:1px solid #374151;border-radius:10px;padding:10px 12px;font-size:14px;outline:none;font-family:inherit}
+.amount-input:focus{border-color:#3b82f6}
+.quick-fills{display:flex;gap:6px;margin-top:6px}
+.quick-btn{flex:1;background:#1f2937;border:1px solid #374151;color:#9ca3af;font-size:11px;padding:6px;border-radius:8px;cursor:pointer;transition:.15s}
+.quick-btn:hover{background:#374151;color:#fff}
+.slippage-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#9ca3af}
+.slippage-select{background:#1f2937;color:#fff;border:1px solid #374151;border-radius:6px;padding:4px 8px;font-size:11px;outline:none}
+.action-row{display:flex;gap:8px}
+.btn-bet{flex:1;background:#2563eb;color:#fff;border:none;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;transition:.15s}
+.btn-bet:hover{background:#1d4ed8}
+.btn-slip{background:#374151;color:#fff;border:none;border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+.btn-slip:hover{background:#4b5563}
+.simulator{background:#1f2937;border:1px solid #374151;border-radius:10px;overflow:hidden}
+.sim-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#1f2937;border:none;color:#d1d5db;font-size:12px;font-weight:600;cursor:pointer}
+.sim-body{padding:12px;display:flex;flex-direction:column;gap:6px}
+.sim-row{display:flex;justify-content:space-between;font-size:12px}
+.sim-label{color:#9ca3af}
+.sim-value{font-weight:600;color:#4ade80}
+/* Related markets */
+.carousel{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.carousel::-webkit-scrollbar{display:none}
+.carousel-card{flex-shrink:0;width:220px;background:#111827;border:1px solid #1f2937;border-radius:12px;padding:14px;scroll-snap-align:start;transition:.15s;cursor:pointer}
+.carousel-card:hover{border-color:rgba(37,99,235,.5)}
+.carousel-q{font-size:13px;font-weight:500;color:#fff;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:8px}
+.carousel-meta{display:flex;justify-content:space-between;font-size:11px;color:#9ca3af}
+.carousel-pool{color:#60a5fa;font-weight:500}
+/* Section divider */
+.divider{border:none;border-top:1px solid #1f2937;margin:4px 0}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <button class="back-btn" onclick="history.back()">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+  </button>
+  <span class="nav-brand">Stella Polymarket</span>
+  <span class="nav-sep">/</span>
+  <span class="nav-crumb">Will Bitcoin reach $100k before 2027?</span>
+</nav>
+
+<div class="page">
+
+  <!-- HERO -->
+  <div>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px">
+      <span class="badge badge-live">● Live</span>
+      <span style="font-size:12px;color:#6b7280">273d remaining · Ends Dec 31, 2026</span>
+    </div>
+    <h1 class="hero-title">Will Bitcoin reach $100k before 2027?</h1>
+    <p class="hero-desc">Resolves YES if Bitcoin (BTC) trades at or above $100,000 USD on any major exchange (Coinbase, Binance, Kraken) before January 1, 2027.</p>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="main-grid">
+
+    <!-- LEFT COLUMN -->
+    <div class="left-col">
+
+      <!-- 1. PROBABILITY CHART -->
+      <div class="card">
+        <div class="chart-header">
+          <span style="font-size:14px;font-weight:600">Probability Over Time</span>
+          <div class="range-btns">
+            <button class="range-btn" onclick="setRange('1H',this)">1H</button>
+            <button class="range-btn" onclick="setRange('6H',this)">6H</button>
+            <button class="range-btn active" onclick="setRange('24H',this)">24H</button>
+            <button class="range-btn" onclick="setRange('7D',this)">7D</button>
+            <button class="range-btn" onclick="setRange('ALL',this)">ALL</button>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="probChart" height="260" style="min-width:320px"></canvas>
+        </div>
+      </div>
+
+      <!-- 2. PRICE TILES -->
+      <div class="price-grid">
+        <div class="price-tile">
+          <div class="tile-label">Yes</div>
+          <div class="tile-value">62%</div>
+          <div class="tile-sub">2,604 XLM</div>
+        </div>
+        <div class="price-tile">
+          <div class="tile-label">No</div>
+          <div class="tile-value">38%</div>
+          <div class="tile-sub">1,596 XLM</div>
+        </div>
+        <div class="price-tile">
+          <div class="tile-label">Total Pool</div>
+          <div class="tile-value blue">4,200</div>
+          <div class="tile-sub">XLM</div>
+        </div>
+      </div>
+
+      <!-- 3. POOL OWNERSHIP -->
+      <div class="card">
+        <div class="card-title">Pool Ownership</div>
+        <div class="pie-placeholder">
+          <canvas id="pieChart" width="180" height="180"></canvas>
+          <div style="position:absolute;right:20px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:11px"><span style="width:10px;height:10px;border-radius:50%;background:#3b82f6;display:inline-block"></span><span style="color:#d1d5db">GABC…X12</span><span style="color:#60a5fa;font-weight:700">35.2%</span></div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:11px"><span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block"></span><span style="color:#d1d5db">GDEF…B34</span><span style="color:#22c55e;font-weight:700">24.8%</span></div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:11px"><span style="width:10px;height:10px;border-radius:50%;background:#a855f7;display:inline-block"></span><span style="color:#d1d5db">GHIJ…C56</span><span style="color:#a855f7;font-weight:700">18.1%</span></div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:11px"><span style="width:10px;height:10px;border-radius:50%;background:#f59e0b;display:inline-block"></span><span style="color:#d1d5db">Others</span><span style="color:#f59e0b;font-weight:700">21.9%</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. SOCIAL SENTIMENT -->
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-size:14px;font-weight:600">Social Sentiment</span>
+          <span style="font-size:11px;color:#6b7280">Community lean</span>
+        </div>
+        <div class="sentiment-bar">
+          <div style="width:62%;background:#3b82f6;transition:.5s"></div>
+          <div style="width:38%;background:#22c55e;transition:.5s"></div>
+        </div>
+        <div class="sentiment-legend">
+          <div class="legend-item">
+            <span class="legend-dot" style="background:#3b82f6"></span>
+            <span class="legend-name">Yes</span>
+            <span class="legend-pct" style="color:#60a5fa">62%</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background:#22c55e"></span>
+            <span class="legend-name">No</span>
+            <span class="legend-pct" style="color:#4ade80">38%</span>
+          </div>
+        </div>
+        <p class="sentiment-note">Community currently leans <span style="color:#60a5fa;font-weight:600">Yes</span> · 2,604 XLM in pool</p>
+      </div>
+
+      <!-- 5. COMMENTS -->
+      <div class="card">
+        <div class="card-title">Discussion</div>
+        <div class="comment-input-wrap">
+          <textarea class="comment-input" rows="3" placeholder="Share your thoughts on this market..." maxlength="500" id="commentInput" oninput="document.getElementById('charCount').textContent=this.value.length+'/500'"></textarea>
+          <div class="comment-actions">
+            <span class="char-count" id="charCount">0/500</span>
+            <button class="btn-post" onclick="postComment()">Post Comment</button>
+          </div>
+        </div>
+        <div class="comment-list" id="commentList">
+          <div class="comment-item">
+            <div class="comment-meta">
+              <div class="avatar">GA</div>
+              <div><div class="comment-wallet">GABC…X12</div><div class="comment-time">2h ago</div></div>
+            </div>
+            <p class="comment-text">BTC has strong momentum heading into Q4. The ETF inflows alone could push it past $100k. I'm heavily on Yes.</p>
+          </div>
+          <div class="comment-item">
+            <div class="comment-meta">
+              <div class="avatar" style="background:linear-gradient(135deg,#22c55e,#06b6d4)">GD</div>
+              <div><div class="comment-wallet">GDEF…B34</div><div class="comment-time">5h ago</div></div>
+            </div>
+            <p class="comment-text">Macro headwinds are real. Fed rate decisions could suppress risk assets. Not so sure about Yes here.</p>
+          </div>
+          <div class="comment-item">
+            <div class="comment-meta">
+              <div class="avatar" style="background:linear-gradient(135deg,#a855f7,#ec4899)">GH</div>
+              <div><div class="comment-wallet">GHIJ…C56</div><div class="comment-time">1d ago</div></div>
+            </div>
+            <p class="comment-text">Historical cycles suggest we're in the right window. 62% feels underpriced to me.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. RULES + TRUTH SOURCE -->
+      <div class="card">
+        <div class="card-title">Market Rules</div>
+        <p class="rules-text">Resolves YES if BTC/USD price reaches $100,000 on any top-5 exchange by market cap before the end date. Uses the closing price of the day. In case of exchange discrepancies, the median price across Coinbase, Binance, and Kraken is used. All bets are final once placed.</p>
+        <div class="truth-label">Truth Source</div>
+        <a href="https://coinmarketcap.com/currencies/bitcoin/" target="_blank" class="truth-link">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
+          coinmarketcap.com/currencies/bitcoin/
+        </a>
+        <div class="truth-label" style="margin-top:12px">Reference Sources</div>
+        <div class="source-tags">
+          <span class="source-tag">Reuters</span>
+          <span class="source-tag">AP News</span>
+          <span class="source-tag">CoinGecko</span>
+        </div>
+      </div>
+
+    </div><!-- /left-col -->
+
+    <!-- RIGHT COLUMN — TRADE MODAL -->
+    <div>
+      <div class="trade-card">
+        <div class="trade-header">
+          <span class="trade-title">Trade</span>
+          <span class="badge badge-live" style="font-size:10px">● Live</span>
+        </div>
+
+        <div>
+          <div class="input-label">Pick outcome</div>
+          <div class="outcome-list">
+            <button class="outcome-btn selected" onclick="selectOutcome(this)">
+              <span>Yes</span><span class="outcome-pct">62%</span>
+            </button>
+            <button class="outcome-btn" onclick="selectOutcome(this)">
+              <span>No</span><span class="outcome-pct">38%</span>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <div class="input-label">Amount (XLM)</div>
+          <input class="amount-input" type="number" placeholder="e.g. 100" id="amountInput" oninput="updateSim()" />
+          <div class="quick-fills">
+            <button class="quick-btn" onclick="setAmount(100)">100</button>
+            <button class="quick-btn" onclick="setAmount(500)">500</button>
+            <button class="quick-btn" onclick="setAmount(1000)">1,000</button>
+          </div>
+        </div>
+
+        <div class="slippage-row">
+          <span>Slippage tolerance</span>
+          <select class="slippage-select">
+            <option>0.1%</option>
+            <option selected>0.5%</option>
+            <option>1%</option>
+            <option>2%</option>
+          </select>
+        </div>
+
+        <div class="action-row">
+          <button class="btn-bet" onclick="alert('Connect Freighter wallet to place bet')">Place Bet</button>
+          <button class="btn-slip" title="Add to betting slip">+ Slip</button>
+        </div>
+
+        <!-- What-If Simulator -->
+        <div class="simulator">
+          <button class="sim-toggle" onclick="toggleSim(this)">
+            <span>📊 What-If Simulator</span>
+            <svg id="simArrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition:.2s"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div id="simBody" class="sim-body">
+            <div class="sim-row"><span class="sim-label">Stake</span><span id="simStake" style="font-weight:600;color:#fff">— XLM</span></div>
+            <div class="sim-row"><span class="sim-label">Projected payout</span><span id="simPayout" class="sim-value">— XLM</span></div>
+            <div class="sim-row"><span class="sim-label">Net profit</span><span id="simProfit" class="sim-value">— XLM</span></div>
+            <div class="sim-row"><span class="sim-label">Implied prob.</span><span style="font-weight:600;color:#a78bfa">62%</span></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /main-grid -->
+
+  <!-- RELATED MARKETS -->
+  <hr class="divider" />
+  <div>
+    <div class="card-title" style="margin-bottom:12px">Related Markets</div>
+    <div class="carousel">
+      <div class="carousel-card"><p class="carousel-q">Will Ethereum surpass $10,000 by end of 2026?</p><div class="carousel-meta"><span class="carousel-pool">8,400 XLM</span><span>180d left</span></div></div>
+      <div class="carousel-card"><p class="carousel-q">Will the US approve a spot Ethereum ETF in 2026?</p><div class="carousel-meta"><span class="carousel-pool">3,200 XLM</span><span>90d left</span></div></div>
+      <div class="carousel-card"><p class="carousel-q">Will Bitcoin dominance exceed 60% in Q3 2026?</p><div class="carousel-meta"><span class="carousel-pool">1,750 XLM</span><span>45d left</span></div></div>
+      <div class="carousel-card"><p class="carousel-q">Will the Fed cut rates before Bitcoin halving?</p><div class="carousel-meta"><span class="carousel-pool">5,100 XLM</span><span>60d left</span></div></div>
+      <div class="carousel-card"><p class="carousel-q">Will Coinbase stock reach $500 in 2026?</p><div class="carousel-meta"><span class="carousel-pool">2,900 XLM</span><span>210d left</span></div></div>
+      <div class="carousel-card"><p class="carousel-q">Will MicroStrategy hold over 500k BTC by year end?</p><div class="carousel-meta"><span class="carousel-pool">980 XLM</span><span>273d left</span></div></div>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<script>
+// ── Probability Chart ──────────────────────────────────────────────────────
+const COLORS = { yes: '#3b82f6', no: '#22c55e' };
+
+function genData(points) {
+  const labels = [], yes = [], no = [];
+  let y = 58, n = 42;
+  for (let i = 0; i < points; i++) {
+    y = Math.max(5, Math.min(95, y + (Math.random() - 0.48) * 4));
+    n = 100 - y;
+    const d = new Date(Date.now() - (points - i) * (86400000 / points));
+    labels.push(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    yes.push(+y.toFixed(1)); no.push(+n.toFixed(1));
+  }
+  return { labels, yes, no };
+}
+
+const ctx = document.getElementById('probChart').getContext('2d');
+let chartData = genData(48);
+const probChart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: chartData.labels,
+    datasets: [
+      { label: 'Yes', data: chartData.yes, borderColor: COLORS.yes, backgroundColor: 'rgba(59,130,246,.12)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 },
+      { label: 'No',  data: chartData.no,  borderColor: COLORS.no,  backgroundColor: 'rgba(34,197,94,.08)',  fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { labels: { color: '#9ca3af', boxWidth: 10, font: { size: 11 } } },
+      tooltip: { backgroundColor: '#1f2937', titleColor: '#9ca3af', bodyColor: '#fff', borderColor: '#374151', borderWidth: 1 }
+    },
+    scales: {
+      x: { ticks: { color: '#6b7280', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: '#111827' } },
+      y: { min: 0, max: 100, ticks: { color: '#6b7280', font: { size: 10 }, callback: v => v + '%' }, grid: { color: '#1f2937' } }
+    }
+  }
+});
+
+const pointsMap = { '1H': 12, '6H': 24, '24H': 48, '7D': 84, 'ALL': 120 };
+function setRange(r, btn) {
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const d = genData(pointsMap[r]);
+  probChart.data.labels = d.labels;
+  probChart.data.datasets[0].data = d.yes;
+  probChart.data.datasets[1].data = d.no;
+  probChart.update('active');
+}
+
+// ── Pool Pie Chart ─────────────────────────────────────────────────────────
+const pieCtx = document.getElementById('pieChart').getContext('2d');
+new Chart(pieCtx, {
+  type: 'doughnut',
+  data: {
+    labels: ['GABC…X12', 'GDEF…B34', 'GHIJ…C56', 'Others'],
+    datasets: [{ data: [35.2, 24.8, 18.1, 21.9], backgroundColor: ['#3b82f6','#22c55e','#a855f7','#f59e0b'], borderWidth: 0, hoverOffset: 6 }]
+  },
+  options: {
+    responsive: false, cutout: '65%',
+    plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1f2937', titleColor: '#9ca3af', bodyColor: '#fff', borderColor: '#374151', borderWidth: 1 } }
+  }
+});
+
+// ── Trade modal helpers ────────────────────────────────────────────────────
+function selectOutcome(btn) {
+  document.querySelectorAll('.outcome-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  updateSim();
+}
+function setAmount(v) {
+  document.getElementById('amountInput').value = v;
+  updateSim();
+}
+function updateSim() {
+  const stake = parseFloat(document.getElementById('amountInput').value) || 0;
+  const pool = 2604, total = 4200;
+  const payout = stake > 0 ? ((stake / (pool + stake)) * total * 0.97) : 0;
+  const profit = payout - stake;
+  document.getElementById('simStake').textContent  = stake > 0 ? stake.toFixed(2) + ' XLM' : '— XLM';
+  document.getElementById('simPayout').textContent = payout > 0 ? payout.toFixed(2) + ' XLM' : '— XLM';
+  document.getElementById('simProfit').style.color = profit >= 0 ? '#4ade80' : '#f87171';
+  document.getElementById('simProfit').textContent = payout > 0 ? (profit >= 0 ? '+' : '') + profit.toFixed(2) + ' XLM' : '— XLM';
+}
+let simOpen = true;
+function toggleSim(btn) {
+  simOpen = !simOpen;
+  document.getElementById('simBody').style.display = simOpen ? 'flex' : 'none';
+  document.getElementById('simArrow').style.transform = simOpen ? 'rotate(180deg)' : '';
+}
+
+// ── Comments ───────────────────────────────────────────────────────────────
+function postComment() {
+  const input = document.getElementById('commentInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const list = document.getElementById('commentList');
+  const item = document.createElement('div');
+  item.className = 'comment-item';
+  item.style.animation = 'fadeIn .3s ease';
+  item.innerHTML = `
+    <div class="comment-meta">
+      <div class="avatar" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">YO</div>
+      <div><div class="comment-wallet">You</div><div class="comment-time">Just now</div></div>
+      <span style="margin-left:auto;font-size:10px;background:#1e3a8a;color:#93c5fd;padding:2px 8px;border-radius:999px">You</span>
+    </div>
+    <p class="comment-text">${text.replace(/</g,'&lt;')}</p>`;
+  list.prepend(item);
+  input.value = '';
+  document.getElementById('charCount').textContent = '0/500';
+}
+</script>
+<style>
+@keyframes fadeIn { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:none } }
+</style>
+</body>
+</html>

@@ -100,6 +100,16 @@ pub struct EventMarketPaused {
     pub ledger_timestamp: u64,
 }
 
+/// Emitted by `propose_admin_transfer`/`accept_admin_transfer` when admin role moves.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventAdminTransferred {
+    pub version: u32,
+    pub old_admin: Address,
+    pub new_admin: Address,
+    pub ledger_timestamp: u64,
+}
+
 /// Emitted by `batch_distribute` and `batch_payout` for each completed batch.
 #[contracttype]
 #[derive(Clone)]
@@ -145,6 +155,16 @@ pub struct EventDisputeRaised {
     pub market_id: u64,
     pub disputer: Address,
     pub bond_amount: i128,
+    pub ledger_timestamp: u64,
+}
+
+/// Emitted by `set_fee_rate` on every successful update.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventFeeRateUpdated {
+    pub version: u32,
+    pub old_rate_bps: u32,
+    pub new_rate_bps: u32,
     pub ledger_timestamp: u64,
 }
 
@@ -338,6 +358,18 @@ pub fn emit_dispute_raised(
     );
 }
 
+pub fn emit_fee_rate_updated(env: &Env, old_rate_bps: u32, new_rate_bps: u32) {
+    env.events().publish(
+        (symbol_short!("FeeRateUp"),),
+        EventFeeRateUpdated {
+            version: EVENT_VERSION,
+            old_rate_bps,
+            new_rate_bps,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
 pub fn emit_fee_collected(
     env: &Env,
     market_id: u64,
@@ -353,6 +385,18 @@ pub fn emit_fee_collected(
             payer: payer.clone(),
             fee_destination: fee_destination.clone(),
             amount,
+            ledger_timestamp: env.ledger().timestamp(),
+        },
+    );
+}
+
+pub fn emit_admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (symbol_short!("AdminXfer"),),
+        EventAdminTransferred {
+            version: EVENT_VERSION,
+            old_admin: old_admin.clone(),
+            new_admin: new_admin.clone(),
             ledger_timestamp: env.ledger().timestamp(),
         },
     );

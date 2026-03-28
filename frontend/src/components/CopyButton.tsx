@@ -23,33 +23,25 @@ import { useRef, useState } from "react";
  */
 
 interface Props {
-  /**
-   * The full value to copy to clipboard
-   * Example: "GABCDEF123456WXYZABCDEF123456WXYZ"
-   */
+  /** The full value to copy to clipboard */
   value: string;
 
   /**
-   * Display label for accessibility (aria-label)
-   * Example: "Wallet Address", "Transaction ID"
-   * If not provided, defaults to "Copy to clipboard"
+   * Optional pre-formatted display string.
+   * If omitted, auto-abbreviates to first 6 + "..." + last 4 chars.
    */
+  displayValue?: string;
+
+  /** Accessible label. Defaults to "Copy to clipboard" */
   label?: string;
 
-  /**
-   * Optional CSS class for styling
-   * Applied to the button element
-   */
+  /** Extra CSS classes applied to the button */
   className?: string;
 
-  /**
-   * Optional callback when copy succeeds
-   */
+  /** Called when copy succeeds */
   onCopySuccess?: () => void;
 
-  /**
-   * Optional callback when copy fails
-   */
+  /** Called when copy fails */
   onCopyError?: (error: Error) => void;
 }
 
@@ -68,15 +60,14 @@ function abbreviateValue(value: string): string {
 
 export default function CopyButton({
   value,
+  displayValue,
   label = "Copy to clipboard",
   className = "",
   onCopySuccess,
   onCopyError,
 }: Props) {
-  // Track whether the "Copied!" message is showing
   const [copied, setCopied] = useState(false);
-
-  // Timer reference for clearing the "Copied!" tooltip timeout
+  const [showManualPrompt, setShowManualPrompt] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   /**
@@ -97,31 +88,19 @@ export default function CopyButton({
    */
   async function handleCopy() {
     try {
-      // Try the modern Clipboard API first
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(value);
       } else {
-        // Fallback for older browsers (IE 11, older Safari, etc.)
         copyUsingExecCommand(value);
       }
 
-      // Show the "Copied!" tooltip
       setCopied(true);
-
-      // Clear any existing timeout to prevent race conditions
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-
-      // Auto-hide "Copied!" message after 2 seconds
-      timeoutRef.current = setTimeout(() => {
-        setCopied(false);
-      }, 2000);
-
-      // Call optional success callback
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
       onCopySuccess?.();
     } catch (error) {
-      // Call optional error callback
+      // Both methods failed — show manual copy prompt
+      setShowManualPrompt(true);
       const err = error instanceof Error ? error : new Error("Failed to copy");
       onCopyError?.(err);
     }
@@ -179,10 +158,8 @@ export default function CopyButton({
       <button
         onClick={handleCopy}
         onKeyDown={handleKeyDown}
-        // Accessibility attributes
         aria-label={label}
-        title={value} // Show full value in tooltip on hover
-        // Styling
+        title={value}
         className={`
           inline-flex items-center gap-1.5 px-2 py-1 
           rounded-lg text-sm font-mono text-blue-400
@@ -208,12 +185,10 @@ export default function CopyButton({
           <path d="M15 2H9a1 1 0 00-1 1v4h8V3a1 1 0 00-1-1z" />
         </svg>
 
-        {/* Abbreviated value or "Copied!" message */}
         <span className={`transition-all duration-200 ${copied ? "opacity-0" : "opacity-100"}`}>
-          {abbreviateValue(value)}
+          {displayValue ?? abbreviateValue(value)}
         </span>
 
-        {/* "Copied!" tooltip that fades in when copy succeeds */}
         {copied && (
           <span
             className="absolute inset-0 flex items-center justify-center text-green-400 font-semibold animate-pulse"
@@ -224,6 +199,35 @@ export default function CopyButton({
           </span>
         )}
       </button>
+
+      {/* Manual copy prompt — shown when both Clipboard API and execCommand fail */}
+      {showManualPrompt && (
+        <div
+          data-testid="manual-copy-prompt"
+          role="dialog"
+          aria-label="Manual copy"
+          className="absolute z-50 top-full left-0 mt-1 p-2 rounded-lg text-xs w-56"
+          style={{ backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}
+        >
+          <p className="mb-1" style={{ color: "var(--text-primary)" }}>Copy manually:</p>
+          <input
+            data-testid="manual-copy-input"
+            readOnly
+            value={value}
+            onFocus={(e) => e.target.select()}
+            className="w-full px-1.5 py-1 rounded text-xs font-mono"
+            style={{ backgroundColor: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-default)" }}
+            aria-label="Value to copy manually"
+          />
+          <button
+            className="mt-1 text-xs underline"
+            style={{ color: "var(--accent-primary-text)" }}
+            onClick={() => setShowManualPrompt(false)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
     </div>
   );
 }
