@@ -50,6 +50,10 @@ pub struct FeeConfig {
     pub burn_bps: u32,
 }
 
+mod settlement_math;
+
+use settlement_math::calculate_payout_pool;
+
 /// Maximum winners processed per batch_distribute call.
 /// Keeps CPU instruction count well below Soroban's per-tx ceiling (~100M instructions).
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
@@ -2444,6 +2448,155 @@ impl PredictionMarket {
             .get(&DataKey::Market(market_id))
             .unwrap();
         market.options.len()
+    }
+
+    /// Distribute rewards proportionally to winners using fixed-point arithmetic.
+    /// 
+    /// This function implements the settlement logic with proper dust handling:
+    /// 1. Calculates 3% platform fee
+    /// 2. Calculates payout pool (97% of total)
+    /// 3. Uses fixed-point arithmetic for precise division
+    /// 4. Redistributes dust to ensure 100% distribution
+    /// 
+    /// The payout formula for each winner is:
+    ///   payout = (bet_amount / winning_stake) * payout_pool
+    /// 
+    /// This ensures:
+    /// - Total payouts + dust = payout_pool (conservation)
+    /// - Proportional distribution based on bet amounts
+    /// - No XLM lost to rounding errors
+    pub fn distribute_rewards(env: Env, market_id: u64) {
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))
+            .unwrap();
+        assert!(market.status == MarketStatus::Resolved, "Market not resolved yet");
+
+        let positions: Map<Address, (u32, i128)> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserPosition(market_id))
+            .unwrap();
+
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+
+        // Calculate winning stake and collect winning bets
+        let mut winners: Vec<(Address, i128)> = Vec::new(&env);
+        let mut winning_stake: i128 = 0;
+        
+        for (addr, (outcome, amount)) in positions.iter() {
+            if outcome == market.winning_outcome {
+                winners.push_back((addr, amount));
+                winning_stake += amount;
+            }
+        }
+
+        if winning_stake == 0 {
+            // No winners - funds remain in contract
+            return;
+        }
+
+        // Calculate payout pool after 3% platform fee
+        let payout_pool = calculate_payout_pool(total_pool);
+        
+        // Calculate all payouts with dust handling using inline logic
+        let num_winners = winners.len();
+        let mut payouts: Vec<i128> = Vec::new(&env);
+        let mut ideal_total: i128 = 0;
+        
+        // First pass: calculate ideal payouts
+        for i in 0..num_winners {
+            let (_, amount) = winners.get(i).unwrap();
+            let payout = if winning_stake > 0 { (amount * payout_pool) / winning_stake } else { 0 };
+            payouts.push_back(payout);
+            ideal_total += payout;
+        }
+        
+        // Calculate and redistribute dust
+        let dust = payout_pool - ideal_total;
+        if dust > 0 && num_winners > 0 {
+            let dust_per_winner = dust / num_winners as i128;
+            let extra_dust = dust % num_winners as i128;
+            for i in 0..num_winners {
+                let current = payouts.get(i).unwrap_or(0);
+                let add = dust_per_winner + if (i as i128) < extra_dust { 1 } else { 0 };
+                payouts.set(i, current + add);
+            }
+        }
+        
+        // Verify conservation before distributing
+        let mut variance: i128 = 0;
+        for i in 0..payouts.len() {
+            variance += payouts.get(i).unwrap_or(0);
+        }
+        variance = payout_pool - variance;
+        assert!(variance == 0, "Payout conservation violated: variance = {}", variance);
+
+        // Distribute payouts
+        let token_client = token::Client::new(&env, &market.token);
+        
+        for i in 0..num_winners {
+            let (bettor, _) = winners.get(i).unwrap();
+            let payout = payouts.get(i).unwrap_or(0);
+            if payout > 0 {
+                token_client.transfer(&env.current_contract_address(), &bettor, &payout);
+            }
+        }
+        
+        // Log settlement summary for verification
+        soroban_sdk::log!(
+            &env,
+            "Settlement: pool={}, fee={}, payout_pool={}, winners={}, dust={}, variance={}",
+            total_pool,
+            total_pool - payout_pool,
+            payout_pool,
+            num_winners,
+            dust,
+            variance
+        );
+    }
+
+    /// Get settlement metadata for a market (for verification).
+    /// Returns the calculation parameters without executing transfers.
+    pub fn get_settlement_info(env: Env, market_id: u64) -> Option<(i128, i128, i128, i128, u32)> {
+        let market: Market = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Market(market_id))?;
+            
+        if market.status != MarketStatus::Resolved {
+            return None;
+        }
+
+        let positions: Map<Address, (u32, i128)> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserPosition(market_id))?;
+
+        let total_pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares(market_id))
+            .unwrap_or(0);
+
+        let mut winning_stake: i128 = 0;
+        let mut num_winners: u32 = 0;
+        
+        for (_, (outcome, amount)) in positions.iter() {
+            if outcome == market.winning_outcome {
+                winning_stake += amount;
+                num_winners += 1;
+            }
+        }
+
+        let payout_pool = calculate_payout_pool(total_pool);
+        
+        Some((total_pool, total_pool - payout_pool, payout_pool, winning_stake, num_winners))
     }
 }
 
