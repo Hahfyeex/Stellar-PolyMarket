@@ -7,10 +7,18 @@ import ReduxProvider from "../components/ReduxProvider";
 import SkipLink from "../components/SkipLink";
 import ReactQueryProvider from "../components/ReactQueryProvider";
 import ThemeScript from "../components/ThemeScript";
+import OfflineBanner from "../components/OfflineBanner";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
   description: "Decentralized prediction markets on Stellar",
+  manifest: "/manifest.json",
+  themeColor: "#2563eb",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Stella",
+  },
 };
 
 import { ToastProvider } from "../components/ToastProvider";
@@ -24,6 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <SkipLink />
+        <OfflineBanner />
         <ReduxProvider>
           <ReactQueryProvider>
             {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
