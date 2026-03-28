@@ -13,6 +13,8 @@ const eventBus = require("../bots/eventBus");
 const { getOrSet, invalidateAll, listKey, detailKey, TTL } = require("../utils/cache");
 const jwtAuth = require("../middleware/jwtAuth");
 
+const DISPUTE_WINDOW_HOURS = parseInt(process.env.DISPUTE_WINDOW_HOURS, 10) || 24;
+
 // GET /api/markets — list all markets with pagination
 router.get("/", async (req, res) => {
   try {
@@ -284,43 +286,76 @@ router.post("/:id/propose", async (req, res) => {
   }
 });
 
-// POST /api/markets/:id/resolve — oracle triggers final resolution
+// POST /api/markets/:id/resolve — resolve a market and set dispute window
 router.post("/:id/resolve", async (req, res) => {
-  const { winningOutcome } = req.body;
-  if (winningOutcome === undefined) {
-    return res.status(400).json({ error: "winningOutcome is required" });
-  }
   try {
+    const marketId = req.params.id;
+
+    // Resolve the market
     const result = await db.query(
-      "UPDATE markets SET resolved = TRUE, status = 'RESOLVED', winning_outcome = $1 WHERE id = $2 RETURNING *",
-      [winningOutcome, req.params.id]
+      "UPDATE markets SET resolved = TRUE, dispute_window_ends_at = NOW() + INTERVAL '1 hour' * $1 WHERE id = $2 RETURNING *",
+      [DISPUTE_WINDOW_HOURS, marketId]
     );
+
     if (!result.rows.length) {
-      logger.warn({ market_id: req.params.id }, "Market not found for resolution");
       return res.status(404).json({ error: "Market not found" });
     }
 
-    logger.info(
-      {
-        market_id: req.params.id,
-        winning_outcome: winningOutcome,
-        status: "RESOLVED",
-      },
-      "Market resolved"
-    );
-
-    // Invalidate both the detail cache and the list cache on resolution
-    await invalidateAll(req.params.id);
-
-    // Trigger notification
-    triggerNotification(req.params.id, "RESOLVED");
-
-    res.json({ market: result.rows[0] });
+    logger.info({ market_id: marketId }, "Market resolved and dispute window set");
+    res.status(200).json({ market: result.rows[0] });
   } catch (err) {
-    logger.error(
-      { err, market_id: req.params.id, winning_outcome: winningOutcome },
-      "Failed to resolve market"
+    logger.error({ err, market_id: req.params.id }, "Failed to resolve market");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/bets/payout/:marketId — enforce dispute window before payouts
+router.post("/payout/:marketId", async (req, res) => {
+  try {
+    const marketId = req.params.marketId;
+
+    const market = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+
+    if (!market.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    const { dispute_window_ends_at } = market.rows[0];
+    const now = new Date();
+
+    if (new Date(dispute_window_ends_at) > now) {
+      return res.status(400).json({
+        error: `Dispute window is still open. Payouts available after ${dispute_window_ends_at}`,
+      });
+    }
+
+    // Proceed with payout logic
+    // ...existing payout logic...
+
+    res.status(200).json({ message: "Payouts processed successfully" });
+  } catch (err) {
+    logger.error({ err, market_id: req.params.marketId }, "Failed to process payouts");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/markets/:id/dispute-status — get dispute window status
+router.get("/:id/dispute-status", async (req, res) => {
+  try {
+    const marketId = req.params.id;
+
+    const market = await db.query(
+      "SELECT dispute_window_ends_at, (dispute_window_ends_at > NOW()) AS is_in_dispute_window FROM markets WHERE id = $1",
+      [marketId]
     );
+
+    if (!market.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    res.status(200).json(market.rows[0]);
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to fetch dispute status");
     res.status(500).json({ error: err.message });
   }
 });

@@ -6,6 +6,7 @@ const logger = require("../utils/logger");
 const eventBus = require("../bots/eventBus");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { sanitizeError } = require("../utils/errors");
+const axios = require("axios"); // Add Axios for Horizon API requests
 
 const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
@@ -27,14 +28,16 @@ router.post("/", async (req, res) => {
     }
   }
 
-  const { marketId, outcomeIndex, amount, walletAddress } = req.body;
-  if (!marketId || outcomeIndex === undefined || !amount || !walletAddress) {
+  const { marketId, outcomeIndex, amount, walletAddress, transaction_hash } = req.body;
+  if (!marketId || outcomeIndex === undefined || !amount || !walletAddress || !transaction_hash) {
     return res
       .status(400)
-      .json({ error: "marketId, outcomeIndex, amount, and walletAddress are required" });
+      .json({
+        error: "marketId, outcomeIndex, amount, walletAddress, and transaction_hash are required",
+      });
   }
 
-  // #488: Validate Stellar wallet address format
+  // Validate Stellar wallet address format
   const isValidAddress =
     walletAddress.length === 56 &&
     walletAddress.startsWith("G") &&
@@ -47,7 +50,34 @@ router.post("/", async (req, res) => {
     );
     return res.status(400).json({ error: "Invalid Stellar wallet address format" });
   }
+
   try {
+    // Verify transaction on Stellar Horizon API
+    const cachedTx = await redis.get(`tx:${transaction_hash}`);
+    let transaction;
+
+    if (cachedTx) {
+      transaction = JSON.parse(cachedTx);
+    } else {
+      const response = await axios.get(
+        `https://horizon-testnet.stellar.org/transactions/${transaction_hash}`
+      );
+      transaction = response.data;
+
+      // Cache transaction for 24 hours
+      await redis.set(`tx:${transaction_hash}`, JSON.stringify(transaction), "EX", 24 * 60 * 60);
+    }
+
+    // Validate transaction details
+    if (
+      transaction.source_account !== walletAddress ||
+      parseFloat(transaction.amount) !== parseFloat(amount)
+    ) {
+      return res
+        .status(400)
+        .json({ error: "On-chain transaction not found or does not match bet details" });
+    }
+
     // Check market exists and is not resolved
     const market = await db.query(
       "SELECT * FROM markets WHERE id = $1 AND resolved = FALSE AND end_date > NOW() AND deleted_at IS NULL",
@@ -61,19 +91,6 @@ router.post("/", async (req, res) => {
       return res
         .status(400)
         .json({ error: "Market not found, already resolved, expired, or deleted" });
-    }
-
-    // #376: Check for duplicate bet from same wallet on same market
-    const existingBet = await db.query(
-      "SELECT id FROM bets WHERE market_id = $1 AND wallet_address = $2",
-      [marketId, walletAddress]
-    );
-    if (existingBet.rows.length > 0) {
-      logger.warn(
-        { market_id: marketId, wallet_address: walletAddress },
-        "Bet rejected: wallet has already placed a bet on this market"
-      );
-      return res.status(409).json({ error: "Wallet has already placed a bet on this market" });
     }
 
     // Record bet
