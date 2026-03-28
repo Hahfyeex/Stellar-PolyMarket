@@ -1,10 +1,10 @@
 /**
  * Tests for LiveActivityFeed component.
- * Covers: list cap at 20, address abbreviation, new-entry animation trigger,
- * loading skeleton, error/empty fallback to demo data, React Query config.
+ * Covers: loading skeleton, error state + retry, empty state, success list,
+ * list cap at 20, address abbreviation, animation variants, env fallback.
  */
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import LiveActivityFeed, { itemVariants } from "../LiveActivityFeed";
@@ -16,7 +16,6 @@ jest.mock("framer-motion", () => {
   const actual = jest.requireActual("framer-motion");
   return {
     ...actual,
-    // Render motion.li as a plain li so DOM assertions work
     motion: {
       ...actual.motion,
       li: ({ children, className, ...rest }: React.HTMLAttributes<HTMLLIElement>) =>
@@ -63,6 +62,14 @@ function mockFetch(items: ReturnType<typeof makeItem>[]) {
   }) as jest.Mock;
 }
 
+function mockFetchError() {
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: false,
+    status: 500,
+    json: async () => ({}),
+  }) as jest.Mock;
+}
+
 // ── formatWallet (unit) ───────────────────────────────────────────────────────
 
 describe("formatWallet", () => {
@@ -84,12 +91,58 @@ describe("formatWallet", () => {
 describe("LiveActivityFeed", () => {
   beforeEach(() => jest.resetAllMocks());
 
+  // Loading state
   it("shows skeleton while loading", () => {
     global.fetch = jest.fn(() => new Promise(() => {})) as jest.Mock;
     render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
     expect(screen.getByTestId("skeleton")).toBeInTheDocument();
   });
 
+  // Error state
+  it("shows error message when fetch fails", async () => {
+    mockFetchError();
+    render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
+    await waitFor(() =>
+      expect(
+        screen.getByText("Unable to load recent activity. Check your connection.")
+      ).toBeInTheDocument()
+    );
+  });
+
+  it("shows Retry button on error", async () => {
+    mockFetchError();
+    render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
+    await waitFor(() => expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument());
+  });
+
+  it("Retry button re-triggers the query", async () => {
+    mockFetchError();
+    render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
+    await waitFor(() => expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument());
+
+    // Switch to success response before clicking retry
+    mockFetch([makeItem(1)]);
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    await waitFor(() => expect(screen.getByText("Market 1")).toBeInTheDocument());
+  });
+
+  // Empty state
+  it("shows empty state when API returns empty list", async () => {
+    mockFetch([]);
+    render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
+    await waitFor(() =>
+      expect(screen.getByText(/No activity yet/i)).toBeInTheDocument()
+    );
+  });
+
+  it("does not show demo data on empty state", async () => {
+    mockFetch([]);
+    render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
+    await waitFor(() => expect(screen.getByText(/No activity yet/i)).toBeInTheDocument());
+    expect(screen.queryByText(/Will Bitcoin reach/i)).not.toBeInTheDocument();
+  });
+
+  // Success state
   it("renders items from the API", async () => {
     mockFetch([makeItem(1), makeItem(2)]);
     render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
@@ -110,23 +163,8 @@ describe("LiveActivityFeed", () => {
     mockFetch([makeItem(1)]);
     render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
     await waitFor(() => expect(screen.getByText("Market 1")).toBeInTheDocument());
-    // Full address is GABC0001XYZ — abbreviated should be GABC...XYZ
     expect(screen.getByText("GABC...XYZ")).toBeInTheDocument();
     expect(screen.queryByText("GABC0001XYZ")).not.toBeInTheDocument();
-  });
-
-  it("falls back to demo data on fetch error", async () => {
-    global.fetch = jest.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as jest.Mock;
-    render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
-    await waitFor(() => expect(screen.getByText(/demo data/i)).toBeInTheDocument());
-    // Demo data contains this question
-    expect(screen.getByText(/Will Bitcoin reach \$100k/i)).toBeInTheDocument();
-  });
-
-  it("falls back to demo data when API returns empty list", async () => {
-    mockFetch([]);
-    render(<LiveActivityFeed apiUrl="http://api" />, { wrapper: makeWrapper() });
-    await waitFor(() => expect(screen.getByText(/demo data/i)).toBeInTheDocument());
   });
 
   it("renders the Live Activity header", async () => {
