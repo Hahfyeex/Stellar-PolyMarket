@@ -122,8 +122,10 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
       {/* Bell button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="relative p-2 text-gray-400 hover:text-white transition-colors"
+        className="relative p-2 text-gray-400 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-lg"
         aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
+        aria-expanded={open}
+        aria-haspopup="dialog"
       >
         {/* Bell icon */}
         <svg
@@ -132,13 +134,14 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
           stroke="currentColor"
           strokeWidth="2"
           className="w-5 h-5"
+          aria-hidden="true"
         >
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
           <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
         {/* Blue dot — visible only when there are unread notifications */}
         {unreadCount > 0 && (
-          <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
+          <span className="absolute top-1.5 right-1.5 flex h-2 w-2" aria-hidden="true">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
           </span>
@@ -148,6 +151,8 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
       {/* Dropdown — z-index 1100 to sit above all modals */}
       {open && (
         <div
+          role="dialog"
+          aria-label="Notifications"
           className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden"
           style={{ zIndex: 1100 }}
         >
@@ -179,7 +184,11 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
               items.map((item) => (
                 <li
                   key={item.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleItemClick(item)}
+                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleItemClick(item)}
+                  aria-label={`${item.message}${item.read ? "" : ", unread"}`}
                   className={`flex gap-3 px-4 py-3 cursor-pointer transition-colors hover:bg-gray-800 ${
                     item.read ? "opacity-60" : "bg-blue-950/20"
                   }`}

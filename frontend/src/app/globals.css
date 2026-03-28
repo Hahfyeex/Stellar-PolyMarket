@@ -734,3 +734,21 @@ body {
   animation: pulseRed 0.5s ease-in-out 3;
 }
 
+
+/* ── Accessibility: visible focus rings (WCAG 2.1 AA — 2.4.7) ───────────── */
+/*
+ * Ensures all interactive elements have a visible focus indicator.
+ * Uses the brand blue (--accent-primary) at 2px offset so the ring
+ * is visible on both dark and light backgrounds.
+ *
+ * :focus-visible targets keyboard focus only — mouse clicks are unaffected.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Remove the browser default outline only when our custom one is applied */
+:focus:not(:focus-visible) {
+  outline: none;
+}
