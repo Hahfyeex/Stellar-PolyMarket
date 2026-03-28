@@ -37,6 +37,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [xlmBalance] = useState<number | null>(null);
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
 
@@ -80,6 +81,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
     }
   }
 
+  /** Entry point — checks slippage before submitting */
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress || !market) return;
     setLoading(true);
@@ -128,6 +130,19 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   return (
     <>
+      {/* Slippage warning modal — rendered above the drawer */}
+      {slippageState?.exceeded && (
+        <SlippageWarningModal
+          expectedPayout={slippageState.expectedPayout}
+          currentPayout={slippageState.currentPayout}
+          tolerancePct={slippageState.tolerancePct}
+          onProceed={async () => {
+            dismiss();
+            await submitBet();
+          }}
+          onCancel={dismiss}
+        />
+      )}
       {/* Backdrop */}
       <div
         data-testid="trade-drawer-backdrop"
@@ -224,29 +239,25 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                     />
                     <button
                       onClick={placeBet}
-                      disabled={loading || selectedOutcome === null || !amount}
+                      disabled={loading || checking || selectedOutcome === null || !amount}
                       className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
                     >
-                      {loading ? "..." : "Bet"}
+                      {loading || checking ? "..." : "Bet"}
                     </button>
                   </div>
+                  <StakePresets
+                    amount={amount}
+                    onSelect={setAmount}
+                    walletBalance={xlmBalance}
+                    disabled={loading}
+                  />
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 text-xs text-gray-400">
-                      Slippage
-                      <select
-                        data-testid="slippage-select"
-                        value={slippageTolerance}
-                        onChange={(e) => setSlippageTolerance(parseFloat(e.target.value))}
-                        className="bg-gray-800 text-white rounded px-2 py-1 text-xs border border-gray-700 outline-none"
-                      >
-                        <option value={0.1}>0.1%</option>
-                        <option value={0.5}>0.5%</option>
-                        <option value={1}>1%</option>
-                        <option value={2}>2%</option>
-                      </select>
-                    </label>
+                    <SlippageSettings
+                      value={slippageTolerance}
+                      onChange={setSlippageTolerance}
+                    />
                     <button
                       data-testid="clear-form"
                       onClick={() => {
@@ -276,7 +287,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               )}
 
               <div className="mt-5">
-                <ResolutionCenter market={market} />
+                <MarketResolutionTracker market={market} />
               </div>
 
               {/* What-If Simulator — shown when an outcome is selected */}

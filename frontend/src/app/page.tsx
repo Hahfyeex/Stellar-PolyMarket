@@ -23,10 +23,9 @@ import OnboardingWizard from "../components/onboarding/OnboardingWizard";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
-  const { theme, toggleTheme } = useTheme();
   const searchParams = useSearchParams();
-  const [markets, setMarkets] = useState<Market[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
@@ -34,11 +33,17 @@ export default function Home() {
   const [filters, setFilters] = useState<SearchFilters>(() => ({
     query: searchParams.get("q") ?? "",
     category: searchParams.get("category") ?? "",
+    categories: [],
     status: searchParams.get("status") ?? "",
     sort: (searchParams.get("sort") as SortKey) ?? "newest",
   }));
 
-  const filteredMarkets = useMarketSearch(markets, filters);
+  const { activeTab, setActiveTab, activeMarkets, resolvedMarkets, activeBadge, resolvedBadge } =
+    useMarketTabs(markets);
+
+  // Apply search/filter on top of the tab-filtered list
+  const tabMarkets = activeTab === "active" ? activeMarkets : resolvedMarkets;
+  const filteredMarkets = useMarketSearch(tabMarkets, filters);
 
   const handleHelpClick = () => {
     trackEvent("help_doc_read", {
@@ -100,19 +105,13 @@ export default function Home() {
   const pageContent = (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
-      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-[var(--border-default)]">
         <div className="flex items-center gap-4">
           <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
-          <button
-            onClick={toggleTheme}
-            className="text-gray-400 hover:text-white transition-colors text-xl"
-            title="Toggle Theme"
-          >
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
+          <ThemeToggle />
           <button
             onClick={handleHelpClick}
-            className="text-gray-400 hover:text-white transition-colors"
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
             title="Help & Documentation"
           >
             <svg
@@ -153,15 +152,10 @@ export default function Home() {
       </nav>
 
       {/* Mobile top bar */}
-      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-gray-800">
+      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-[var(--border-default)]">
         <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
         <div className="flex items-center gap-3">
-          <button
-            onClick={toggleTheme}
-            className="text-gray-400 hover:text-white transition-colors text-lg"
-          >
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
+          <ThemeToggle />
           {publicKey ? (
             <>
               <NotificationInbox
@@ -237,37 +231,50 @@ export default function Home() {
             />
           </div>
 
-          <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
-          <MarketFilters filters={filters} onChange={setFilters} />
-          {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[1, 2, 3, 4].map((i) => (
-                <MarketCardSkeleton key={i} />
-              ))}
-            </div>
-          ) : filteredMarkets.length === 0 ? (
-            <p className="text-gray-400">No markets found.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredMarkets.map((market) => (
-                <div
-                  key={market.id}
-                  onClick={() => setActiveMarket(market)}
-                  className={`cursor-pointer rounded-xl transition-all ${
-                    activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
-                  }`}
-                >
-                  <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
-                    <MarketCard
-                      market={market}
-                      walletAddress={publicKey}
-                      onBetPlaced={fetchMarkets}
-                    />
-                  </ContractErrorBoundary>
-                </div>
-              ))}
-            </div>
-          )}
+          <MarketTabs
+            activeTab={activeTab}
+            activeBadge={activeBadge}
+            resolvedBadge={resolvedBadge}
+            onChange={setActiveTab}
+          />
+          <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
+            <MarketFilters filters={filters} onChange={setFilters} />
+            {loading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <MarketCardSkeleton key={i} />
+                ))}
+              </div>
+            ) : filteredMarkets.length === 0 ? (
+              <p className="text-gray-400" data-testid="no-markets-empty-state">
+                {filters.query
+                  ? `No markets found for "${filters.query}"`
+                  : activeTab === "active"
+                    ? "No active markets found."
+                    : "No resolved markets found."}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredMarkets.map((market) => (
+                  <div
+                    key={market.id}
+                    onClick={() => setActiveMarket(market)}
+                    className={`cursor-pointer rounded-xl transition-all ${
+                      activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
+                    }`}
+                  >
+                    <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
+                      <MarketCard
+                        market={market}
+                        walletAddress={publicKey}
+                        onBetPlaced={refetchMarkets}
+                      />
+                    </ContractErrorBoundary>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Live Activity Feed — hidden on mobile to save space */}
@@ -289,9 +296,9 @@ export default function Home() {
         <MobileShell
           activeMarket={activeMarket}
           walletAddress={publicKey}
-          onBetPlaced={fetchMarkets}
+          onBetPlaced={refetchMarkets}
         >
-          <PullToRefresh onRefresh={fetchMarkets}>{pageContent}</PullToRefresh>
+          <PullToRefresh onRefresh={refetchMarkets}>{pageContent}</PullToRefresh>
         </MobileShell>
       </div>
 

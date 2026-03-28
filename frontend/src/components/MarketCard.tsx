@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Market } from "../types/market";
-import ResolutionCenter from "./ResolutionCenter";
+import MarketResolutionTracker from "./MarketResolutionTracker";
 import Link from "next/link";
 import { useBettingSlip } from "../context/BettingSlipContext";
-import Toast from "./Toast";
+import { useToast } from "./ToastProvider";
 import PoolOwnershipChart from "./PoolOwnershipChart";
 import PayoutTooltip from "./PayoutTooltip";
 import PayoutTooltip from "./PayoutTooltip"; // Added missing PayoutTooltip import
@@ -22,15 +22,27 @@ import WhatIfSimulator from "./WhatIfSimulator";
 import { useOptimisticBet } from "../hooks/useOptimisticBet";
 import OptimisticBetIndicator from "./OptimisticBetIndicator";
 import OddsTicker from "./OddsTicker";
+import { useVolatilityPulse } from "../hooks/useVolatilityPulse";
 
 interface Props {
   market: Market;
   walletAddress: string | null;
   onBetPlaced?: () => void;
   showFullCard?: boolean;
+  isError?: boolean;
+  onRetry?: () => void;
 }
 
-export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
+export default function MarketCard({
+  market,
+  walletAddress,
+  onBetPlaced,
+  isError = false,
+  onRetry,
+}: Props) {
+  const router = useRouter();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
+
   const {
     outcomeIndex: selectedOutcome,
     amount,
@@ -68,6 +80,10 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
   // Default odds for display in the ticker (until real per-outcome pool data is available)
   const defaultOdds = 100 / market.outcomes.length;
+
+  // Volatility pulse animation state
+  const { isPulsing, direction } = useVolatilityPulse(defaultOdds);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   // Snapshot odds whenever the user selects an outcome or changes amount
   useEffect(() => {
@@ -147,12 +163,12 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         amount: parseFloat(amount),
         walletAddress,
       },
-      (reason) => setMessage(`Error: ${reason}`)
+      (reason) => toastError(`Bet failed: ${reason}`)
     );
 
     setLoading(false);
     if (success) {
-      setMessage("Bet placed successfully!");
+      toastSuccess("Bet placed successfully!");
       clearForm();
       onBetPlaced?.();
     }
@@ -180,6 +196,32 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     }
 
     await handlePlaceBetAction();
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      router.push(`/market/${market.id}`);
+    }
+  };
+
+  if (isError) {
+    return (
+      <div
+        role="article"
+        className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-red-800 items-center justify-center min-h-[200px]"
+      >
+        <p className="text-red-400 text-sm font-medium">Failed to load market</p>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -290,7 +332,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             <button
               onClick={placeBet}
               disabled={loading || selectedOutcome === null || !amount}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold btn-press-scale shadow-lg shadow-blue-900/30"
             >
               {loading ? "Placing..." : "Bet"}
             </button>

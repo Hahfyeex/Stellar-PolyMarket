@@ -22,9 +22,10 @@ import {
 
 // Icons per notification type
 const TYPE_ICON: Record<NotificationType, string> = {
-  MARKET_RESOLVED: "🏁",
-  PAYOUT_AVAILABLE: "💰",
-  MARKET_ENDING_SOON: "⏰",
+  MARKET_RESOLVED: "✓", // checkmark
+  PAYOUT_AVAILABLE: "💰", // coins
+  MARKET_ENDING_SOON: "⏰", // clock
+  DISPUTE_OPENED: "⚠️", // warning
 };
 
 const POLL_INTERVAL_MS = 30_000; // 30-second polling per spec
@@ -50,8 +51,8 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
 
     async function fetchNotifications() {
       try {
-        // Fetch notifications for the connected wallet
-        const res = await fetch(`${url}/api/notifications/${walletAddress}`);
+        // Fetch notifications for the connected wallet using query parameter
+        const res = await fetch(`${url}/api/notifications?wallet=${walletAddress}`);
         if (!res.ok) return; // Silently skip on error — stale data is fine
         const data = await res.json();
 
@@ -81,19 +82,36 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
   }, []);
 
   function handleItemClick(item: Notification) {
+    // Mark as read via API
+    if (!item.read) {
+      fetch(`${url}/api/notifications/mark-read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id }),
+      }).catch(() => {
+        // Silently fail - UI will still update optimistically
+      });
+    }
+
     dispatch(markRead(item.id));
     setOpen(false);
-    // Deep-link: MARKET_RESOLVED / MARKET_ENDING_SOON → market page; PAYOUT_AVAILABLE → portfolio
+
+    // Deep-link navigation to relevant market page
     const withMarket = item as Notification & { marketId?: string };
-    const url = withMarket.marketId
-      ? `/market/${withMarket.marketId}`
-      : item.type === "PAYOUT_AVAILABLE"
-        ? "/profile"
-        : "/";
-    router.push(url);
+    const targetUrl = withMarket.marketId ? `/markets/${withMarket.marketId}` : "/profile";
+    router.push(targetUrl);
   }
 
   function handleClearAll() {
+    // Call API to clear all notifications
+    if (walletAddress) {
+      fetch(`${url}/api/notifications/clear?wallet=${walletAddress}`, {
+        method: "DELETE",
+      }).catch(() => {
+        // Silently fail - UI will still update
+      });
+    }
+
     // Transition: all items removed, unread count resets to 0
     dispatch(clearAllNotifications());
     setOpen(false);
