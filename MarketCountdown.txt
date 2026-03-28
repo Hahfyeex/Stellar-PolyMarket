@@ -1,0 +1,81 @@
+Header & Global Stats
+Logo: SOVEREIGN MARKET
+
+Nav Links: Markets | Activity | Learn
+
+Headline: Live Markets
+
+Sub-headline: High-conviction prediction markets for the sovereign quantitative. Settle the future with institutional precision.
+
+Stats:
+
+Total Volume: $1.42B
+
+Open Interest: $842M
+
+Market Cards (Top Row)
+1. SpaceX Market (High Volatility)
+Title: Will SpaceX land a human on Mars by 2026?
+
+Options: * Yes: 14%
+
+No: 86%
+
+Metrics: Volume: $24.8M | Liquidity: $1.2M
+
+Timer: 42m 12s
+
+2. Technology Market
+Title: Will GPT-5 be released before December 2024?
+
+Options: * Yes: 68%
+
+No: 32%
+
+Metrics: Volume: $112.4M | Liquidity: $8.4M
+
+Timer: 14d 06h 12m
+
+3. Politics Market (Closed)
+Title: Who wins the 2024 UK General Election?
+
+Status: Resolved (Labor / Tory)
+
+Total Vol: $480.1M
+
+Spotlight & Finance Cards (Bottom Row)
+4. Spotlight Market (Ethereum)
+Title: Will Ethereum breach $5,000 before the end of Q3 2024?
+
+Description: Institutional sentiment is shifting rapidly as ETF flows stabilize. This...
+
+Probability Graph: 34% YES
+
+Metrics: * Daily Volume: $12.4M
+
+Open Interest: $89.1M
+
+Volatility: High
+
+5. Finance Market
+Title: Will the FOMC cut rates by 25bps in June?
+
+Data Points:
+
+Yes (Cut): 42.5%
+
+No (Pause/Raise): 57.5%
+
+Prediction Status: Divergent
+
+Sidebar & Footer
+User Profile: Institutional Terminal (Verified Quantitative)
+
+Menu: Dashboard, All Markets, Portfolio, Leaderboard, Settings
+
+Primary CTA: Place New Trade
+
+Footer Status: Network Status: Nominal | Markets Audited by Nexus Oracle | V2.4.1-Stable
+
+
+https://www.figma.com/design/i2vM2heNXpOzVy7WpgdYhy/Market-Countdown?m=auto&t=7MOuB6QpzXEsAmtU-6
