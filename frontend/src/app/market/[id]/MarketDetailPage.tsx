@@ -370,6 +370,8 @@ interface BettingPanelProps {
   onBetPlaced: () => void;
 }
 
+const HORIZON = "https://horizon-testnet.stellar.org";
+
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   const { publicKey, connecting, connect } = useWallet();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
@@ -477,6 +479,12 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           />
           <span className="flex items-center px-3 text-gray-400 font-medium">XLM</span>
         </div>
+        <StakePresets
+          amount={amount}
+          onSelect={setAmount}
+          walletBalance={xlmBalance}
+          disabled={!canBet}
+        />
 
         {/* Potential Payout */}
         {selectedOutcome !== null && amount && parseFloat(amount) > 0 && (
