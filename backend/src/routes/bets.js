@@ -6,11 +6,54 @@ const logger = require("../utils/logger");
 const eventBus = require("../bots/eventBus");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { sanitizeError } = require("../utils/errors");
+const axios = require("axios");
 
 const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 
 const IDEMPOTENCY_TTL = 24 * 60 * 60; // 24 hours in seconds
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TRUSTLINE_CACHE_TTL = 5 * 60; // 5 minutes in seconds
+const HORIZON_URL = process.env.HORIZON_URL || "https://horizon.stellar.org";
+
+/**
+ * Verify that a wallet has a trustline for a given asset
+ * @param {string} walletAddress - Stellar wallet address
+ * @param {string} assetCode - Asset code (e.g., "USDC")
+ * @param {string} assetIssuer - Asset issuer address
+ * @returns {Promise<boolean>} - True if trustline exists
+ */
+async function verifyTrustline(walletAddress, assetCode, assetIssuer) {
+  const cacheKey = `trustline:${walletAddress}:${assetCode}:${assetIssuer}`;
+  
+  // Check cache first
+  const cached = await redis.get(cacheKey);
+  if (cached !== null) {
+    return cached === "1";
+  }
+
+  try {
+    const response = await axios.get(`${HORIZON_URL}/accounts/${walletAddress}`);
+    const balances = response.data.balances || [];
+    
+    const hasTrustline = balances.some(
+      (balance) =>
+        balance.asset_code === assetCode &&
+        balance.asset_issuer === assetIssuer
+    );
+
+    // Cache the result
+    await redis.set(cacheKey, hasTrustline ? "1" : "0", "EX", TRUSTLINE_CACHE_TTL);
+    
+    return hasTrustline;
+  } catch (err) {
+    logger.error(
+      { wallet_address: walletAddress, asset_code: assetCode, error: err.message },
+      "Failed to verify trustline"
+    );
+    // Don't block the bet on API errors, log and allow
+    return true;
+  }
+}
 
 // POST /api/bets — place a bet
 router.post("/", async (req, res) => {
@@ -61,6 +104,32 @@ router.post("/", async (req, res) => {
       return res
         .status(400)
         .json({ error: "Market not found, already resolved, expired, or deleted" });
+    }
+
+    const marketData = market.rows[0];
+
+    // #479: Verify trustline for custom Stellar assets
+    if (marketData.contract_address && marketData.asset_code && marketData.asset_issuer) {
+      const hasTrustline = await verifyTrustline(
+        walletAddress,
+        marketData.asset_code,
+        marketData.asset_issuer
+      );
+
+      if (!hasTrustline) {
+        logger.warn(
+          {
+            market_id: marketId,
+            wallet_address: walletAddress,
+            asset_code: marketData.asset_code,
+            asset_issuer: marketData.asset_issuer,
+          },
+          "Bet rejected: wallet does not have trustline for asset"
+        );
+        return res.status(400).json({
+          error: `Your wallet does not have a trustline for ${marketData.asset_code}. Please add the trustline before betting.`,
+        });
+      }
     }
 
     // #376: Check for duplicate bet from same wallet on same market
