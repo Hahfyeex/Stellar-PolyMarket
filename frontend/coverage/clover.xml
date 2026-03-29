@@ -1,27 +1,72 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1774766634911" clover="3.2.0">
-  <project timestamp="1774766634911" name="All files">
-    <metrics statements="18" coveredstatements="18" conditionals="5" coveredconditionals="5" methods="2" coveredmethods="2" elements="25" coveredelements="25" complexity="0" loc="18" ncloc="18" packages="1" files="1" classes="1"/>
-    <file name="i18n.ts" path="/Users/Jeyvers/Documents/Code/OpenSource/Drips/Stellar_Wave_III/Stellar-PolyMarket/frontend/src/lib/i18n.ts">
-      <metrics statements="18" coveredstatements="18" conditionals="5" coveredconditionals="5" methods="2" coveredmethods="2"/>
-      <line num="16" count="1" type="stmt"/>
-      <line num="17" count="1" type="stmt"/>
-      <line num="18" count="1" type="stmt"/>
-      <line num="19" count="1" type="stmt"/>
-      <line num="22" count="1" type="stmt"/>
-      <line num="26" count="1" type="stmt"/>
-      <line num="32" count="1" type="stmt"/>
-      <line num="33" count="27" type="stmt"/>
-      <line num="34" count="27" type="cond" truecount="2" falsecount="0"/>
-      <line num="39" count="1" type="stmt"/>
-      <line num="45" count="1" type="stmt"/>
-      <line num="46" count="3" type="cond" truecount="3" falsecount="0"/>
-      <line num="47" count="2" type="stmt"/>
-      <line num="48" count="2" type="stmt"/>
-      <line num="51" count="1" type="stmt"/>
-      <line num="90" count="1" type="stmt"/>
-      <line num="91" count="1" type="stmt"/>
-      <line num="94" count="1" type="stmt"/>
+<coverage generated="1774767686196" clover="3.2.0">
+  <project timestamp="1774767686196" name="All files">
+    <metrics statements="63" coveredstatements="63" conditionals="17" coveredconditionals="12" methods="14" coveredmethods="13" elements="94" coveredelements="88" complexity="0" loc="63" ncloc="63" packages="1" files="1" classes="1"/>
+    <file name="useOddsStream.ts" path="/Users/Jeyvers/Documents/Code/OpenSource/Drips/Stellar_Wave_III/Stellar-PolyMarket/frontend/src/hooks/useOddsStream.ts">
+      <metrics statements="63" coveredstatements="63" conditionals="17" coveredconditionals="12" methods="14" coveredmethods="13"/>
+      <line num="37" count="2" type="stmt"/>
+      <line num="64" count="2" type="stmt"/>
+      <line num="66" count="2" type="stmt"/>
+      <line num="68" count="2" type="stmt"/>
+      <line num="75" count="46" type="cond" truecount="2" falsecount="0"/>
+      <line num="76" count="46" type="stmt"/>
+      <line num="81" count="2" type="stmt"/>
+      <line num="82" count="65" type="stmt"/>
+      <line num="83" count="65" type="stmt"/>
+      <line num="84" count="65" type="stmt"/>
+      <line num="87" count="65" type="stmt"/>
+      <line num="88" count="65" type="stmt"/>
+      <line num="89" count="65" type="stmt"/>
+      <line num="96" count="65" type="stmt"/>
+      <line num="97" count="8" type="cond" truecount="0" falsecount="1"/>
+      <line num="99" count="8" type="stmt"/>
+      <line num="100" count="8" type="stmt"/>
+      <line num="101" count="8" type="stmt"/>
+      <line num="102" count="16" type="cond" truecount="1" falsecount="0"/>
+      <line num="105" count="8" type="stmt"/>
+      <line num="106" count="8" type="stmt"/>
+      <line num="107" count="8" type="stmt"/>
+      <line num="112" count="8" type="stmt"/>
+      <line num="113" count="8" type="cond" truecount="1" falsecount="0"/>
+      <line num="117" count="65" type="stmt"/>
+      <line num="120" count="34" type="stmt"/>
+      <line num="125" count="34" type="stmt"/>
+      <line num="134" count="12" type="stmt"/>
+      <line num="135" count="12" type="cond" truecount="1" falsecount="0"/>
+      <line num="136" count="12" type="stmt"/>
+      <line num="137" count="8" type="cond" truecount="1" falsecount="0"/>
+      <line num="138" count="8" type="stmt"/>
+      <line num="139" count="8" type="stmt"/>
+      <line num="149" count="46" type="cond" truecount="0" falsecount="1"/>
+      <line num="151" count="46" type="stmt"/>
+      <line num="153" count="46" type="stmt"/>
+      <line num="154" count="21" type="cond" truecount="0" falsecount="1"/>
+      <line num="155" count="21" type="stmt"/>
+      <line num="157" count="21" type="stmt"/>
+      <line num="160" count="46" type="stmt"/>
+      <line num="161" count="16" type="cond" truecount="0" falsecount="1"/>
+      <line num="162" count="16" type="stmt"/>
+      <line num="164" count="16" type="stmt"/>
+      <line num="165" count="15" type="cond" truecount="1" falsecount="0"/>
+      <line num="170" count="12" type="stmt"/>
+      <line num="178" count="46" type="stmt"/>
+      <line num="180" count="46" type="stmt"/>
+      <line num="181" count="14" type="cond" truecount="0" falsecount="1"/>
+      <line num="182" count="14" type="stmt"/>
+      <line num="192" count="14" type="stmt"/>
+      <line num="193" count="14" type="stmt"/>
+      <line num="194" count="14" type="stmt"/>
+      <line num="198" count="34" type="stmt"/>
+      <line num="201" count="34" type="stmt"/>
+      <line num="203" count="34" type="stmt"/>
+      <line num="206" count="34" type="stmt"/>
+      <line num="208" count="34" type="cond" truecount="1" falsecount="0"/>
+      <line num="209" count="8" type="stmt"/>
+      <line num="210" count="8" type="stmt"/>
+      <line num="213" count="34" type="cond" truecount="1" falsecount="0"/>
+      <line num="215" count="34" type="stmt"/>
+      <line num="216" count="34" type="stmt"/>
+      <line num="221" count="65" type="stmt"/>
     </file>
   </project>
 </coverage>

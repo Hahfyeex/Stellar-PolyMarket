@@ -15,6 +15,7 @@ module.exports = {
         "!**/hooks/__tests__/useMarkets.test.ts",
         "!**/hooks/__tests__/useOnlineStatus.test.ts",
         "!**/hooks/__tests__/useKeyboardShortcuts.test.ts",
+        "!**/hooks/__tests__/useOddsStream.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -46,6 +47,8 @@ module.exports = {
         "**/hooks/__tests__/useMarkets.test.ts",
         "**/hooks/__tests__/useOnlineStatus.test.ts",
         "**/hooks/__tests__/useKeyboardShortcuts.test.ts",
+        // Live WebSocket odds streaming — requires jsdom for WebSocket mock globals
+        "**/hooks/__tests__/useOddsStream.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -76,6 +79,8 @@ module.exports = {
         "src/components/onboarding/StepMarkets.tsx",
         "src/components/onboarding/StepBetting.tsx",
         "src/components/onboarding/StepPayouts.tsx",
+        // Live odds WebSocket hook
+        "src/hooks/useOddsStream.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
