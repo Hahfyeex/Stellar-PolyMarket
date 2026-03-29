@@ -21,17 +21,20 @@ import { store } from "../store";
 import type { Market } from "../types/market";
 import OnboardingWizard from "../components/onboarding/OnboardingWizard";
 import ThemeToggle from "../components/ThemeToggle";
+import LanguageSelector from "../components/LanguageSelector";
 import { useMarkets } from "../hooks/useMarkets";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMarketTabs } from "../hooks/useMarketTabs";
 import MarketTabs from "../components/MarketTabs";
 import MarketListSkeleton from "../components/skeletons/MarketListSkeleton";
+import { useTranslation } from "react-i18next";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
+  const { t } = useTranslation("common");
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
@@ -113,12 +116,13 @@ export default function Home() {
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
       <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-[var(--border-default)]">
         <div className="flex items-center gap-4">
-          <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+          <span className="text-xl font-bold text-blue-400">{t("app.title")}</span>
           <ThemeToggle />
+          <LanguageSelector />
           <button
             onClick={handleHelpClick}
             className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-            title="Help & Documentation"
+            title={t("nav.help")}
           >
             <svg
               viewBox="0 0 24 24"
@@ -143,7 +147,7 @@ export default function Home() {
               onClick={disconnect}
               className="text-sm border border-gray-600 px-3 py-1.5 rounded-lg hover:border-gray-400"
             >
-              Disconnect
+              {t("wallet.disconnect")}
             </button>
           </div>
         ) : (
@@ -152,15 +156,16 @@ export default function Home() {
             disabled={connecting}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
           >
-            {connecting ? "Connecting..." : "Connect Wallet"}
+            {connecting ? t("wallet.connecting") : t("wallet.connect")}
           </button>
         )}
       </nav>
 
       {/* Mobile top bar */}
       <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-[var(--border-default)]">
-        <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
+        <span className="text-lg font-bold text-blue-400">{t("app.title")}</span>
         <div className="flex items-center gap-3">
+          <LanguageSelector />
           <ThemeToggle />
           {publicKey ? (
             <>
@@ -181,7 +186,7 @@ export default function Home() {
               disabled={connecting}
               className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
             >
-              {connecting ? "..." : "Connect"}
+              {connecting ? t("wallet.connecting_short") : t("wallet.connect_short")}
             </button>
           )}
         </div>
@@ -200,9 +205,9 @@ export default function Home() {
 
       {/* Hero */}
       <section className="flex flex-col items-center justify-center py-10 md:py-16 px-4 text-center">
-        <h1 className="text-3xl md:text-5xl font-bold mb-3">Predict. Stake. Earn.</h1>
+        <h1 className="text-3xl md:text-5xl font-bold mb-3">{t("app.tagline")}</h1>
         <p className="text-base md:text-xl text-gray-400 max-w-xl">
-          Decentralized prediction markets on Stellar. Fast, cheap, and transparent.
+          {t("app.description")}
         </p>
         <div className="max-w-md mx-auto w-full mt-4">
           <NotificationManager walletAddress={publicKey} />
@@ -212,12 +217,12 @@ export default function Home() {
       {/* Stats */}
       <section className="grid grid-cols-3 gap-3 max-w-2xl mx-auto px-4 pb-8 text-center">
         {[
-          { label: "Active Markets", value: markets.filter((m) => !m.resolved).length },
+          { label: t("stats.active_markets"), value: markets.filter((m) => !m.resolved).length },
           {
-            label: "Total Staked",
+            label: t("stats.total_staked"),
             value: `${markets.reduce((s, m) => s + parseFloat(m.total_pool || "0"), 0).toFixed(0)} XLM`,
           },
-          { label: "Markets", value: markets.length },
+          { label: t("stats.markets"), value: markets.length },
         ].map((stat) => (
           <div key={stat.label} className="bg-gray-900 rounded-xl p-4">
             <p className="text-2xl md:text-3xl font-bold text-blue-400">{stat.value}</p>
@@ -250,10 +255,10 @@ export default function Home() {
             ) : filteredMarkets.length === 0 ? (
               <p className="text-gray-400" data-testid="no-markets-empty-state">
                 {filters.query
-                  ? `No markets found for "${filters.query}"`
+                  ? t("markets.empty.no_results", { query: filters.query })
                   : activeTab === "active"
-                    ? "No active markets found."
-                    : "No resolved markets found."}
+                    ? t("markets.empty.no_active")
+                    : t("markets.empty.no_resolved")}
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -281,7 +286,7 @@ export default function Home() {
 
         {/* Live Activity Feed — hidden on mobile to save space */}
         <div className="hidden lg:block w-80 shrink-0">
-          <h2 className="text-2xl font-semibold mb-6">Recent Activity</h2>
+          <h2 className="text-2xl font-semibold mb-6">{t("activity.recent")}</h2>
           <LiveActivityFeed apiUrl={process.env.NEXT_PUBLIC_API_URL} />
         </div>
       </section>
