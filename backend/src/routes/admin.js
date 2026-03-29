@@ -223,9 +223,97 @@ router.post("/pending-review", jwtAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// POST /api/admin/markets/:id/resolve — legacy endpoint for backward compatibility
-router.post("/markets/:id/resolve", jwtAuth, requireAdmin, async (req, res) => {
+// POST /api/admin/markets/:id/pending-confirmation — oracle sets high-value market to PENDING_CONFIRMATION
+router.post("/markets/:id/pending-confirmation", async (req, res) => {
   const marketId = parseInt(req.params.id, 10);
+  const { proposedOutcome, totalPool } = req.body;
+
+  if (proposedOutcome === undefined || proposedOutcome === null || !Number.isInteger(proposedOutcome)) {
+    return res.status(400).json({ error: "proposedOutcome must be an integer" });
+  }
+
+  try {
+    const { rows } = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    if (!rows.length) return res.status(404).json({ error: "Market not found" });
+
+    await db.query(
+      `UPDATE markets SET status = 'PENDING_CONFIRMATION', proposed_outcome = $1 WHERE id = $2`,
+      [proposedOutcome, marketId]
+    );
+
+    logger.info({ marketId, proposedOutcome, totalPool }, "Market set to PENDING_CONFIRMATION");
+    res.json({ success: true, market_id: marketId, proposed_outcome: proposedOutcome });
+  } catch (err) {
+    logger.error({ err: err.message }, "Failed to set pending confirmation");
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
+  }
+});
+
+// POST /api/admin/markets/:id/confirm-resolution — admin finalizes a PENDING_CONFIRMATION market
+router.post("/markets/:id/confirm-resolution", jwtAuth, requireAdmin, async (req, res) => {
+  const marketId = parseInt(req.params.id, 10);
+
+  try {
+    const { rows } = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    if (!rows.length) return res.status(404).json({ error: "Market not found" });
+
+    const market = rows[0];
+    if (market.status !== "PENDING_CONFIRMATION") {
+      return res.status(409).json({ error: "Market is not in PENDING_CONFIRMATION status" });
+    }
+    if (market.proposed_outcome === null || market.proposed_outcome === undefined) {
+      return res.status(409).json({ error: "No proposed outcome to confirm" });
+    }
+
+    await db.query(
+      `UPDATE markets SET resolved = true, winning_outcome = $1, status = 'RESOLVED', proposed_outcome = NULL WHERE id = $2`,
+      [market.proposed_outcome, marketId]
+    );
+
+    await logAdminAction(req.admin.sub, "CONFIRM_RESOLUTION", marketId, "MARKET", {
+      winning_outcome: market.proposed_outcome,
+    }, req);
+
+    logger.info({ marketId, winning_outcome: market.proposed_outcome, admin: req.admin.sub }, "Admin confirmed high-value resolution");
+    await redis.del("admin:stats");
+
+    res.json({ success: true, market_id: marketId, winning_outcome: market.proposed_outcome });
+  } catch (err) {
+    logger.error({ err: err.message }, "Admin confirm-resolution failed");
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
+  }
+});
+
+// POST /api/admin/markets/:id/reject-resolution — admin rejects and returns market to ACTIVE
+router.post("/markets/:id/reject-resolution", jwtAuth, requireAdmin, async (req, res) => {
+  const marketId = parseInt(req.params.id, 10);
+
+  try {
+    const { rows } = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    if (!rows.length) return res.status(404).json({ error: "Market not found" });
+
+    if (rows[0].status !== "PENDING_CONFIRMATION") {
+      return res.status(409).json({ error: "Market is not in PENDING_CONFIRMATION status" });
+    }
+
+    await db.query(
+      `UPDATE markets SET status = 'ACTIVE', proposed_outcome = NULL WHERE id = $1`,
+      [marketId]
+    );
+
+    await logAdminAction(req.admin.sub, "REJECT_RESOLUTION", marketId, "MARKET", {}, req);
+
+    logger.info({ marketId, admin: req.admin.sub }, "Admin rejected high-value resolution");
+
+    res.json({ success: true, market_id: marketId });
+  } catch (err) {
+    logger.error({ err: err.message }, "Admin reject-resolution failed");
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
+  }
+});
+
+// POST /api/admin/markets/:id/resolve — legacy endpoint for backward compatibility
+router.post("/markets/:id/resolve", jwtAuth, requireAdmin, async (req, res) => {  const marketId = parseInt(req.params.id, 10);
   const { winning_outcome } = req.body;
 
   if (

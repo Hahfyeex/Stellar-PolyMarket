@@ -8,12 +8,14 @@
  *   4. Inserts into dead_letter_queue after 3 consecutive failures
  */
 
-const cron = require('node-cron');
-const db = require('../db');
-const { resolveMarket } = require('../oracles');
-const logger = require('../utils/logger');
+const cron = require("node-cron");
+const db = require("../db");
+const { resolveMarket } = require("../oracles");
+const logger = require("../utils/logger");
+const { triggerNotification } = require("../utils/notifications");
 
 const MAX_ATTEMPTS = 3;
+const HIGH_VALUE_THRESHOLD = BigInt(process.env.HIGH_VALUE_THRESHOLD || "100000000000");
 
 /**
  * Exponential backoff delay: 1s, 2s, 4s for attempts 0, 1, 2.
@@ -38,7 +40,7 @@ async function resolveWithRetry(market) {
       lastError = err;
       logger.warn(
         { marketId: market.id, attempt: attempt + 1, err: err.message },
-        'Oracle call failed, retrying'
+        "Oracle call failed, retrying"
       );
       // Exponential backoff: 1s → 2s → 4s
       if (attempt < MAX_ATTEMPTS - 1) {
@@ -57,11 +59,11 @@ async function deadLetter(market, error) {
   await db.query(
     `INSERT INTO dead_letter_queue (market_id, oracle_type, error, attempts)
      VALUES ($1, $2, $3, $4)`,
-    [market.id, market.category || 'general', error.message, MAX_ATTEMPTS]
+    [market.id, market.category || "general", error.message, MAX_ATTEMPTS]
   );
   logger.error(
     { marketId: market.id, error: error.message },
-    'Market sent to dead-letter queue after max retries'
+    "Market sent to dead-letter queue after max retries"
   );
 }
 
@@ -79,32 +81,57 @@ async function checkExpiredMarkets() {
     );
     markets = result.rows;
   } catch (err) {
-    logger.error({ err: err.message }, 'Failed to query expired markets');
+    logger.error({ err: err.message }, "Failed to query expired markets");
     return;
   }
 
-  logger.info({ count: markets.length }, 'Checking expired markets');
+  logger.info({ count: markets.length }, "Checking expired markets");
 
   for (const market of markets) {
     try {
       const winningOutcome = await resolveWithRetry(market);
+      const totalPool = BigInt(Math.floor(parseFloat(market.total_pool || '0') * 10_000_000));
 
-      // Mark resolved in DB
-      await db.query(
-        `UPDATE markets
-         SET resolved = true, winning_outcome = $1, status = 'RESOLVED'
-         WHERE id = $2`,
-        [winningOutcome, market.id]
-      );
+      if (totalPool >= HIGH_VALUE_THRESHOLD) {
+        // High-value market: require admin confirmation before resolving
+        await db.query(
+          `UPDATE markets
+           SET status = 'PENDING_CONFIRMATION', proposed_outcome = $1
+           WHERE id = $2`,
+          [winningOutcome, market.id]
+        );
 
-      logger.info(
-        { marketId: market.id, winningOutcome },
-        'Market resolved successfully'
-      );
+        logger.info(
+          { marketId: market.id, winningOutcome, totalPool: totalPool.toString() },
+          'High-value market set to PENDING_CONFIRMATION'
+        );
+
+        // Send admin alert with market details and proposed outcome
+        await triggerNotification(
+          null,
+          'HIGH_VALUE_RESOLUTION',
+          `High-value market "${market.question}" (pool: ${market.total_pool}) requires admin confirmation. Proposed outcome: ${market.outcomes[winningOutcome]}`,
+          market.id
+        );
+      } else {
+        // Below threshold: resolve immediately
+        await db.query(
+          `UPDATE markets
+           SET resolved = true, winning_outcome = $1, status = 'RESOLVED'
+           WHERE id = $2`,
+          [winningOutcome, market.id]
+        );
+
+        logger.info(
+          { marketId: market.id, winningOutcome },
+          'Market resolved successfully'
+        );
+      }
     } catch (err) {
       // All retries exhausted — send to dead-letter queue
       await deadLetter(market, err);
     }
+  }
   }
 }
 
@@ -113,11 +140,11 @@ async function checkExpiredMarkets() {
  * Runs every 5 minutes: '* /5 * * * *'
  */
 function start() {
-  cron.schedule('*/5 * * * *', async () => {
-    logger.info('Running automated market resolver');
+  cron.schedule("*/5 * * * *", async () => {
+    logger.info("Running automated market resolver");
     await checkExpiredMarkets();
   });
-  logger.info('Automated resolver cron started (every 5 minutes)');
+  logger.info("Automated resolver cron started (every 5 minutes)");
 }
 
-module.exports = { start, checkExpiredMarkets, resolveWithRetry, deadLetter, delay };
+module.exports = { start, checkExpiredMarkets, resolveWithRetry, deadLetter, delay, HIGH_VALUE_THRESHOLD };

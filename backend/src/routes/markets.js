@@ -582,9 +582,63 @@ router.get("/:id/dispute-status", async (req, res) => {
   }
 });
 
-// DELETE /api/markets/:id — soft delete (admin JWT required)
-router.delete("/:id", jwtAuth, async (req, res) => {
+// PATCH /api/markets/:id — update market fields (admin JWT required)
+router.patch("/:id", jwtAuth, async (req, res) => {
+  const marketId = req.params.id;
+  const { endDate } = req.body;
+
+  if (!endDate) {
+    return res.status(400).json({ error: "endDate is required" });
+  }
+
+  const newEndDate = new Date(endDate);
+  if (isNaN(newEndDate.getTime())) {
+    return res.status(400).json({ error: "endDate is not a valid date" });
+  }
+
+  const minAllowed = new Date(Date.now() + 60 * 60 * 1000);
+  if (newEndDate < minAllowed) {
+    return res.status(400).json({ error: "endDate must be at least 1 hour in the future" });
+  }
+
   try {
+    const { rows } = await db.query(
+      "SELECT * FROM markets WHERE id = $1 AND deleted_at IS NULL",
+      [marketId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Market not found" });
+
+    const result = await db.query(
+      "UPDATE markets SET end_date = $1 WHERE id = $2 RETURNING *",
+      [newEndDate.toISOString(), marketId]
+    );
+
+    // Audit log
+    await db.query(
+      `INSERT INTO admin_audit_log (admin_wallet, action_type, target_id, target_type, payload, ip_address, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [
+        req.admin?.sub || "unknown",
+        "UPDATE_END_DATE",
+        marketId,
+        "MARKET",
+        JSON.stringify({ old_end_date: rows[0].end_date, new_end_date: newEndDate.toISOString() }),
+        req.ip,
+      ]
+    );
+
+    logger.info({ marketId, new_end_date: newEndDate, admin: req.admin?.sub }, "Market end date updated");
+    await invalidateAll(marketId);
+
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    logger.error({ err, market_id: marketId }, "Failed to update market end date");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/markets/:id — soft delete (admin JWT required)
+router.delete("/:id", jwtAuth, async (req, res) => {  try {
     const result = await db.query(
       "UPDATE markets SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *",
       [req.params.id]

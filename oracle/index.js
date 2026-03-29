@@ -5,6 +5,9 @@ const { btcSources, RateLimitError } = require("./sources");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
 
+// High-value threshold in stroops (default 10,000 XLM = 10,000 * 10^7 stroops)
+const HIGH_VALUE_THRESHOLD = parseInt(process.env.HIGH_VALUE_THRESHOLD, 10) || 100_000_000_000;
+
 // ── Logger ────────────────────────────────────────────────────────────────────
 const logger = {
   info:  (...a) => console.log(...a),
@@ -94,10 +97,43 @@ async function runOracle() {
   }
 }
 
+async function sendAdminAlert(market, proposedOutcome, totalPool) {
+  const webhookUrl = process.env.ADMIN_ALERT_WEBHOOK_URL;
+  if (!webhookUrl) return;
+  try {
+    await axios.post(webhookUrl, {
+      type: "high_value_pending_confirmation",
+      market_id: market.id,
+      question: market.question,
+      proposed_outcome: proposedOutcome,
+      total_pool: totalPool,
+      threshold: HIGH_VALUE_THRESHOLD,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error(`[Oracle] Failed to send admin alert for market #${market.id}:`, err.message);
+  }
+}
+
 async function resolveMarket(market) {
   logger.info(`[Oracle] Resolving market #${market.id}: "${market.question}"`);
   try {
     const winningOutcome = await fetchOutcome(market);
+
+    // High-value check: if total_pool >= threshold, require admin confirmation
+    const totalPool = parseFloat(market.total_pool) || 0;
+    if (totalPool >= HIGH_VALUE_THRESHOLD) {
+      await axios.post(`${API_URL}/api/admin/markets/${market.id}/pending-confirmation`, {
+        proposedOutcome: winningOutcome,
+        totalPool,
+      });
+      logger.warn(
+        `[Oracle] Market #${market.id} is high-value (pool=${totalPool}). Set to PENDING_CONFIRMATION.`
+      );
+      await sendAdminAlert(market, winningOutcome, totalPool);
+      return;
+    }
+
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     logger.info(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
@@ -293,9 +329,11 @@ module.exports = {
   resolveMarket,
   fetchOutcome,
   markUnresolvable,
+  sendAdminAlert,
   gracefulShutdown,
   reschedule,
   RateLimitError,
+  HIGH_VALUE_THRESHOLD,
   _getIsRunning: () => isRunning,
   _getIsShuttingDown: () => isShuttingDown,
   _getIntervalHandle: () => intervalHandle,
