@@ -10,44 +10,76 @@ const { triggerNotification } = require("../utils/notifications");
  * @param {string|number} marketId
  * @returns {Promise<{ payouts: Array<{wallet: string, payout: string}>, winnersCount: number, totalDistributed: number, totalPool: number, winningStake: number }>}
  */
+function parseXlmToStroops(decimalValue) {
+  if (decimalValue === null || decimalValue === undefined) {
+    throw new Error("Unable to parse zero-float value");
+  }
+
+  const value = decimalValue.toString();
+  if (!/^\d+(\.\d+)?$/.test(value)) {
+    throw new Error(`Invalid numeric value ${value}`);
+  }
+
+  const [whole, decimals = ""] = value.split(".");
+  const paddedDecimals = (decimals + "0000000").slice(0, 7);
+
+  return BigInt(whole) * 10000000n + BigInt(paddedDecimals);
+}
+
+function formatStroopsToXlmString(stroops) {
+  const whole = stroops / 10000000n;
+  const remainder = stroops % 10000000n;
+  return `${whole.toString()}.${remainder.toString().padStart(7, "0")}`;
+}
+
 async function distributePayouts(marketId) {
-  const marketResult = await db.query("SELECT * FROM markets WHERE id = $1 AND resolved = TRUE", [
-    marketId,
-  ]);
-  
+  const marketResult = await db.query("SELECT * FROM markets WHERE id = $1 AND resolved = TRUE", [marketId]);
+
   if (!marketResult.rows.length) {
     throw new Error("Market not found or not resolved");
   }
 
-  const { winning_outcome, total_pool } = marketResult.rows[0];
+  const { winning_outcome, total_pool, fee_rate_bps } = marketResult.rows[0];
+  const feeRate = Number.isFinite(Number(fee_rate_bps)) ? Number(fee_rate_bps) : 300;
+  if (feeRate < 0 || feeRate > 10000) {
+    throw new Error(`Invalid fee_rate_bps ${fee_rate_bps}`);
+  }
 
   const winners = await db.query(
     "SELECT * FROM bets WHERE market_id = $1 AND outcome_index = $2 AND paid_out = FALSE",
     [marketId, winning_outcome]
   );
 
-  const totalPoolStroops = BigInt(Math.floor(parseFloat(total_pool) * 1e7));
+  const totalPoolStroops = parseXlmToStroops(total_pool);
 
   const winningStakeStroops = winners.rows.reduce((sum, b) => {
-    return sum + BigInt(Math.floor(parseFloat(b.amount) * 1e7));
+    return sum + parseXlmToStroops(b.amount);
   }, 0n);
 
   if (winningStakeStroops === 0n) {
-    return { payouts: [], winnersCount: 0, totalDistributed: 0, totalPool: parseFloat(total_pool), winningStake: 0 };
+    return {
+      payouts: [],
+      winnersCount: 0,
+      totalDistributed: 0,
+      totalPool: Number(total_pool),
+      winningStake: 0,
+    };
   }
 
-  const payoutPoolStroops = (totalPoolStroops * 97n) / 100n;
+  const payoutPoolStroops = (totalPoolStroops * BigInt(10000 - feeRate)) / 10000n;
 
   const payouts = winners.rows.map((bet) => {
-    const betAmountStroops = BigInt(Math.floor(parseFloat(bet.amount) * 1e7));
+    const betAmountStroops = parseXlmToStroops(bet.amount);
     const payoutStroops = (betAmountStroops * payoutPoolStroops) / winningStakeStroops;
-    const payoutXlm = Number(payoutStroops) / 1e7;
-    return { wallet: bet.wallet_address, payout: payoutXlm.toFixed(7) };
+    return {
+      wallet: bet.wallet_address,
+      payout: formatStroopsToXlmString(payoutStroops),
+    };
   });
 
   let totalPayoutStroops = 0n;
   for (const payout of payouts) {
-    const payoutStroops = BigInt(Math.round(parseFloat(payout.payout) * 10_000_000));
+    const payoutStroops = parseXlmToStroops(payout.payout);
     totalPayoutStroops += payoutStroops;
   }
 

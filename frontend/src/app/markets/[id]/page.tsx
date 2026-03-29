@@ -33,8 +33,12 @@ import ShareModal from "../../../components/ShareModal";
 import DisputeModal from "../../../components/DisputeModal";
 import DisputeStatusTracker from "../../../components/DisputeStatusTracker";
 import { type DisputeState } from "../../../components/DisputeModal";
+import Script from "next/script";
 import { store } from "../../../store";
 import MarketDetailSkeleton from "../../../components/skeletons/MarketDetailSkeleton";
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+const SUPPORTED_LOCALES = ["en", "fr", "yo", "ha", "sw"];
 
 interface Market {
   id: number;
@@ -92,10 +96,17 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
   const canonicalUrl = `${SITE_URL}/markets/${market.id}`;
   const ogImage = `${SITE_URL}/api/og?id=${market.id}`;
 
+  const languages = Object.fromEntries(
+    SUPPORTED_LOCALES.map((lang) => [lang, `${SITE_URL}/${lang}/markets/${market.id}`])
+  );
+
   return {
     title: market.question,
     description,
-    alternates: { canonical: canonicalUrl },
+    alternates: {
+      canonical: canonicalUrl,
+      languages,
+    },
     openGraph: {
       title: market.question,
       description,
@@ -153,8 +164,24 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
     );
   }
 
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Event",
+    name: market.question,
+    startDate: market.created_at ? new Date(market.created_at).toISOString() : new Date().toISOString(),
+    endDate: new Date(market.end_date).toISOString(),
+    description: market.description || market.question,
+    offers: market.outcomes.map((outcome: string, index: number) => ({
+      "@type": "Offer",
+      name: outcome,
+      price: ((parseFloat(market.total_pool) || 0) / market.outcomes.length).toFixed(7),
+      priceCurrency: "XLM",
+    })),
+  };
+
   return (
     <main className="min-h-screen bg-gray-950 text-white">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       {/* Top nav with back button */}
       <nav className="flex items-center gap-3 px-4 md:px-6 py-4 border-b border-gray-800 sticky top-0 z-30 bg-gray-950/90 backdrop-blur-sm">
         <button
