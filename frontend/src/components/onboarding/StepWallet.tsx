@@ -7,11 +7,11 @@
 
 interface Props {
   publicKey: string | null;
-  connecting: boolean;
+  isLoading: boolean;
   onConnect: () => void;
 }
 
-export default function StepWallet({ publicKey, connecting, onConnect }: Props) {
+export default function StepWallet({ publicKey, isLoading, onConnect }: Props) {
   return (
     <div className="flex flex-col items-center gap-5 text-center">
       {/* Icon */}
@@ -44,11 +44,11 @@ export default function StepWallet({ publicKey, connecting, onConnect }: Props) 
       ) : (
         <button
           onClick={onConnect}
-          disabled={connecting}
+          disabled={isLoading}
           data-testid="wizard-connect-button"
           className="w-full max-w-xs py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl text-white font-semibold text-sm transition-colors"
         >
-          {connecting ? "Connecting…" : "Connect Freighter Wallet"}
+          {isLoading ? "Connecting…" : "Connect Freighter Wallet"}
         </button>
       )}
 

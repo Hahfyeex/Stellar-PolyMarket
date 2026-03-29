@@ -63,7 +63,7 @@ const MOCK_DISPUTES: Dispute[] = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function GovernancePage() {
-  const { publicKey, connecting, connect } = useWalletContext();
+  const { publicKey, isLoading, connect } = useWalletContext();
   const { isCouncilMember, loading: checkingMembership } = useCouncilMember(publicKey);
 
   const [disputes, setDisputes] = useState<Dispute[]>(MOCK_DISPUTES);
@@ -125,10 +125,10 @@ export default function GovernancePage() {
           </div>
           <button
             onClick={connect}
-            disabled={connecting}
+            disabled={isLoading}
             className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl text-white font-semibold transition-colors"
           >
-            {connecting ? "Connecting..." : "Connect Freighter Wallet"}
+            {isLoading ? "Connecting..." : "Connect Freighter Wallet"}
           </button>
         </div>
       </main>

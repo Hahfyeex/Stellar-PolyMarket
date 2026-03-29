@@ -2,6 +2,7 @@ require("dotenv").config();
 const axios = require("axios");
 const { OracleMedianizer } = require("./medianizer");
 const { btcSources } = require("./sources");
+const { registerResolver, getResolver } = require("./registry");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
 
@@ -97,19 +98,18 @@ async function runOracle() {
 async function resolveMarket(market) {
   logger.info(`[Oracle] Resolving market #${market.id}: "${market.question}"`);
   try {
-    const winningOutcome = await fetchOutcome(market.question, market.outcomes);
+    const winningOutcome = await fetchOutcome(market);
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     logger.info(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
     // #377: Handle deadline not reached errors gracefully
     if (err.response?.data?.error?.includes("Market deadline not reached")) {
       logger.warn(`[Oracle] Market #${market.id} deadline not reached on-chain, retrying in 5 minutes`);
-      // Add to retry queue (in production, use persistent queue)
       const retryTime = new Date(Date.now() + 5 * 60 * 1000);
       logger.info(`[Oracle] Market #${market.id} scheduled for retry at ${retryTime.toISOString()}`);
       return;
     }
-    if (err.message && err.message.startsWith("No resolver matched")) {
+    if (err.message && (err.message.startsWith("No resolver matched") || err.message.startsWith("No resolver registered"))) {
       logger.error(`[Oracle] Unresolvable market #${market.id}: ${err.message}`);
       await markUnresolvable(market.id, market.question, err.message);
     } else {
@@ -148,53 +148,67 @@ async function markUnresolvable(marketId, question, reason) {
 }
 
 /**
- * Determine winning outcome based on question type.
- * Extend this with real API integrations per category.
+ * Determine winning outcome based on market category slug.
+ * Resolvers are looked up from the registry — no keyword matching.
  */
-async function fetchOutcome(question, outcomes) {
-  const q = question.toLowerCase();
-
-  if (q.includes("bitcoin") || q.includes("btc") || q.includes("price")) {
-    return await resolveCryptoPrice(question, outcomes);
+async function fetchOutcome(market) {
+  const slug = (market.category_slug || market.category || "").toLowerCase();
+  const resolver = getResolver(slug);
+  if (!resolver) {
+    throw new Error(`No resolver registered for category: "${slug}"`);
   }
-
-  if (q.includes("inflation") || q.includes("ngn") || q.includes("usd")) {
-    return await resolveFinancial(question, outcomes);
-  }
-
-  // No resolver matched — throw descriptive error instead of defaulting
-  throw new Error(`No resolver matched for market question: "${question}"`);
+  return resolver(market);
 }
 
-async function resolveCryptoPrice(question, outcomes) {
+async function resolveCryptoPrice(market) {
+  const question = market.question || market;
+  const outcomes = market.outcomes || [];
   try {
-    // Use medianizer to aggregate independent BTC/USD sources in parallel,
-    // filter outliers (>2σ), and return a manipulation-resistant median price.
-    // DB is injected for audit logging — null in test environments.
     const medianizer = new OracleMedianizer(btcSources, console, getDb());
     const btcPrice = await medianizer.aggregate("BTC/USD");
     logger.info(`[Oracle] BTC median price: ${btcPrice}`);
 
-    if (question.toLowerCase().includes("100k") || question.includes("100,000")) {
+    if (
+      (typeof question === "string" && question.toLowerCase().includes("100k")) ||
+      (typeof question === "string" && question.includes("100,000"))
+    ) {
       return btcPrice >= 100000 ? 0 : 1;
     }
     return 0;
   } catch (err) {
-    // Insufficient sources (< 2 valid) — push to pending review
-    if (err.message.includes("Insufficient valid sources") || err.message.includes("Too many outliers")) {
-      logger.error(`[Oracle] Crypto price aggregation failed — pushing to pending review: ${err.message}`);
-      throw err; // bubble up so resolveMarket calls markUnresolvable
+    if (
+      err.message.includes("Insufficient valid sources") ||
+      err.message.includes("Too many outliers")
+    ) {
+      logger.error(
+        `[Oracle] Crypto price aggregation failed — pushing to pending review: ${err.message}`
+      );
+      throw err;
     }
     logger.error("[Oracle] Crypto price aggregation failed:", err.message);
     throw err;
   }
 }
 
-async function resolveFinancial(question, outcomes) {
-  // Placeholder — integrate with a financial data API (e.g. ExchangeRate-API)
-  logger.warn("[Oracle] Financial resolver not yet integrated — defaulting to outcome 0");
+async function resolveFinancial(market) {
+  logger.warn(
+    "[Oracle] Financial resolver not yet integrated — defaulting to outcome 0"
+  );
   return 0;
 }
+
+async function resolveSports(market) {
+  logger.warn(
+    "[Oracle] Sports resolver not yet integrated — defaulting to outcome 0"
+  );
+  return 0;
+}
+
+// ── Register built-in resolvers ───────────────────────────────────────────────
+registerResolver("crypto", resolveCryptoPrice);
+registerResolver("economics", resolveFinancial);
+registerResolver("sports", resolveSports);
+registerResolver("football", resolveSports);
 
 // ── Adaptive polling (#440) ───────────────────────────────────────────────────
 
@@ -275,6 +289,10 @@ module.exports = {
   markUnresolvable,
   gracefulShutdown,
   reschedule,
+  registerResolver,
+  resolveCryptoPrice,
+  resolveFinancial,
+  resolveSports,
   _getIsRunning: () => isRunning,
   _getIsShuttingDown: () => isShuttingDown,
   _getIntervalHandle: () => intervalHandle,
