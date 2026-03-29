@@ -90,6 +90,78 @@ describe("On-Chain Bet Validation (#435)", () => {
     expect(response.body.bet).toBeDefined();
   });
 
+  test("should accept memo when provided and matching expected format", async () => {
+    const memo = "STELLA-1-0";
+
+    db.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 1,
+          status: "ACTIVE",
+          resolved: false,
+          outcomes: ["Yes", "No"],
+          total_pool: 0,
+        },
+      ],
+    });
+
+    getMarketStatus.mockResolvedValueOnce("Active");
+
+    db.query.mockResolvedValueOnce({ rows: [{ source_account: validBetPayload.walletAddress, memo }] });
+    db.query.mockResolvedValueOnce({ rows: [{ id: 1, ...validBetPayload, memo }] });
+    db.query.mockResolvedValueOnce({});
+    db.query.mockResolvedValueOnce({ rows: [{ total_pool: 100 }] });
+
+    redis.get.mockResolvedValue(null);
+    redis.set.mockResolvedValue("OK");
+    redis.del.mockResolvedValue(1);
+
+    const response = await request(app)
+      .post("/api/bets")
+      .send({ ...validBetPayload, memo });
+
+    expect(response.status).toBe(201);
+    expect(response.body.bet.memo).toBe(memo);
+  });
+
+  test("should reject memo that does not match expected format", async () => {
+    const badMemo = "WRONG-1-0";
+
+    const response = await request(app)
+      .post("/api/bets")
+      .send({ ...validBetPayload, memo: badMemo });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("memo must match");
+  });
+
+  test("should reject horizon transaction memo mismatch", async () => {
+    const onchainMemo = "STELLA-1-1";
+
+    db.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 1,
+          status: "ACTIVE",
+          resolved: false,
+          outcomes: ["Yes", "No"],
+          total_pool: 0,
+        },
+      ],
+    });
+
+    getMarketStatus.mockResolvedValueOnce("Active");
+
+    db.query.mockResolvedValueOnce({ rows: [{ source_account: validBetPayload.walletAddress, memo: onchainMemo }] });
+
+    const response = await request(app)
+      .post("/api/bets")
+      .send({ ...validBetPayload, memo: "STELLA-1-0" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("Transaction memo");
+  });
+
   test("should reject bet on paused market", async () => {
     // Mock market query
     db.query.mockResolvedValueOnce({

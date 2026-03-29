@@ -223,6 +223,13 @@ body {
   padding-right: env(safe-area-inset-right);
 }
 
+/* Mobile content padding — prevents bottom nav overlap on pages without MobileShell */
+@media (max-width: 767px) {
+  .mobile-pb {
+    padding-bottom: 5.5rem; /* nav 4.5rem + safe-area buffer */
+  }
+}
+
 /* ── Animations ──────────────────────────────────────────────────────────── */
 
 @keyframes activityFadeIn {

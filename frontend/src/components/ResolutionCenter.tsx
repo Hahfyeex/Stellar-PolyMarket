@@ -39,12 +39,104 @@ async function disputeMarket({ marketId, reason }: { marketId: number; reason: s
   return res.json();
 }
 
+async function updateEndDate(marketId: number, endDate: string, adminToken: string) {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets/${marketId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify({ endDate }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || "Failed to update end date");
+  }
+  return res.json();
+}
+
+/** Inline date editor for a single market row */
+function EndDateEditor({
+  market,
+  adminToken,
+  onDone,
+}: {
+  market: Market;
+  adminToken: string;
+  onDone: () => void;
+}) {
+  const queryClient = useQueryClient();
+  // Format current end_date as datetime-local value (YYYY-MM-DDTHH:mm)
+  const toLocalValue = (iso: string) => iso.slice(0, 16);
+  const [value, setValue] = useState(toLocalValue(market.end_date));
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const mutation = useMutation({
+    mutationFn: (endDate: string) => updateEndDate(market.id, endDate, adminToken),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["markets", "proposed"] });
+      setSuccess(true);
+      setTimeout(onDone, 1200);
+    },
+    onError: (err: Error) => setValidationError(err.message),
+  });
+
+  function handleSave() {
+    setValidationError(null);
+    const chosen = new Date(value);
+    const minAllowed = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+    if (isNaN(chosen.getTime()) || chosen < minAllowed) {
+      setValidationError("New end date must be at least 1 hour in the future.");
+      return;
+    }
+    mutation.mutate(chosen.toISOString());
+  }
+
+  return (
+    <div className="flex flex-col gap-2 mt-2" data-testid={`end-date-editor-${market.id}`}>
+      <input
+        type="datetime-local"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-white text-sm focus:border-cyan-500 outline-none"
+        data-testid={`end-date-input-${market.id}`}
+      />
+      {validationError && (
+        <p className="text-red-400 text-xs" data-testid={`end-date-error-${market.id}`}>
+          {validationError}
+        </p>
+      )}
+      {success && <p className="text-emerald-400 text-xs">End date updated!</p>}
+      <div className="flex gap-2">
+        <button
+          onClick={handleSave}
+          disabled={mutation.isPending}
+          className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 rounded-lg text-white text-xs font-semibold transition-colors"
+          data-testid={`end-date-save-${market.id}`}
+        >
+          {mutation.isPending ? "Saving..." : "Save"}
+        </button>
+        <button
+          onClick={onDone}
+          className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-white text-xs font-semibold transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AdminResolutionCenter() {
   const { publicKey } = useWallet();
   const connected = !!publicKey;
   const router = useRouter();
   const queryClient = useQueryClient();
   const [disputeModal, setDisputeModal] = useState<{ id: number; reason: string } | null>(null);
+  const [editingEndDate, setEditingEndDate] = useState<number | null>(null);
+  // In production, the admin JWT would come from an auth context/cookie
+  const adminToken = process.env.NEXT_PUBLIC_ADMIN_JWT || "";
 
   useEffect(() => {
     if (connected && publicKey && publicKey !== ADMIN_ADDRESS) {
@@ -124,10 +216,27 @@ export function AdminResolutionCenter() {
                 <div className="text-slate-400">
                   ID: <span className="font-mono">{market.id}</span>
                 </div>
+                <div className="text-slate-400">
+                  Ends: <span className="text-white">{new Date(market.end_date).toLocaleString()}</span>
+                </div>
               </div>
+              {editingEndDate === market.id && (
+                <EndDateEditor
+                  market={market}
+                  adminToken={adminToken}
+                  onDone={() => setEditingEndDate(null)}
+                />
+              )}
             </div>
 
-            <div className="flex gap-3 shrink-0">
+            <div className="flex gap-3 shrink-0 flex-wrap">
+              <button
+                onClick={() => setEditingEndDate(editingEndDate === market.id ? null : market.id)}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-white font-bold transition-colors border border-slate-700 text-sm"
+                data-testid={`edit-end-date-btn-${market.id}`}
+              >
+                Edit End Date
+              </button>
               <button
                 onClick={() => {
                   if (confirm("Are you sure you want to approve this resolution? This will trigger on-chain settlement.")) {

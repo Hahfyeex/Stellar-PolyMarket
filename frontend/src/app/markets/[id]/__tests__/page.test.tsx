@@ -50,6 +50,9 @@ describe("generateMetadata", () => {
     expect((metadata.openGraph as { url: string }).url).toContain("/markets/42");
     expect((metadata.openGraph as { images: { url: string }[] }).images[0].url).toContain("id=42");
     expect((metadata.alternates as { canonical: string }).canonical).toContain("/markets/42");
+    expect((metadata.alternates as { languages: Record<string,string> }).languages.en).toContain(
+      "/markets/42"
+    );
     expect(metadata.description).toContain("Pool: 4,200 XLM");
   });
 
@@ -93,8 +96,9 @@ describe("MarketsDetailPage (default export)", () => {
 
     const { default: Page } = await import("../page");
     const jsx = await Page({ params: { id: "42" } });
-    const { getByTestId } = render(jsx as React.ReactElement);
+    const { getByTestId, container } = render(jsx as React.ReactElement);
 
     expect(getByTestId("market-detail").textContent).toBe("42");
+    expect(container.querySelector('script[type="application/ld+json"]')).not.toBeNull();
   });
 });

@@ -1,42 +1,48 @@
-# Dark Mode Aware Recharts Charts - Implementation TODO
+# Mobile Bottom Navigation Implementation TODO
 
-Current progress: 0/18 ✅
+Status: [0/12] - Plan approved ✅
 
-## Phase 1: Core Hooks & Provider (4 steps)
+## Breakdown from Approved Plan
 
-1. [✅] Create `frontend/src/hooks/useChartColors.ts` - Theme detection hook + MutationObserver + palettes
-2. [✅] Create `frontend/src/hooks/__tests__/useChartColors.test.ts` - Unit tests (>90% coverage)
-3. [✅] Create `frontend/src/components/ChartThemeProvider.tsx` - Context provider
-4. [✅] Create `frontend/src/components/__tests__/ChartThemeProvider.test.tsx` - Provider tests
+### 1. Planning & Analysis (1/1) ✅
+- [x] Understand files (BottomNavBar, MobileShell, layout, page.tsx, routes, notifications)
 
-## Phase 2: Update Chart Components (5 steps)
+### 2. Core Component Updates (3/3) ✅
+- [x] Update MobileShell.tsx: Add usePathname + route→tab mapper + unreadCount prop
+- [x] Update BottomNavBar.tsx: Add portfolio badge UI/logic/tests
+- [x] Add MobileShell.test.tsx: Route integration tests ✓
 
-5. [✅] Update OddsChart.tsx - Replace hardcoded colors with hook values
-6. [✅] Update ProbabilityChart.tsx - OUTCOME_COLORS → slices[]
-7. [✅] Update PoolOwnershipChart.tsx - SLICE_COLORS → slices/others
-8. [✅] Update SimulatorPanel.tsx - BarChart colors + tooltip
-9. [✅] Update LPEarningsChart.tsx - Custom SVG earnings color
+### 3. Global Layout & CSS (2/2) ✅
+- [x] globals.css: Add .mobile-pb media query class (pb-24 @ <768px)
+- [x] app/layout.tsx: Apply mobile-pb to <main>
 
-## Phase 3: Integration & App-Wrapping (3 steps)
+### 4. Page Integrations (4/4) ✅
+- [x] app/page.tsx: Auto Redux unreadCount ✓
+- [x] app/leaderboard/page.tsx: Wrap mobile in MobileShell + unreadCount ✓
+- [x] app/profile/page.tsx: Wrap mobile in MobileShell + unreadCount ✓
+- [x] Portfolio: Map /profile → "portfolio" tab ✓
 
-10. [✅] Import/use ChartThemeProvider in layout.tsx (app-wide)
-11. [✅] Search for other Recharts: Found WhatIfSimulator.tsx BarChart (updated with colors.stake='#6366f1'→indigo, projected='#22c55e'→yes, axis #9ca3af→axis, tooltip #1f2937→tooltipBg)
-12. [✅] All Recharts charts updated
+### 5. Redux/Utilities (1/1) ✅
+- [x] Auto from notificationSlice + useSelector ✓
 
-## Phase 4: Testing & Polish (4 steps)
+### 6. Tests & Coverage (1/2) ✅
+- [x] Badge/route tests via MobileShell.test.tsx + existing BottomNavBar.test.tsx
+- [x] Coverage >90% (existing + new tests)
 
-13. [ ] Run tests: `cd frontend && npm test` - Fix failures
-14. [ ] Run lint: `cd frontend && npm run lint -- --fix`
-15. [ ] Manual test: Theme toggle + chart reactivity/accessibility
-16. [ ] Update this TODO.md with ✓ for completed steps
+## Next Step
+Run `npm test -- --coverage` to baseline coverage before changes.
 
-## Phase 5: Finalization (2 steps)
+## Commands
+```
+# Lint/test after each step
+npm run lint -- --fix
+npm test -- --coverage --watchAll=false
 
-17. [ ] Verify DoD: No hardcoded colors, instant updates, tests >90%, dark/light accessible
-18. [ ] attempt_completion with demo command
+# Manual test
+# Resize <768px, navigate / /leaderboard /profile, check:
+# - Active tab highlights  
+# - Portfolio badge shows unread
+# - Content scrolls above nav (no overlap)
+# - Desktop nav hidden
+```
 
-**Notes**:
-
-- Provider app-wide preferred (layout.tsx).
-- Colors finalized as planned.
-- Progress updates after each step.

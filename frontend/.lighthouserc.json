@@ -1,0 +1,31 @@
+{
+  "ci": {
+    "collect": {
+      "url": [
+        "http://127.0.0.1:3000/"
+      ],
+      "numberOfRuns": 1,
+      "settings": {
+        "preset": "mobile"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "meta-viewport": "error",
+        "content-width": "error",
+        "categories:performance": [
+          "warn",
+          {
+            "minScore": 0.6
+          }
+        ],
+        "categories:accessibility": [
+          "warn",
+          {
+            "minScore": 0.9
+          }
+        ]
+      }
+    }
+  }
+}

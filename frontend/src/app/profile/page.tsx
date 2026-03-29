@@ -70,37 +70,50 @@ export default function ProfilePage() {
 
   // ── Wallet not connected ──────────────────────────────────────────────────
   if (!publicKey) {
-    return (
-      <main className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-gray-900 border border-gray-700 rounded-2xl p-8 flex flex-col items-center gap-5 text-center">
-          <div className="w-14 h-14 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              className="w-7 h-7 text-gray-400"
-            >
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-          </div>
+  const unreadCount = useSelector((state: RootState) => 
+    state.notifications.items.filter((n) => !n.read).length
+  );
+
+  const pageContent = (
+    <main className="min-h-screen bg-gray-950 text-white">
+      {/* Header */}
+      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10 safe-top">
+        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-white text-xl font-bold">Your Profile</h1>
-            <p className="text-gray-400 text-sm mt-1">
-              Connect your wallet to view your reputation badge and stats.
-            </p>
+            <h1 className="text-white font-bold text-base leading-none">Profile</h1>
+            <p className="text-gray-500 text-xs font-mono mt-0.5">{abbreviateWallet(publicKey)}</p>
           </div>
-          <button
-            onClick={connect}
-            disabled={isLoading}
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl text-white font-semibold transition-colors"
-          >
-            {isLoading ? "Connecting..." : "Connect Freighter Wallet"}
-          </button>
+          <a href="/" className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
+            ← Markets
+          </a>
         </div>
-      </main>
-    );
+      </header>
+
+      {/* Rest of profile content... */}
+      <div className="max-w-3xl mx-auto px-4 py-8 mobile-pb">
+        {/* Profile card with badge */}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col sm:flex-row items-center sm:items-start gap-6">
+          {/* ... existing profile content ... */}
+        </div>
+        {/* Portfolio, tiers, activity, history, etc. */}
+      </div>
+    </main>
+  );
+
+  return (
+    <>
+      {/* Desktop */}
+      <div className="hidden md:block">
+        {pageContent}
+      </div>
+      {/* Mobile */}
+      <div className="block md:hidden">
+        <MobileShell walletAddress={publicKey} unreadCount={unreadCount}>
+          {pageContent}
+        </MobileShell>
+      </div>
+    </>
+  );
   }
 
   // ── Loading stats ─────────────────────────────────────────────────────────

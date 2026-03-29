@@ -110,6 +110,20 @@ npm run test:ci       # CI mode (fails on coverage drop)
 
 Coverage threshold: **95% lines/functions, 90% branches** on `useRecentActivity.ts`.
 
+### Mobile viewport regression checks
+
+Run the mobile viewport/no-overflow Playwright checks:
+
+```bash
+npm run test:mobile
+```
+
+Run the Lighthouse mobile audit (checks viewport and content width among others):
+
+```bash
+npm run audit:lighthouse:mobile
+```
+
 ---
 
 ## Market Detail Page (Issue #12)

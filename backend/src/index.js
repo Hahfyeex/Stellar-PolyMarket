@@ -52,8 +52,14 @@ app.use(
 
 app.use(express.json());
 
+// Mitigate impact of any HTML echoed by clients: enforce baseline CSP on every response.
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", "default-src 'self'");
+  next();
+});
+
 // Request tracking and logging middleware
-app.use((req, res, _next) => {
+app.use((req, res, next) => {
   req.requestId = req.headers["x-request-id"] || crypto.randomUUID();
   res.setHeader("X-Request-ID", req.requestId);
 
@@ -62,6 +68,7 @@ app.use((req, res, _next) => {
     const duration = Date.now() - start;
     logger.info(
       {
+        request_id: req.requestId,
         method: req.method,
         path: req.path,
         status: res.statusCode,
@@ -72,7 +79,7 @@ app.use((req, res, _next) => {
       "HTTP Request"
     );
   });
-  _next();
+  next();
 });
 
 // Health and readiness probes — NOT behind App Check so orchestrators can probe freely
@@ -95,6 +102,7 @@ app.use("/api/markets", require("./routes/markets"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/reserves", require("./routes/reserves"));
+app.use("/api/anchor", require("./routes/anchor"));
 app.use("/api/audit-logs", require("./routes/audit"));
 
 const shortUrlRoutes = require("./routes/shorturl");
@@ -111,6 +119,7 @@ app.use("/api/governance", require("./routes/governance"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
 app.use("/api/archive", require("./routes/archive"));
+app.use("/api/creators", require("./routes/creators"));
 app.use("/api/portfolio", require("./routes/portfolio"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
 
