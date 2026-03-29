@@ -168,6 +168,9 @@ require("./workers/resolver").start();
 // Start hourly stale-market expiry job
 require("./jobs/expireMarkets").start();
 
+// Start automated payouts job (every 15 minutes)
+require("./jobs/automatedPayouts").start();
+
 // Start nightly market archival cron (02:00 UTC)
 require("./workers/archive-worker").start();
 
