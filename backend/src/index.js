@@ -20,9 +20,12 @@ if (!admin.apps.length) {
 }
 // ───────────────────────────────────────────────────────────────────────────
 
+const compression = require("compression");
 const appCheckMiddleware = require("./middleware/appCheck");
 
 const app = express();
+
+app.use(compression({ threshold: 1024 }));
 
 // ── CORS ────────────────────────────────────────────────────────────────────
 // Restrict allowed origins to the official frontend domain.
@@ -111,7 +114,6 @@ app.use("/api/archive", require("./routes/archive"));
 app.use("/api/portfolio", require("./routes/portfolio"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
 
-
 // GraphQL endpoint (graphql-yoga as Express middleware)
 const { createYoga } = require("graphql-yoga");
 const schema = require("./graphql/schema");
@@ -123,6 +125,9 @@ require("./bots/registry");
 
 // Start automated market resolver cron (every 5 minutes)
 require("./workers/resolver").start();
+
+// Start hourly stale-market expiry job
+require("./jobs/expireMarkets").start();
 
 // Start nightly market archival cron (02:00 UTC)
 require("./workers/archive-worker").start();
