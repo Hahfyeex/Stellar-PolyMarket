@@ -68,6 +68,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     logger.info(
       {
+        request_id: req.requestId,
         method: req.method,
         path: req.path,
         status: res.statusCode,

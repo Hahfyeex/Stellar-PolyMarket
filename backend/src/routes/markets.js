@@ -133,7 +133,15 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
       : "";
 
   // Basic required field validation (middleware handles detailed validation)
-  if (!sanitizedQuestion || !endDate || !outcomes?.length || !walletAddress || !categoryId) {
+  if (
+    !sanitizedQuestion ||
+    !endDate ||
+    !outcomes?.length ||
+    !walletAddress ||
+    categoryId === undefined ||
+    categoryId === null
+  ) {
+
     return res.status(400).json({
       error: {
         code: "MISSING_REQUIRED_FIELDS",
@@ -143,7 +151,7 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
           endDate: !!endDate,
           outcomes: !!outcomes?.length,
           walletAddress: !!walletAddress,
-          categoryId: !!categoryId,
+          categoryId: categoryId !== undefined && categoryId !== null,
         },
       },
     });

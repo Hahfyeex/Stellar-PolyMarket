@@ -82,6 +82,7 @@ describe("POST /api/markets — question XSS sanitization", () => {
         endDate,
         outcomes: ["Yes", "No"],
         walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        categoryId: 1,
       });
 
     expect(res.status).toBe(201);
@@ -93,6 +94,7 @@ describe("POST /api/markets — question XSS sanitization", () => {
     );
     expect(insertCall).toBeDefined();
     expect(insertCall[1][0]).toBe(expectedStored);
+    expect(insertCall[1][4]).toBe(1);
 
     expect(eventBus.emit).toHaveBeenCalledWith(
       "market.created",
