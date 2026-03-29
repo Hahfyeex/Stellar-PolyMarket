@@ -18,13 +18,60 @@
 
 const axios = require("axios");
 
-/** Source 1: CoinGecko — free, no API key required */
+/** Thrown when CoinGecko returns HTTP 429 — caller should retry after `retryAfter` seconds */
+class RateLimitError extends Error {
+  constructor(retryAfter = 60) {
+    super(`CoinGecko rate limit exceeded — retry after ${retryAfter}s`);
+    this.name = "RateLimitError";
+    this.retryAfter = retryAfter;
+  }
+}
+
+// ── Request counter for rate-limit proximity warning ─────────────────────────
+// CoinGecko free tier: ~10-30 req/min. Warn at RATE_LIMIT_WARN_THRESHOLD.
+const RATE_LIMIT_WARN_THRESHOLD = 8;
+let _cgRequestCount = 0;
+let _cgWindowStart = Date.now();
+
+function trackCoinGeckoRequest() {
+  const now = Date.now();
+  // Reset counter every 60 seconds
+  if (now - _cgWindowStart >= 60_000) {
+    _cgRequestCount = 0;
+    _cgWindowStart = now;
+  }
+  _cgRequestCount++;
+  if (_cgRequestCount >= RATE_LIMIT_WARN_THRESHOLD) {
+    console.warn(
+      `[Oracle] CoinGecko request count approaching rate limit: ${_cgRequestCount} requests in current window`
+    );
+  }
+}
+
+/** Source 1: CoinGecko — optional API key via COINGECKO_API_KEY env var */
 async function fetchCoinGecko() {
-  const { data } = await axios.get(
+  trackCoinGeckoRequest();
+
+  const headers = {};
+  if (process.env.COINGECKO_API_KEY) {
+    headers["x-cg-demo-api-key"] = process.env.COINGECKO_API_KEY;
+  }
+
+  const response = await axios.get(
     "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
-    { timeout: 5000 }
+    { timeout: 5000, headers, validateStatus: null }
   );
-  return data.bitcoin.usd;
+
+  if (response.status === 429) {
+    const retryAfter = parseInt(response.headers["retry-after"] ?? "60", 10);
+    throw new RateLimitError(retryAfter);
+  }
+
+  if (response.status !== 200) {
+    throw new Error(`CoinGecko returned HTTP ${response.status}`);
+  }
+
+  return response.data.bitcoin.usd;
 }
 
 /** Source 2: Binance public ticker — no API key required */
@@ -88,6 +135,7 @@ async function fetchCoinMarketCap() {
 const btcSources = [fetchCoinGecko, fetchBinance, fetchCoinbase, fetchKraken, fetchCoinMarketCap];
 
 module.exports = {
+  RateLimitError,
   btcSources,
   fetchCoinGecko,
   fetchBinance,
