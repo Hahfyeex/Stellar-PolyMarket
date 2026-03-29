@@ -166,6 +166,9 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
       [sanitizedQuestion, endDate, outcomes, contractAddress || null, categoryId, feeRateBps]
     );
 
+    const { updateCreatorStats } = require("../utils/creators");
+    await updateCreatorStats(db, walletAddress, { markets_created: 1 });
+
     logger.info(
       {
         market_id: result.rows[0].id,
@@ -184,10 +187,10 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
       message: "Market created successfully and published immediately",
     });
 
-    // Invalidate the market list cache so the new market appears immediately
+    // Invalidate caches
     await invalidateAll();
 
-    // Emit market.created so registered bot strategies can seed initial liquidity
+    // Emit events
     eventBus.emit("market.created", {
       marketId: result.rows[0].id,
       question: sanitizedQuestion,
@@ -207,30 +210,45 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
 });
 
 const { calculateConfidenceScore } = require("../utils/analytics");
+const { calculateReputation } = require("../utils/creators");
 // GET /api/markets/:id
 router.get("/:id", async (req, res) => {
   try {
     const key = detailKey(req.params.id);
     const data = await getOrSet(key, TTL.DETAIL, async () => {
-      const market = await db.query("SELECT * FROM markets WHERE id = $1 AND deleted_at IS NULL", [
+      const marketResult = await db.query(
+        `SELECT m.*, mc.reputation_score as creator_reputation_score
+         FROM markets m 
+         LEFT JOIN market_creators mc ON m.creator_wallet = mc.wallet_address
+         WHERE m.id = $1 AND m.deleted_at IS NULL`, [
         req.params.id,
       ]);
-      if (!market.rows.length) return null; // signal not-found
+      if (!marketResult.rows.length) return null;
 
+      const market = marketResult.rows[0];
       const betsResult = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
       const bets = betsResult.rows;
       const confidenceScore = calculateConfidenceScore(bets);
+      const creatorReputationScore = market.creator_reputation_score ?? 0;
 
       logger.debug(
         {
           market_id: req.params.id,
           bets_count: bets.length,
           confidence_score: confidenceScore,
+          creator_reputation: creatorReputationScore,
         },
-        "Market details fetched with confidence score"
+        "Market details fetched with confidence & creator reputation"
       );
 
-      return { market: { ...market.rows[0], confidence_score: confidenceScore }, bets };
+      return { 
+        market: { 
+          ...market, 
+          confidence_score: confidenceScore,
+          creator_reputation_score: creatorReputationScore
+        }, 
+        bets 
+      };
     });
 
     if (!data) {
@@ -331,24 +349,34 @@ router.post("/:id/propose", async (req, res) => {
 router.post("/:id/confirm", async (req, res) => {
   const { actorWallet } = req.body;
   try {
+    const marketId = req.params.id;
     const result = await db.query(
-      "UPDATE markets SET status = 'CONFIRMED', resolved = TRUE WHERE id = $1 AND status = 'PROPOSED' RETURNING *",
-      [req.params.id]
+      "UPDATE markets SET status = 'CONFIRMED', resolved = TRUE WHERE id = $1 AND status = 'PROPOSED' RETURNING creator_wallet",
+      [marketId]
     );
     if (!result.rows.length) {
       return res.status(404).json({ error: "Market not found or not in PROPOSED state" });
     }
 
+    const { creator_wallet } = result.rows[0];
+    const { updateCreatorStats } = require("../utils/creators");
+    await updateCreatorStats(db, creator_wallet, { markets_resolved_correctly: 1 });
+
     await recordResolutionHistory(
-      req.params.id,
+      marketId,
       "CONFIRMED",
       actorWallet,
-      result.rows[0].winning_outcome
+      null  // outcome from market, but not needed here
     );
 
-    logger.info({ market_id: req.params.id }, "Market resolution confirmed");
-    triggerNotification(req.params.id, "CONFIRMED");
-    res.json({ market: result.rows[0] });
+    await invalidateAll();  // invalidate market detail/list caches
+
+    logger.info({ market_id: marketId, creator_wallet }, "Market resolution confirmed + creator stats updated");
+    triggerNotification(marketId, "CONFIRMED");
+
+    // Re-fetch full market for response
+    const fullMarket = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    res.json({ market: fullMarket.rows[0] });
   } catch (err) {
     logger.error({ err, market_id: req.params.id }, "Failed to confirm market resolution");
     res.status(500).json({ error: err.message });
@@ -397,11 +425,43 @@ router.post("/:id/dispute", async (req, res) => {
       notes
     );
 
-    logger.info({ market_id: req.params.id }, "Market resolution disputed");
-    triggerNotification(req.params.id, "DISPUTED");
-    res.json({ market: result.rows[0] });
+    logger.info({ market_id: marketId, creator_wallet }, "Market resolution disputed + creator stats updated");
+    triggerNotification(marketId, "DISPUTED");
+
+    const fullMarket = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    res.json({ market: fullMarket.rows[0] });
   } catch (err) {
-    logger.error({ err, market_id: req.params.id }, "Failed to dispute market resolution");
+    logger.error({ err, market_id: marketId }, "Failed to dispute market resolution");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/markets/:id/void — void a market (admin only)
+router.post("/:id/void", jwtAuth, async (req, res) => {
+  const marketId = req.params.id;
+  try {
+    const result = await db.query(
+      "UPDATE markets SET status = 'VOIDED' WHERE id = $1 AND deleted_at IS NULL RETURNING creator_wallet",
+      [marketId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    const { creator_wallet } = result.rows[0];
+    if (creator_wallet) {
+      const { updateCreatorStats } = require("../utils/creators");
+      await updateCreatorStats(db, creator_wallet, { markets_voided: 1 });
+    }
+
+    await invalidateAll();
+
+    logger.info({ market_id: marketId, creator_wallet, admin: req.admin?.sub }, "Market voided + creator stats updated");
+
+    const fullMarket = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    res.json({ market: fullMarket.rows[0], message: "Market voided successfully" });
+  } catch (err) {
+    logger.error({ err, market_id: marketId }, "Failed to void market");
     res.status(500).json({ error: err.message });
   }
 });
