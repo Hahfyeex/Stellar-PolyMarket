@@ -7,13 +7,6 @@ jest.mock("../../utils/logger", () => ({
   error: jest.fn(),
 }));
 jest.mock("../../bots/eventBus", () => ({ emit: jest.fn() }));
-jest.mock("../../websocket/marketUpdates", () => ({ broadcastBetPlaced: jest.fn() }));
-jest.mock("../../utils/sorobanClient", () => ({ getMarketStatus: jest.fn() }));
-jest.mock("../../utils/errors", () => ({ sanitizeError: jest.fn((e) => e.message) }));
-jest.mock("axios");
-jest.mock("@stellar/stellar-sdk", () => ({
-  StrKey: { isValidEd25519PublicKey: jest.fn(() => true) },
-}));
 
 const express = require("express");
 const request = require("supertest");
