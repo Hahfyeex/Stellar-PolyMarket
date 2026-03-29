@@ -250,11 +250,11 @@ jobs:
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: stable
           cache: true
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.21.1 --locked
+        run: cargo install cargo-audit --locked
 
       - name: Run Security Audit
         working-directory: ./contracts/prediction_market
