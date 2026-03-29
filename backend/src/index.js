@@ -52,8 +52,14 @@ app.use(
 
 app.use(express.json());
 
+// Mitigate impact of any HTML echoed by clients: enforce baseline CSP on every response.
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", "default-src 'self'");
+  next();
+});
+
 // Request tracking and logging middleware
-app.use((req, res, _next) => {
+app.use((req, res, next) => {
   req.requestId = req.headers["x-request-id"] || crypto.randomUUID();
   res.setHeader("X-Request-ID", req.requestId);
 
@@ -72,7 +78,7 @@ app.use((req, res, _next) => {
       "HTTP Request"
     );
   });
-  _next();
+  next();
 });
 
 // Health and readiness probes — NOT behind App Check so orchestrators can probe freely
