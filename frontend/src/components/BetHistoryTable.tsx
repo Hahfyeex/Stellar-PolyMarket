@@ -7,7 +7,8 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import Papa from "papaparse";
-
+import EmptyState from "./EmptyState";
+import { NoBetsIllustration } from "../assets/emptyStates";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface BetRow {
@@ -171,7 +172,13 @@ export default function BetHistoryTable({ walletAddress, apiUrl = "" }: Props) {
 
       {allRows.length === 0 ? (
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 text-center">
-          <p className="text-gray-500 text-sm">No bets found.</p>
+          <EmptyState
+            illustration={<NoBetsIllustration />}
+            title="No bets found"
+            message="You haven’t placed any bets yet."
+            ctaLabel="Place Your First Bet"
+            onClick={() => window.location.assign("/")}
+          />
         </div>
       ) : (
         <>

@@ -1,4 +1,6 @@
 "use client";
+import EmptyState from "../components/EmptyState";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import ContractErrorBoundary from "../components/ContractErrorBoundary";
@@ -16,6 +18,9 @@ import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
 import { useWalletContext } from "../context/WalletContext";
 import { SearchFilters, SortKey, useMarketSearch } from "../hooks/useMarketSearch";
 import { useTheme } from "../hooks/useTheme";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+import { useQueryClient } from "@tanstack/react-query";
+import { NoMarketsIllustration } from "@/assets/emptyStates";
 import { trackEvent } from "../lib/firebase";
 import { store } from "../store";
 import type { Market } from "../types/market";
@@ -265,51 +270,50 @@ export default function Home() {
             />
           </div>
 
-          <MarketTabs
-            activeTab={activeTab}
-            activeBadge={activeBadge}
-            resolvedBadge={resolvedBadge}
-            watchlistBadge={watchlistBadge}
-            onChange={setActiveTab}
-          />
-          <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
-            <MarketFilters filters={filters} onChange={setFilters} />
-            {loading ? (
-              <MarketListSkeleton />
-            ) : filteredMarkets.length === 0 ? (
-              <p className="text-gray-400" data-testid="no-markets-empty-state">
-                {filters.query
-                  ? t("markets.empty.no_results", { query: filters.query })
-                  : activeTab === "active"
-                    ? t("markets.empty.no_active")
-                    : activeTab === "watchlist"
-                      ? t("markets.empty.no_watchlist")
-                      : t("markets.empty.no_resolved")}
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredMarkets.map((market) => (
-                  <div
-                    key={market.id}
-                    onClick={() => setActiveMarket(market)}
-                    className={`cursor-pointer rounded-xl transition-all ${
-                      activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
-                    }`}
-                  >
-                    <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
-                      <MarketCard
-                        market={market}
-                        walletAddress={publicKey}
-                        onBetPlaced={refetchMarkets}
-                        isWatched={watchlist.has(market.id)}
-                        onToggleWatchlist={toggleWatchlist}
-                      />
-                    </ContractErrorBoundary>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
+          <MarketFilters filters={filters} onChange={setFilters} />
+          {loading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <MarketCardSkeleton key={i} />
+              ))}
+            </div>
+          ) : filteredMarkets.length === 0 ? (
+            <EmptyState
+              illustration={<NoMarketsIllustration />}
+              title="No markets found"
+              message="No markets match your filters. Try adjusting your search."
+              ctaLabel="Browse Markets"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
+                  query: "",
+                  category: "",
+                  categories: [],
+                }))
+              }
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredMarkets.map((market) => (
+                <div
+                  key={market.id}
+                  onClick={() => setActiveMarket(market)}
+                  className={`cursor-pointer rounded-xl transition-all ${
+                    activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
+                  }`}
+                >
+                  <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
+                    <MarketCard
+                      market={market}
+                      walletAddress={publicKey}
+                      onBetPlaced={refetchMarkets}
+                    />
+                  </ContractErrorBoundary>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Live Activity Feed — hidden on mobile to save space */}
@@ -323,10 +327,6 @@ export default function Home() {
 
   return (
     <>
-      {/* Onboarding wizard — shown once to new users, persisted in localStorage */}
-      <OnboardingWizard />
-
-      {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell
           activeMarket={activeMarket}
