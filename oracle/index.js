@@ -1,7 +1,7 @@
 require("dotenv").config();
 const axios = require("axios");
 const { OracleMedianizer } = require("./medianizer");
-const { btcSources } = require("./sources");
+const { btcSources, RateLimitError } = require("./sources");
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
 
@@ -101,6 +101,13 @@ async function resolveMarket(market) {
     await axios.post(`${API_URL}/api/markets/${market.id}/resolve`, { winningOutcome });
     logger.info(`[Oracle] Market #${market.id} resolved → outcome index: ${winningOutcome}`);
   } catch (err) {
+    // CoinGecko rate limit — retry after the server-specified delay
+    if (err instanceof RateLimitError) {
+      const delayMs = err.retryAfter * 1000;
+      logger.warn(`[Oracle] Market #${market.id} hit CoinGecko rate limit — retrying in ${err.retryAfter}s`);
+      setTimeout(() => resolveMarket(market), delayMs);
+      return;
+    }
     // #377: Handle deadline not reached errors gracefully
     if (err.response?.data?.error?.includes("Market deadline not reached")) {
       logger.warn(`[Oracle] Market #${market.id} deadline not reached on-chain, retrying in 5 minutes`);
@@ -275,6 +282,7 @@ module.exports = {
   markUnresolvable,
   gracefulShutdown,
   reschedule,
+  RateLimitError,
   _getIsRunning: () => isRunning,
   _getIsShuttingDown: () => isShuttingDown,
   _getIntervalHandle: () => intervalHandle,
