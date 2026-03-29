@@ -1,0 +1,95 @@
+{
+  "app": {
+    "title": "Stella Polymarket",
+    "tagline": "Hasashe. Caca. Samu.",
+    "description": "Kasuwannin hasashe na rarrabawa akan Stellar. Da sauri, arha, kuma bayyananne."
+  },
+  "nav": {
+    "home": "Gida",
+    "search": "Nema",
+    "portfolio": "Jaka",
+    "profile": "Bayanai",
+    "help": "Taimako & Takaddun"
+  },
+  "wallet": {
+    "connect": "Haɗa Jaka",
+    "connect_short": "Haɗa",
+    "connecting": "Ana Haɗawa...",
+    "connecting_short": "...",
+    "disconnect": "Yanke"
+  },
+  "stats": {
+    "active_markets": "Kasuwannin Aiki",
+    "total_staked": "Jimlar Da Aka Caca",
+    "markets": "Kasuwanni"
+  },
+  "activity": {
+    "recent": "Ayyukan Kwanan Nan"
+  },
+  "filters": {
+    "search_placeholder": "Nemi kasuwanni…",
+    "search_label": "Nemi kasuwanni",
+    "all": "Duka",
+    "all_statuses": "Duk Yanayi",
+    "sort_prefix": "Tsari: {{label}}",
+    "filter_by_status": "Tace ta hanyar yanayi",
+    "sort_markets": "Tsara kasuwanni",
+    "categories": {
+      "crypto": "Crypto",
+      "sports": "Wasanni",
+      "politics": "Siyasa",
+      "economics": "Tattalin Arziki",
+      "tech": "Fasaha",
+      "other": "Sauran"
+    },
+    "statuses": {
+      "open": "Buɗe",
+      "closed": "Rufe",
+      "resolved": "An Warware"
+    },
+    "sorts": {
+      "volume": "Yawa",
+      "end_date": "Ranar Ƙarewa",
+      "newest": "Sabon Ƙari"
+    }
+  },
+  "markets": {
+    "tabs": {
+      "active": "Kasuwannin Aiki",
+      "resolved": "Kasuwannin Da Aka Warware",
+      "aria_label": "Tabs na yanayin kasuwanni"
+    },
+    "empty": {
+      "no_results": "Ba a sami kasuwannin \"{{query}}\" ba",
+      "no_active": "Ba a sami kasuwannin aiki ba.",
+      "no_resolved": "Ba a sami kasuwannin da aka warware ba."
+    }
+  },
+  "betting_slip": {
+    "title": "Takarda Caca",
+    "bets_queued": "{{count}} / {{max}} caca a layi",
+    "empty": "Babu caca a layi tukuna. Ƙara caca daga kowane kasuwa don haɗa su.",
+    "close": "Rufe takarda caca",
+    "total_stake": "Jimlar Caca:",
+    "submit_one": "Saka {{count}} Caca",
+    "submit_other": "Saka {{count}} Caca",
+    "submitting": "Ana Aika...",
+    "outcome": "Sakamakon:",
+    "amount": "Adadi:",
+    "offline_tooltip": "Ba ku da haɗin intanet — ba za a iya aika caca ba",
+    "connect_wallet": "Haɗa jakar ku don aika caca",
+    "remove_bet": "Cire caca akan {{title}}"
+  },
+  "theme": {
+    "switch_to_light": "Canza zuwa jigo mai haske",
+    "switch_to_dark": "Canza zuwa jigo mai duhu"
+  },
+  "language": {
+    "selector_label": "Zaɓi harshe",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Kiswahili"
+  }
+}

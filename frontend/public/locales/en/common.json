@@ -1,0 +1,95 @@
+{
+  "app": {
+    "title": "Stella Polymarket",
+    "tagline": "Predict. Stake. Earn.",
+    "description": "Decentralized prediction markets on Stellar. Fast, cheap, and transparent."
+  },
+  "nav": {
+    "home": "Home",
+    "search": "Search",
+    "portfolio": "Portfolio",
+    "profile": "Profile",
+    "help": "Help & Documentation"
+  },
+  "wallet": {
+    "connect": "Connect Wallet",
+    "connect_short": "Connect",
+    "connecting": "Connecting...",
+    "connecting_short": "...",
+    "disconnect": "Disconnect"
+  },
+  "stats": {
+    "active_markets": "Active Markets",
+    "total_staked": "Total Staked",
+    "markets": "Markets"
+  },
+  "activity": {
+    "recent": "Recent Activity"
+  },
+  "filters": {
+    "search_placeholder": "Search markets…",
+    "search_label": "Search markets",
+    "all": "All",
+    "all_statuses": "All Statuses",
+    "sort_prefix": "Sort: {{label}}",
+    "filter_by_status": "Filter by status",
+    "sort_markets": "Sort markets",
+    "categories": {
+      "crypto": "Crypto",
+      "sports": "Sports",
+      "politics": "Politics",
+      "economics": "Economics",
+      "tech": "Tech",
+      "other": "Other"
+    },
+    "statuses": {
+      "open": "Open",
+      "closed": "Closed",
+      "resolved": "Resolved"
+    },
+    "sorts": {
+      "volume": "Volume",
+      "end_date": "End Date",
+      "newest": "Newest"
+    }
+  },
+  "markets": {
+    "tabs": {
+      "active": "Active Markets",
+      "resolved": "Resolved Markets",
+      "aria_label": "Market status tabs"
+    },
+    "empty": {
+      "no_results": "No markets found for \"{{query}}\"",
+      "no_active": "No active markets found.",
+      "no_resolved": "No resolved markets found."
+    }
+  },
+  "betting_slip": {
+    "title": "Betting Slip",
+    "bets_queued": "{{count}} / {{max}} bets queued",
+    "empty": "No bets queued yet. Add bets from any market to batch them together.",
+    "close": "Close betting slip",
+    "total_stake": "Total stake:",
+    "submit_one": "Place {{count}} Bet",
+    "submit_other": "Place {{count}} Bets",
+    "submitting": "Submitting...",
+    "outcome": "Outcome:",
+    "amount": "Amount:",
+    "offline_tooltip": "You're offline — bet submission unavailable",
+    "connect_wallet": "Connect your wallet to submit bets",
+    "remove_bet": "Remove bet on {{title}}"
+  },
+  "theme": {
+    "switch_to_light": "Switch to light theme",
+    "switch_to_dark": "Switch to dark theme"
+  },
+  "language": {
+    "selector_label": "Select language",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Kiswahili"
+  }
+}
