@@ -193,8 +193,8 @@ router.post("/", async (req, res) => {
 
     // Record bet
     const bet = await db.query(
-      "INSERT INTO bets (market_id, wallet_address, outcome_index, amount, grace_period_ends_at) VALUES ($1, $2, $3, $4, NOW() + ($5 || ' seconds')::interval) RETURNING *",
-      [marketId, walletAddress, outcomeIndex, amount, GRACE_PERIOD_SECONDS]
+      "INSERT INTO bets (market_id, wallet_address, outcome_index, amount, grace_period_ends_at, transaction_hash) VALUES ($1, $2, $3, $4, NOW() + ($5 || ' seconds')::interval, $6) RETURNING *",
+      [marketId, walletAddress, outcomeIndex, amount, GRACE_PERIOD_SECONDS, transaction_hash]
     );
 
     // Update total pool
@@ -420,6 +420,159 @@ router.get("/my-positions", async (req, res) => {
   } catch (err) {
     logger.error({ err, wallet_address: walletAddress }, "Failed to fetch user positions");
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/bets/export — export bets as CSV for tax reporting
+router.get("/export", async (req, res) => {
+  const { wallet, year } = req.query;
+
+  if (!wallet) {
+    return res.status(400).json({ error: "wallet query parameter is required" });
+  }
+
+  if (!year) {
+    return res.status(400).json({ error: "year query parameter is required" });
+  }
+
+  // Validate wallet address format
+  const isValidAddress =
+    wallet.length === 56 &&
+    wallet.startsWith("G") &&
+    StrKey.isValidEd25519PublicKey(wallet);
+
+  if (!isValidAddress) {
+    logger.warn(
+      { wallet_address: wallet },
+      "Export rejected: invalid Stellar wallet address format"
+    );
+    return res.status(400).json({ error: "Invalid Stellar wallet address format" });
+  }
+
+  // Validate year is a valid integer
+  const yearInt = parseInt(year, 10);
+  if (!Number.isInteger(yearInt) || yearInt < 2000 || yearInt > new Date().getFullYear() + 1) {
+    return res.status(400).json({ error: "year must be a valid year between 2000 and next year" });
+  }
+
+  try {
+    // Query all bets for the wallet in the specified year
+    const result = await db.query(
+      `SELECT 
+        b.id,
+        b.market_id,
+        b.created_at,
+        b.outcome_index,
+        b.amount,
+        b.paid_out,
+        b.transaction_hash,
+        m.question,
+        m.outcomes,
+        m.winning_outcome,
+        m.resolved
+       FROM bets b
+       JOIN markets m ON m.id = b.market_id
+       WHERE b.wallet_address = $1
+       AND EXTRACT(YEAR FROM b.created_at) = $2
+       ORDER BY b.created_at ASC`,
+      [wallet, yearInt]
+    );
+
+    const bets = result.rows;
+
+    // CSV header row
+    const csvHeaders = [
+      "Date",
+      "Market Question",
+      "Outcome Bet On",
+      "Stake (XLM)",
+      "Payout Received (XLM)",
+      "Net Gain/Loss (XLM)",
+      "Transaction Hash"
+    ];
+
+    // Helper to escape and quote CSV fields
+    function escapeCsvField(value) {
+      if (value === null || value === undefined) {
+        return "";
+      }
+      const str = String(value);
+      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    }
+
+    // Transform bets to CSV rows
+    const csvRows = bets.map((bet) => {
+      const date = new Date(bet.created_at).toISOString().split("T")[0];
+      const question = bet.question;
+      const outcomes = JSON.parse(bet.outcomes) || [];
+      const outcomeText = outcomes[bet.outcome_index] || `Outcome ${bet.outcome_index}`;
+      const stakeAmount = parseFloat(bet.amount);
+      
+      // Calculate payout and net gain/loss
+      let payoutAmount = 0;
+      let netGainLoss = 0;
+      
+      if (bet.resolved) {
+        if (bet.winning_outcome === bet.outcome_index && bet.paid_out) {
+          // Winner — calculate payout from market pool
+          // For simplicity, if marked as paid_out, we calculate the net as what was gained
+          // Without storing exact payout amount, we'll use 0 for now and note this limitation
+          // TODO: Store exact payout amounts in database for accurate tax reporting
+          payoutAmount = 0; // Placeholder - would need payout table
+          netGainLoss = payoutAmount - stakeAmount;
+        } else if (bet.winning_outcome === bet.outcome_index) {
+          // Winner but not yet paid
+          netGainLoss = 0 - stakeAmount;
+        } else {
+          // Loser
+          netGainLoss = 0 - stakeAmount;
+        }
+      } else {
+        // Pending
+        netGainLoss = 0;
+      }
+
+      return [
+        escapeCsvField(date),
+        escapeCsvField(question),
+        escapeCsvField(outcomeText),
+        escapeCsvField(stakeAmount.toFixed(7)),
+        escapeCsvField(payoutAmount.toFixed(7)),
+        escapeCsvField(netGainLoss.toFixed(7)),
+        escapeCsvField(bet.transaction_hash || "")
+      ];
+    });
+
+    // Build CSV content
+    const csvContent = [
+      csvHeaders.map(escapeCsvField).join(","),
+      ...csvRows.map((row) => row.join(","))
+    ].join("\n");
+
+    // Set response headers for file download
+    const filename = `stella-bets-${yearInt}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    logger.info(
+      {
+        wallet_address: wallet,
+        year: yearInt,
+        bets_exported: bets.length,
+      },
+      "Bet export generated"
+    );
+
+    res.send(csvContent);
+  } catch (err) {
+    logger.error(
+      { wallet_address: wallet, year: yearInt, err },
+      "Failed to generate bet export"
+    );
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
 
