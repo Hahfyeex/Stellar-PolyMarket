@@ -24,6 +24,7 @@ export const metadata: Metadata = {
 };
 
 import { ToastProvider } from "../components/ToastProvider";
+import { ChartThemeProvider } from "../components/ChartThemeProvider";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -43,15 +44,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {/* WalletProvider lifts wallet state globally so BettingSlip can submit */}
               <WalletProvider>
                 <ToastProvider>
-                  <BettingSlipProvider>
-                    <main id="main-content" role="main">
-                      {children}
-                    </main>
-                    {/* BettingSlip mounted globally — persists across all pages */}
-                    <BettingSlipWrapper />
-                    {/* Global keyboard shortcuts (B, /, Esc, ?) */}
-                    <KeyboardShortcutsProvider />
-                  </BettingSlipProvider>
+                  <ChartThemeProvider>
+                    <BettingSlipProvider>
+                      <main id="main-content" role="main">
+                        {children}
+                      </main>
+                      {/* BettingSlip mounted globally — persists across all pages */}
+                      <BettingSlipWrapper />
+                      {/* Global keyboard shortcuts (B, /, Esc, ?) */}
+                      <KeyboardShortcutsProvider />
+                    </BettingSlipProvider>
+                  </ChartThemeProvider>
                 </ToastProvider>
               </WalletProvider>
             </ReactQueryProvider>

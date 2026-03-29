@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+} from "recharts";
+import { useChartTheme } from "./ChartThemeProvider";
 
 interface SimulatorPanelProps {
   market: {
@@ -43,9 +44,11 @@ export default function SimulatorPanel({ market, selectedOutcomeIndex = 0 }: Sim
   const payoutXlm = Number(payoutBig) / 1e7;
   const impliedProb = (100 / market.outcomes.length).toFixed(1);
 
+  const colors = useChartTheme();
+  
   const chartData = [
-    { name: "Profit if Correct", value: Math.max(0, payoutXlm - parseFloat(stake || "0")), color: "#4ade80" },
-    { name: "Stake at Risk", value: parseFloat(stake || "0"), color: "#f87171" },
+    { name: "Profit if Correct", value: Math.max(0, payoutXlm - parseFloat(stake || "0")), color: colors.profit },
+    { name: "Stake at Risk", value: parseFloat(stake || "0"), color: colors.risk },
   ];
 
   const handleStakeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,7 +118,7 @@ export default function SimulatorPanel({ market, selectedOutcomeIndex = 0 }: Sim
                   <XAxis dataKey="name" hide />
                   <YAxis hide />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+                    contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: '8px' }}
                     itemStyle={{ color: '#fff' }}
                   />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]}>
