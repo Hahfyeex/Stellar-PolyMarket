@@ -87,6 +87,7 @@ app.use("/api", appCheckMiddleware);
 // ───────────────────────────────────────────────────────────────────────────
 
 // Routes (MERGED — keep ALL)
+app.use("/api/auth", require("./routes/auth"));
 app.use("/api/markets", require("./routes/markets"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
@@ -128,11 +129,6 @@ require("./workers/archive-worker").start();
 
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
-app.use("/api/audit-logs", require("./routes/audit"));
-
-const shortUrlRoutes = require("./routes/shorturl");
-app.use("/api/short-url", shortUrlRoutes);
-app.get("/s/:code", shortUrlRoutes.redirectHandler);
 
 // Initialize self-healing gap detection and recovery
 require("./indexer/gap-detector").initializeSelfHealing();
