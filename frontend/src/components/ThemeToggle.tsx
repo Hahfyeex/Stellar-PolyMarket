@@ -9,6 +9,7 @@
  * and a moon icon in light mode (click → switch to dark).
  */
 import { useTheme } from "../hooks/useTheme";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   /** Additional Tailwind classes for positioning/sizing */
@@ -17,13 +18,16 @@ interface Props {
 
 export default function ThemeToggle({ className = "" }: Props) {
   const { theme, toggleTheme } = useTheme();
+  const { t } = useTranslation("common");
+
+  const label = theme === "dark" ? t("theme.switch_to_light") : t("theme.switch_to_dark");
 
   return (
     <button
       onClick={toggleTheme}
       data-testid="theme-toggle"
-      aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-      title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      aria-label={label}
+      title={label}
       className={`
         w-9 h-9 rounded-lg flex items-center justify-center
         text-[var(--text-secondary)] hover:text-[var(--text-primary)]

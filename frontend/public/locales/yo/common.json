@@ -1,0 +1,95 @@
+{
+  "app": {
+    "title": "Stella Polymarket",
+    "tagline": "Sọtẹlẹ. Tẹ. Jere.",
+    "description": "Awọn ọja asọtẹlẹ ti a pin lori Stellar. Iyara, olowo poku, ati gbangba."
+  },
+  "nav": {
+    "home": "Ilé",
+    "search": "Ṣawari",
+    "portfolio": "Àpò",
+    "profile": "Profaili",
+    "help": "Ìrànlọwọ & Àkọsílẹ̀"
+  },
+  "wallet": {
+    "connect": "Sopọ Àpò",
+    "connect_short": "Sopọ",
+    "connecting": "Ìsopọ̀...",
+    "connecting_short": "...",
+    "disconnect": "Ìyọ̀kúrò"
+  },
+  "stats": {
+    "active_markets": "Awọn Ọja Tí Ń Ṣiṣẹ́",
+    "total_staked": "Iye Tí A Tẹ Lapapọ̀",
+    "markets": "Awọn Ọja"
+  },
+  "activity": {
+    "recent": "Iṣẹ́ Àìpẹ́"
+  },
+  "filters": {
+    "search_placeholder": "Ṣawari awọn ọja…",
+    "search_label": "Ṣawari awọn ọja",
+    "all": "Gbogbo",
+    "all_statuses": "Gbogbo Ipò",
+    "sort_prefix": "Ìtòlẹ́sẹẹsẹ: {{label}}",
+    "filter_by_status": "Ṣe àyẹ̀wò nípa ipò",
+    "sort_markets": "Tò awọn ọja",
+    "categories": {
+      "crypto": "Crypto",
+      "sports": "Eré-Ìdárayá",
+      "politics": "Ìṣèlú",
+      "economics": "Ètò-Ọrọ̀-Ajé",
+      "tech": "Imọ-Ẹrọ",
+      "other": "Àwọn Mìíràn"
+    },
+    "statuses": {
+      "open": "Ṣíṣí",
+      "closed": "Tí À Ti Pa",
+      "resolved": "Tí À Ti Yanjú"
+    },
+    "sorts": {
+      "volume": "Ìwọ̀n",
+      "end_date": "Ọjọ́ Ìparí",
+      "newest": "Tuntun Jùlọ"
+    }
+  },
+  "markets": {
+    "tabs": {
+      "active": "Awọn Ọja Tí Ń Ṣiṣẹ́",
+      "resolved": "Awọn Ọja Tí À Ti Yanjú",
+      "aria_label": "Awọn taabu ipò ọja"
+    },
+    "empty": {
+      "no_results": "A kò rí ọja kankan fún \"{{query}}\"",
+      "no_active": "A kò rí ọja tí ń ṣiṣẹ́ kankan.",
+      "no_resolved": "A kò rí ọja tí à ti yanjú kankan."
+    }
+  },
+  "betting_slip": {
+    "title": "Iwe Ìtẹ",
+    "bets_queued": "{{count}} / {{max}} ìtẹ tí ó dúró",
+    "empty": "Kò sí ìtẹ tí ó dúró. Fi ìtẹ kún láti ọja èyíkéyìí kí o le jọ wọn.",
+    "close": "Pa iwe ìtẹ",
+    "total_stake": "Iye Tẹ Lapapọ̀:",
+    "submit_one": "Fi {{count}} Ìtẹ Silẹ̀",
+    "submit_other": "Fi {{count}} Ìtẹ Silẹ̀",
+    "submitting": "Fífi sílẹ̀...",
+    "outcome": "Àbájáde:",
+    "amount": "Iye:",
+    "offline_tooltip": "O kò ní ìsopọ̀ — fífi ìtẹ silẹ̀ kò ṣeéṣe",
+    "connect_wallet": "Sopọ àpò rẹ láti fi ìtẹ silẹ̀",
+    "remove_bet": "Yọ ìtẹ kúrò lórí {{title}}"
+  },
+  "theme": {
+    "switch_to_light": "Yipada sí àwòrán ìmọ́lẹ̀",
+    "switch_to_dark": "Yipada sí àwòrán òkunkun"
+  },
+  "language": {
+    "selector_label": "Yan èdè",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Kiswahili"
+  }
+}

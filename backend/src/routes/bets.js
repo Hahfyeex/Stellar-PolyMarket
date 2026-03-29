@@ -11,6 +11,7 @@ const { broadcastBetPlaced } = require("../websocket/marketUpdates");
 const { getMarketStatus } = require("../utils/sorobanClient");
 
 const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
+const GRACE_PERIOD_SECONDS = parseInt(process.env.BET_GRACE_PERIOD_SECONDS, 10) || 300; // 5 min default
 
 const IDEMPOTENCY_TTL = 24 * 60 * 60; // 24 hours in seconds
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -192,8 +193,8 @@ router.post("/", async (req, res) => {
 
     // Record bet
     const bet = await db.query(
-      "INSERT INTO bets (market_id, wallet_address, outcome_index, amount) VALUES ($1, $2, $3, $4) RETURNING *",
-      [marketId, walletAddress, outcomeIndex, amount]
+      "INSERT INTO bets (market_id, wallet_address, outcome_index, amount, grace_period_ends_at) VALUES ($1, $2, $3, $4, NOW() + ($5 || ' seconds')::interval) RETURNING *",
+      [marketId, walletAddress, outcomeIndex, amount, GRACE_PERIOD_SECONDS]
     );
 
     // Update total pool
@@ -402,6 +403,99 @@ router.get("/my-positions", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: sanitizeError(err, req.requestId) });
+  }
+});
+
+// DELETE /api/bets/:id — cancel a bet within the grace period
+router.delete("/:id", async (req, res) => {
+  const { walletAddress } = req.body;
+  if (!walletAddress) {
+    return res.status(400).json({ error: "walletAddress is required" });
+  }
+
+  try {
+    const betResult = await db.query("SELECT * FROM bets WHERE id = $1 AND wallet_address = $2", [
+      req.params.id,
+      walletAddress,
+    ]);
+
+    if (!betResult.rows.length) {
+      return res.status(404).json({ error: "Bet not found" });
+    }
+
+    const bet = betResult.rows[0];
+
+    if (bet.cancelled_at) {
+      return res.status(409).json({ error: "Bet already cancelled" });
+    }
+
+    if (bet.paid_out) {
+      return res.status(409).json({ error: "Bet already paid out" });
+    }
+
+    if (!bet.grace_period_ends_at || new Date() > new Date(bet.grace_period_ends_at)) {
+      return res.status(400).json({ error: "Grace period has expired" });
+    }
+
+    await db.query("UPDATE bets SET cancelled_at = NOW() WHERE id = $1", [bet.id]);
+    await db.query("UPDATE markets SET total_pool = total_pool - $1 WHERE id = $2", [
+      bet.amount,
+      bet.market_id,
+    ]);
+
+    await redis.del(`portfolio:${walletAddress}`);
+
+    logger.info(
+      { bet_id: bet.id, market_id: bet.market_id, wallet_address: walletAddress },
+      "Bet cancelled within grace period"
+    );
+
+    res.json({ success: true, bet_id: bet.id, refunded_amount: bet.amount });
+  } catch (err) {
+    res.status(500).json({ error: sanitizeError(err, req.requestId) });
+  }
+});
+
+// GET /api/bets/my-positions — paginated user positions
+router.get("/my-positions", async (req, res) => {
+  const { walletAddress, cursor } = req.query;
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+
+  if (!walletAddress) {
+    return res.status(400).json({ error: "walletAddress is required" });
+  }
+
+  try {
+    const cursorId = cursor ? parseInt(cursor) : null;
+    const query = `
+      SELECT b.id, b.market_id, b.outcome_index, b.amount, b.created_at, b.paid_out,
+             m.question, m.status as market_status, m.resolved
+      FROM bets b
+      JOIN markets m ON m.id = b.market_id
+      WHERE b.wallet_address = $1
+        AND ($2::integer IS NULL OR b.id < $2)
+      ORDER BY b.id DESC
+      LIMIT $3
+    `;
+
+    const result = await db.query(query, [walletAddress, cursorId, limit]);
+    const bets = result.rows;
+    const nextCursor = bets.length > 0 ? bets[bets.length - 1].id : null;
+
+    logger.info({
+      wallet_address: walletAddress,
+      bets_count: bets.length,
+      next_cursor: nextCursor,
+    }, "User positions fetched");
+
+    res.json({
+      positions: bets,
+      next_cursor: nextCursor,
+      limit,
+    });
+  } catch (err) {
+    logger.error({ err, wallet_address: walletAddress }, "Failed to fetch user positions");
+    res.status(500).json({ error: err.message });
   }
 });
 

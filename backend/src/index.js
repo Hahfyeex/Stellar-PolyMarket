@@ -20,9 +20,12 @@ if (!admin.apps.length) {
 }
 // ───────────────────────────────────────────────────────────────────────────
 
+const compression = require("compression");
 const appCheckMiddleware = require("./middleware/appCheck");
 
 const app = express();
+
+app.use(compression({ threshold: 1024 }));
 
 // ── CORS ────────────────────────────────────────────────────────────────────
 // Restrict allowed origins to the official frontend domain.
@@ -86,7 +89,8 @@ app.use("/metrics", require("./routes/metrics"));
 app.use("/api", appCheckMiddleware);
 // ───────────────────────────────────────────────────────────────────────────
 
-// Routes
+// Routes (MERGED — keep ALL)
+app.use("/api/auth", require("./routes/auth"));
 app.use("/api/markets", require("./routes/markets"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
@@ -110,7 +114,6 @@ app.use("/api/archive", require("./routes/archive"));
 app.use("/api/portfolio", require("./routes/portfolio"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
 
-
 // GraphQL endpoint (graphql-yoga as Express middleware)
 const { createYoga } = require("graphql-yoga");
 const schema = require("./graphql/schema");
@@ -123,19 +126,20 @@ require("./bots/registry");
 // Start automated market resolver cron (every 5 minutes)
 require("./workers/resolver").start();
 
+// Start hourly stale-market expiry job
+require("./jobs/expireMarkets").start();
+
 // Start nightly market archival cron (02:00 UTC)
 require("./workers/archive-worker").start();
 
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
-app.use("/api/audit-logs", require("./routes/audit"));
-
-const shortUrlRoutes = require("./routes/shorturl");
-app.use("/api/short-url", shortUrlRoutes);
-app.get("/s/:code", shortUrlRoutes.redirectHandler);
 
 // Initialize self-healing gap detection and recovery
 require("./indexer/gap-detector").initializeSelfHealing();
+
+// Initialise bot registry — subscribes all strategies to the event bus
+require("./bots/registry");
 
 // Global error handler
 app.use((err, req, res, _next) => {

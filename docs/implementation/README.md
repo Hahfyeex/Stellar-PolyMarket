@@ -92,10 +92,24 @@ Markets are created instantly without admin approval through automated validatio
 - **End Date**: Must be future date within 1 year
 - **No Duplicates**: Unique questions only
 - **Rate Limit**: 3 markets per wallet per 24 hours
+<<<<<<< HEAD:docs/implementation/README.md
+<<<<<<< HEAD:docs/implementation/README.md
+||||||| parent of 582a741 (feat: implement configurable market creation fee with burn/DAO routing (#183)):README.md
+=======
+>>>>>>> 582a741 (feat: implement configurable market creation fee with burn/DAO routing (#183)):README.md
 - **Creation Fee**: Configurable fee (default 0) charged in the market's token — burned or sent to DAO treasury
 
 See [Permissionless Launch Guide](PERMISSIONLESS_LAUNCH_README.md) for details.
 See [Creation Fee & DAO Governance](contracts/prediction_market/CREATION_FEE_README.md) for fee configuration.
+<<<<<<< HEAD:docs/implementation/README.md
+||||||| parent of f9a8e80 (feat: implement permissionless market creation with automated validation):README.md
+=======
+
+See [Permissionless Launch Guide](PERMISSIONLESS_LAUNCH_README.md) for details.
+>>>>>>> f9a8e80 (feat: implement permissionless market creation with automated validation):README.md
+||||||| parent of 582a741 (feat: implement configurable market creation fee with burn/DAO routing (#183)):README.md
+=======
+>>>>>>> 582a741 (feat: implement configurable market creation fee with burn/DAO routing (#183)):README.md
 
 ---
 

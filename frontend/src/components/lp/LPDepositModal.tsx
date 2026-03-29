@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useBatchTransaction } from "../../hooks/useBatchTransaction";
-// Named imports for tree-shaking — only pull what is used from stellar-sdk
 import { Operation, Asset } from "@stellar/stellar-sdk";
 
 interface LPPool {
