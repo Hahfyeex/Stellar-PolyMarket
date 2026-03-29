@@ -104,5 +104,24 @@ module.exports = {
         global: { lines: 90, functions: 90, branches: 90 },
       },
     },
+    {
+      displayName: "simulator-calc",
+      preset: "ts-jest",
+      testEnvironment: "node",
+      testMatch: ["**/utils/__tests__/**/*.test.ts"],
+      globals: {
+        "ts-jest": { tsconfig: { esModuleInterop: true } },
+      },
+      collectCoverageFrom: [
+        "src/utils/simulatorCalc.ts",
+        "src/utils/poolOwnership.ts",
+        "src/utils/trustline.ts",
+        "src/utils/marketDiscovery.ts",
+        "src/utils/slippageCalc.ts",
+      ],
+      coverageThreshold: {
+        global: { lines: 90, functions: 90, branches: 90 },
+      },
+    },
   ],
 };

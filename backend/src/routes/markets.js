@@ -171,6 +171,14 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
       outcomes: outcomes ?? [],
       totalPool: 0,
     });
+
+    // Emit market.created so registered bot strategies can seed initial liquidity
+    eventBus.emit("market.created", {
+      marketId: result.rows[0].id,
+      question,
+      outcomes: outcomes ?? [],
+      totalPool: 0,
+    });
   } catch (err) {
     logger.error({ err, question, wallet_address: walletAddress }, "Failed to create market");
     res.status(500).json({

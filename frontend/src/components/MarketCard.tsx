@@ -1,20 +1,17 @@
 import { useEffect, useState } from "react";
-import { useRouter } from "next/router"; // or "next/navigation" if using App Router
 import type { Market } from "../types/market";
-import Link from "next/link";
-import { useToast } from "./ToastProvider";
+import ResolutionCenter from "./ResolutionCenter";
+import { trackEvent } from "../lib/firebase";
+import WhatIfSimulator from "./WhatIfSimulator";
+import { useBettingSlip } from "../context/BettingSlipContext";
+import Toast from "./Toast";
 import PoolOwnershipChart from "./PoolOwnershipChart";
-import PayoutTooltip from "./PayoutTooltip";
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { useTrustline } from "../hooks/useTrustline";
-import { trackEvent } from "../lib/firebase";
-import ResolutionCenter from "./ResolutionCenter";
 import SlippageSettings from "./SlippageSettings";
 import SlippageWarningModal from "./SlippageWarningModal";
-import Toast from "./Toast";
 import TrustlineModal from "./TrustlineModal";
-import WhatIfSimulator from "./WhatIfSimulator";
 import { useOptimisticBet } from "../hooks/useOptimisticBet";
 import OptimisticBetIndicator from "./OptimisticBetIndicator";
 import OddsTicker from "./OddsTicker";
@@ -313,7 +310,24 @@ export default function MarketCard({
         <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
 
-      <ResolutionCenter />
+      <ResolutionCenter market={market} compact />
+
+      {/* Queue-full toast */}
+      {showQueueFullToast && (
+        <Toast
+          message={`Betting slip is full (max ${5} bets). Remove one to add more.`}
+          type="warning"
+          onDismiss={() => setShowQueueFullToast(false)}
+        />
+      )}
+
+      {/* What-If Simulator — shown when an outcome is selected */}
+      {!market.resolved && !isExpired && selectedOutcome !== null && (
+        <WhatIfSimulator
+          poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}
+          totalPool={parseFloat(market.total_pool)}
+        />
+      )}
     </div>
   );
 }

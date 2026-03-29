@@ -120,6 +120,13 @@ export default function Home() {
           <ThemeToggle />
           <LanguageSelector />
           <button
+            onClick={toggleTheme}
+            className="text-gray-400 hover:text-white transition-colors text-xl"
+            title="Toggle Theme"
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+          <button
             onClick={handleHelpClick}
             className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
             title={t("nav.help")}
