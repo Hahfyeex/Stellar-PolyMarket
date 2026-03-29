@@ -27,6 +27,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = appViewport;
 
 import { ToastProvider } from "../components/ToastProvider";
+import { ChartThemeProvider } from "../components/ChartThemeProvider";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -2,15 +2,8 @@
 import { useState, useEffect, useRef } from "react";
 // Named imports — webpack tree-shakes unused recharts components via the
 // package's sideEffects:false declaration, keeping the bundle lean.
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { useChartTheme } from "./ChartThemeProvider";
 import { calculateSimulator } from "../utils/simulatorCalc";
 
 interface Props {
@@ -27,12 +20,12 @@ const DEBOUNCE_MS = 200;
 export default function WhatIfSimulator({ poolForOutcome, totalPool, maxStake }: Props) {
   const [open, setOpen] = useState(false);
   const [stake, setStake] = useState(10);
-  const [result, setResult] = useState(() =>
-    calculateSimulator(10, poolForOutcome, totalPool)
-  );
+  const [result, setResult] = useState(() => calculateSimulator(10, poolForOutcome, totalPool));
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sliderMax = maxStake ?? Math.max(totalPool * 2, 1000);
+
+  const colors = useChartTheme();
 
   // Recalculate with debounce on every stake or pool change
   useEffect(() => {
@@ -149,10 +142,20 @@ export default function WhatIfSimulator({ poolForOutcome, totalPool, maxStake }:
           <div data-testid="simulator-chart" className="h-40">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                <XAxis dataKey="name" tick={{ fill: "#9ca3af", fontSize: 11 }} axisLine={false} tickLine={false} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fill: "#9ca3af", fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
                 <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip
-                  contentStyle={{ background: "#1f2937", border: "none", borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{
+                    background: "#1f2937",
+                    border: "none",
+                    borderRadius: 8,
+                    fontSize: 12,
+                  }}
                   labelStyle={{ color: "#e5e7eb" }}
                   formatter={(v) => [`${Number(v ?? 0).toFixed(2)} XLM`] as [string]}
                 />

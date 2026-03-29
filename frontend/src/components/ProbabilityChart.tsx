@@ -23,6 +23,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useEffect, useState, useRef } from "react";
+import { useChartTheme } from "../ChartThemeProvider";
 
 interface PricePoint {
   time: string;
@@ -35,8 +36,6 @@ interface Props {
   /** Optional pre-loaded data (for SSR / testing) */
   initialData?: PricePoint[];
 }
-
-const OUTCOME_COLORS = ["#3b82f6", "#22c55e", "#a855f7", "#f59e0b", "#ef4444"];
 
 /** Generate mock probability history until real API endpoint exists */
 function generateMockHistory(outcomes: string[], points = 48): PricePoint[] {
@@ -64,9 +63,10 @@ function generateMockHistory(outcomes: string[], points = 48): PricePoint[] {
 
 /** Custom tooltip */
 function ChartTooltip({ active, payload, label }: any) {
+  const colors = useChartTheme();
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs shadow-xl">
+    <div style={{ backgroundColor: colors.tooltipBg, borderColor: colors.tooltipBorder }} className="border rounded-lg px-3 py-2 text-xs shadow-xl">
       <p className="text-gray-400 mb-1">{label}</p>
       {payload.map((p: any) => (
         <p key={p.name} style={{ color: p.color }} className="font-semibold">
@@ -82,6 +82,7 @@ type TimeRange = "1H" | "6H" | "24H" | "7D" | "ALL";
 export default function ProbabilityChart({ marketId, outcomes, initialData }: Props) {
   const [data, setData] = useState<PricePoint[]>(initialData ?? []);
   const [range, setRange] = useState<TimeRange>("24H");
+  const colors = useChartTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -124,24 +125,24 @@ export default function ProbabilityChart({ marketId, outcomes, initialData }: Pr
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
               <defs>
-                {outcomes.map((o, i) => (
+{outcomes.map((o, i) => (
                   <linearGradient key={o} id={`grad-${i}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={OUTCOME_COLORS[i % OUTCOME_COLORS.length]} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={OUTCOME_COLORS[i % OUTCOME_COLORS.length]} stopOpacity={0} />
+                    <stop offset="5%" stopColor={colors.slices[i % colors.slices.length]} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={colors.slices[i % colors.slices.length]} stopOpacity={0} />
                   </linearGradient>
                 ))}
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+<CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
               <XAxis
                 dataKey="time"
-                tick={{ fill: "#6b7280", fontSize: 10 }}
+                tick={{ fill: colors.axis, fontSize: 10 }}
                 tickLine={false}
                 axisLine={false}
                 interval="preserveStartEnd"
               />
               <YAxis
                 domain={[0, 100]}
-                tick={{ fill: "#6b7280", fontSize: 10 }}
+                tick={{ fill: colors.axis, fontSize: 10 }}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(v) => `${v}%`}
@@ -157,7 +158,7 @@ export default function ProbabilityChart({ marketId, outcomes, initialData }: Pr
                   key={o}
                   type="monotone"
                   dataKey={o}
-                  stroke={OUTCOME_COLORS[i % OUTCOME_COLORS.length]}
+                  stroke={colors.slices[i % colors.slices.length]}
                   strokeWidth={2}
                   fill={`url(#grad-${i})`}
                   dot={false}
