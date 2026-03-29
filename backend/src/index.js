@@ -1,7 +1,9 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
 const logger = require("./utils/logger");
+const { sanitizeError } = require("./utils/errors");
 
 // ── Firebase Admin SDK initialisation ──────────────────────────────────────
 // Must happen before any firebase-admin/* imports (including appCheck middleware).
@@ -18,9 +20,12 @@ if (!admin.apps.length) {
 }
 // ───────────────────────────────────────────────────────────────────────────
 
+const compression = require("compression");
 const appCheckMiddleware = require("./middleware/appCheck");
 
 const app = express();
+
+app.use(compression({ threshold: 1024 }));
 
 // ── CORS ────────────────────────────────────────────────────────────────────
 // Restrict allowed origins to the official frontend domain.
@@ -47,8 +52,11 @@ app.use(
 
 app.use(express.json());
 
-// Request logging middleware
+// Request tracking and logging middleware
 app.use((req, res, _next) => {
+  req.requestId = req.headers["x-request-id"] || crypto.randomUUID();
+  res.setHeader("X-Request-ID", req.requestId);
+
   const start = Date.now();
   res.on("finish", () => {
     const duration = Date.now() - start;
@@ -59,6 +67,7 @@ app.use((req, res, _next) => {
         status: res.statusCode,
         duration_ms: duration,
         ip: req.ip,
+        requestId: req.requestId,
       },
       "HTTP Request"
     );
@@ -80,11 +89,13 @@ app.use("/metrics", require("./routes/metrics"));
 app.use("/api", appCheckMiddleware);
 // ───────────────────────────────────────────────────────────────────────────
 
-// Routes
+// Routes (MERGED — keep ALL)
+app.use("/api/auth", require("./routes/auth"));
 app.use("/api/markets", require("./routes/markets"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/reserves", require("./routes/reserves"));
+app.use("/api/anchor", require("./routes/anchor"));
 app.use("/api/audit-logs", require("./routes/audit"));
 
 const shortUrlRoutes = require("./routes/shorturl");
@@ -102,19 +113,64 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
 app.use("/api/archive", require("./routes/archive"));
 app.use("/api/portfolio", require("./routes/portfolio"));
+app.use("/api/leaderboard", require("./routes/leaderboard"));
 
+// ── Apollo Server (GraphQL API) ────────────────────────────────────────────
+const { ApolloServer } = require("@apollo/server");
+const { expressMiddleware } = require("@apollo/server/express4");
+const { makeExecutableSchema } = require("@graphql-tools/schema");
+const bodyParser = require("body-parser");
+const jwt = require("jsonwebtoken");
+const { typeDefs } = require("./graphql/schema");
+const gqlResolvers = require("./graphql/resolvers");
+const { createLoaders } = require("./graphql/dataLoaders");
 
-// GraphQL endpoint (graphql-yoga as Express middleware)
-const { createYoga } = require("graphql-yoga");
-const schema = require("./graphql/schema");
-const yoga = createYoga({ schema, graphqlEndpoint: "/graphql", logging: false });
-app.use("/graphql", yoga);
+const executableSchema = makeExecutableSchema({ typeDefs, resolvers: gqlResolvers });
+
+const apolloServer = new ApolloServer({
+  schema: executableSchema,
+  // Playground (sandbox) is enabled by default in Apollo Server 4 when NODE_ENV !== 'production'
+  introspection: process.env.NODE_ENV !== "production",
+});
+
+// Apollo Server must be started before applying middleware
+apolloServer.start().then(() => {
+  app.use(
+    "/graphql",
+    bodyParser.json(),
+    expressMiddleware(apolloServer, {
+      context: async ({ req }) => {
+        // JWT validation on every GraphQL request
+        const auth = req.headers.authorization || "";
+        let user = null;
+        if (auth.startsWith("Bearer ")) {
+          try {
+            user = jwt.verify(
+              auth.slice(7),
+              process.env.JWT_SECRET || "change-me-in-production"
+            );
+          } catch {
+            // Invalid token — user stays null; resolvers can enforce auth as needed
+          }
+        }
+        return { user, loaders: createLoaders() };
+      },
+    })
+  );
+});
+// ────────────────────────────────────────────────────────────────────────────
 
 // Initialise bot registry — subscribes all strategies to the event bus
 require("./bots/registry");
 
 // Start automated market resolver cron (every 5 minutes)
 require("./workers/resolver").start();
+
+// Start hourly stale-market expiry job
+require("./jobs/expireMarkets").start();
+
+// Start automated payouts job (every 15 minutes)
+require("./jobs/automatedPayouts").start();
 
 // Start nightly market archival cron (02:00 UTC)
 require("./workers/archive-worker").start();
@@ -125,18 +181,13 @@ require("./indexer/mercury").subscribe();
 // Initialize self-healing gap detection and recovery
 require("./indexer/gap-detector").initializeSelfHealing();
 
+// Initialise bot registry — subscribes all strategies to the event bus
+require("./bots/registry");
+
 // Global error handler
 app.use((err, req, res, _next) => {
-  logger.error(
-    {
-      err,
-      method: req.method,
-      path: req.path,
-      body: req.body,
-    },
-    "Unhandled error"
-  );
-  res.status(500).json({ error: "Internal server error" });
+  const safeMessage = sanitizeError(err, req.requestId);
+  res.status(500).json({ error: safeMessage });
 });
 
 const PORT = process.env.PORT || 4000;
@@ -144,7 +195,10 @@ const http = require("http");
 const httpServer = http.createServer(app);
 
 // Attach graphql-ws WebSocket server (subscriptions at /graphql)
-require("./graphql/wsServer").attach(httpServer, schema);
+require("./graphql/wsServer").attach(httpServer, executableSchema);
+
+// Attach market updates WebSocket server (real-time updates at /ws/markets)
+require("./websocket/marketUpdates").attach(httpServer);
 
 httpServer.listen(PORT, () => {
   logger.info({ port: PORT, environment: process.env.NODE_ENV || "development" }, "Server started");

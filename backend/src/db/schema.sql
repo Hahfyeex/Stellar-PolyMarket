@@ -1,6 +1,15 @@
+CREATE TABLE IF NOT EXISTS categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL,
+  slug VARCHAR(50) UNIQUE NOT NULL,
+  icon_name VARCHAR(50) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS markets (
   id SERIAL PRIMARY KEY,
   question TEXT NOT NULL,
+  category_id INT REFERENCES categories(id),
   end_date TIMESTAMPTZ NOT NULL,
   outcomes TEXT[] NOT NULL,
   resolved BOOLEAN DEFAULT FALSE,
@@ -8,6 +17,7 @@ CREATE TABLE IF NOT EXISTS markets (
   total_pool NUMERIC DEFAULT 0,
   status TEXT DEFAULT 'ACTIVE',
   contract_address TEXT,
+  payout_distributed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

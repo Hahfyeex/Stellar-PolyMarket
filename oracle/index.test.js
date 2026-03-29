@@ -52,8 +52,8 @@ describe("Oracle Graceful Shutdown (#223)", () => {
 describe("Oracle Default Outcome (#218)", () => {
   test("fetchOutcome throws when no resolver matches", async () => {
     await expect(
-      oracle.fetchOutcome("Who will win the 2025 Ballon d'Or?", ["Messi", "Ronaldo"])
-    ).rejects.toThrow("No resolver matched");
+      oracle.fetchOutcome({ question: "Who will win the 2025 Ballon d'Or?", outcomes: ["Messi", "Ronaldo"], category_slug: "unknown-category" })
+    ).rejects.toThrow("No resolver registered for category");
   });
 
   test("markUnresolvable calls backend pending-review endpoint", async () => {
