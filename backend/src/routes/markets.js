@@ -74,16 +74,22 @@ router.get("/", async (req, res) => {
 
     // Cache-aside: check Redis first, fall back to DB on miss or Redis failure
     // Include categorySlug in cache key if present
-    const key = categorySlug ? `markets:cat:${categorySlug}:${limit}:${offset}` : listKey(limit, offset);
+    const key = categorySlug
+      ? `markets:cat:${categorySlug}:${limit}:${offset}`
+      : listKey(limit, offset);
     const data = await getOrSet(key, TTL.LIST, async () => {
       // Cache miss — query the database
-      let countQuery = "SELECT COUNT(*) as total FROM markets m WHERE m.deleted_at IS NULL";
-      let dataQuery = "SELECT m.*, c.slug as category_slug FROM markets m LEFT JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL";
+      let countQuery =
+        "SELECT COUNT(*) as total FROM markets m WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'";
+      let dataQuery =
+        "SELECT m.*, c.slug as category_slug FROM markets m LEFT JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'";
       const params = [limit, offset];
 
       if (categorySlug) {
-        countQuery = "SELECT COUNT(*) as total FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND c.slug = $1";
-        dataQuery = "SELECT m.*, c.slug as category_slug FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND c.slug = $3 ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
+        countQuery =
+          "SELECT COUNT(*) as total FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $1";
+        dataQuery =
+          "SELECT m.*, c.slug as category_slug FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $3 ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
         params.push(categorySlug);
       } else {
         dataQuery += " ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";

@@ -125,6 +125,9 @@ require("./bots/registry");
 // Start automated market resolver cron (every 5 minutes)
 require("./workers/resolver").start();
 
+// Start hourly stale-market expiry job
+require("./jobs/expireMarkets").start();
+
 // Start nightly market archival cron (02:00 UTC)
 require("./workers/archive-worker").start();
 
