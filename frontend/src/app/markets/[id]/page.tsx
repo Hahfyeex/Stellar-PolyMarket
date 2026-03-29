@@ -21,6 +21,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useWalletContext } from "../../../context/WalletContext";
 import ProbabilityChart from "../../../components/ProbabilityChart";
+import OddsChart from "../../../components/OddsChart";
 import TradeModal from "../../../components/TradeModal";
 import MarketComments from "../../../components/MarketComments";
 import PoolOwnershipChart from "../../../components/PoolOwnershipChart";
@@ -259,7 +260,10 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
             {/* 1. PROBABILITY CHART — primary element */}
             {market ? <ProbabilityChart marketId={market.id} outcomes={market.outcomes} /> : null}
 
-            {/* 2. Current prices row */}
+            {/* 2. ODDS HISTORY CHART — time range controls */}
+            {market ? <OddsChart marketId={market.id} /> : null}
+
+            {/* 3. Current prices row */}
             {market && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {market.outcomes.map((outcome, i) => {
