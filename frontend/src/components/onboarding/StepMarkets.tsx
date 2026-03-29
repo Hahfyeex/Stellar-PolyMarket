@@ -10,7 +10,13 @@ export default function StepMarkets() {
       {/* Icon + title */}
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-xl bg-blue-900/40 border border-blue-700/50 flex items-center justify-center shrink-0">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-6 h-6 text-blue-400">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            className="w-6 h-6 text-blue-400"
+          >
             <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
         </div>
@@ -26,7 +32,7 @@ export default function StepMarkets() {
           {
             icon: "📋",
             title: "A question is posed",
-            desc: "e.g. "Will BTC reach $100k before 2027?"",
+            desc: 'e.g. "Will BTC reach $100k before 2027?"',
           },
           {
             icon: "💰",

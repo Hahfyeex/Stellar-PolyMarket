@@ -1,4 +1,5 @@
 "use client";
+import EmptyState from "../components/EmptyState";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useWalletContext } from "../context/WalletContext";
@@ -19,9 +20,9 @@ import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
-import OnboardingWizard from "../components/onboarding/OnboardingWizard";
 import { useMarkets } from "../hooks/useMarkets";
 import { useQueryClient } from "@tanstack/react-query";
+import { NoMarketsIllustration } from "@/assets/emptyStates";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
@@ -36,11 +37,12 @@ export default function Home() {
   const [filters, setFilters] = useState<SearchFilters>(() => ({
     query: searchParams.get("q") ?? "",
     category: searchParams.get("category") ?? "",
+    categories: [],
     status: searchParams.get("status") ?? "",
     sort: (searchParams.get("sort") as SortKey) ?? "newest",
   }));
 
-  const filteredMarkets = useMarketSearch(markets, filters);
+  const filteredMarkets = useMarketSearch(markets as any, filters);
 
   const handleHelpClick = () => {
     trackEvent("help_doc_read", {
@@ -210,7 +212,20 @@ export default function Home() {
               ))}
             </div>
           ) : filteredMarkets.length === 0 ? (
-            <p className="text-gray-400">No markets found.</p>
+            <EmptyState
+              illustration={<NoMarketsIllustration />}
+              title="No markets found"
+              message="No markets match your filters. Try adjusting your search."
+              ctaLabel="Browse Markets"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
+                  query: "",
+                  category: "",
+                  categories: [],
+                }))
+              }
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredMarkets.map((market) => (
@@ -245,10 +260,6 @@ export default function Home() {
 
   return (
     <>
-      {/* Onboarding wizard — shown once to new users, persisted in localStorage */}
-      <OnboardingWizard />
-
-      {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell
           activeMarket={activeMarket}
