@@ -196,7 +196,7 @@ describe("usePlaceBet", () => {
     );
   });
 
-  it("invalidates markets and market queries on success", async () => {
+  it("invalidates markets, market detail, and market stats queries on success", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ bet: { id: 10 } }),
@@ -216,6 +216,7 @@ describe("usePlaceBet", () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["markets"] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["market", "1"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["market", "1", "stats"] });
   });
 
   it("sets isError on API failure", async () => {

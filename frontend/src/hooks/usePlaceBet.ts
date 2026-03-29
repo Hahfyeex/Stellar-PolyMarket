@@ -28,6 +28,7 @@ export function usePlaceBet(marketId?: number) {
       queryClient.invalidateQueries({ queryKey: ["markets"] });
       if (marketId !== undefined) {
         queryClient.invalidateQueries({ queryKey: ["market", String(marketId)] });
+        queryClient.invalidateQueries({ queryKey: ["market", String(marketId), "stats"] });
       }
     },
   });

@@ -243,32 +243,56 @@ router.post("/", async (req, res) => {
 
 // POST /api/bets/payout/:marketId — distribute rewards to winners
 router.post("/payout/:marketId", async (req, res) => {
+  const marketId = req.params.marketId;
+  let client;
+  let inTransaction = false;
+
   try {
-    const market = await db.query("SELECT * FROM markets WHERE id = $1 AND resolved = TRUE", [
-      req.params.marketId,
-    ]);
+    client = await db.connect();
+    await client.query("BEGIN");
+    inTransaction = true;
+    await client.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
+
+    const market = await client.query(
+      "SELECT id, winning_outcome, total_pool FROM markets WHERE id = $1 AND resolved = TRUE FOR UPDATE",
+      [marketId]
+    );
+
     if (!market.rows.length) {
-      logger.warn({ market_id: req.params.marketId }, "Payout rejected: market not resolved");
+      await client.query("ROLLBACK");
+      inTransaction = false;
+      logger.warn({ market_id: marketId }, "Payout rejected: market not resolved");
       return res.status(400).json({ error: "Market not resolved yet" });
     }
 
     const { winning_outcome, total_pool } = market.rows[0];
 
-    // Get all winning bets
-    const winners = await db.query(
-      "SELECT * FROM bets WHERE market_id = $1 AND outcome_index = $2 AND paid_out = FALSE",
-      [req.params.marketId, winning_outcome]
+    // Lock all winning rows first, then re-check paid_out inside the transaction.
+    const lockedWinners = await client.query(
+      "SELECT id, wallet_address, amount, paid_out FROM bets WHERE market_id = $1 AND outcome_index = $2 FOR UPDATE",
+      [marketId, winning_outcome]
     );
+    const winners = lockedWinners.rows.filter((row) => row.paid_out === false);
+    const alreadyPaid = lockedWinners.rows.filter((row) => row.paid_out === true);
+
+    for (const bet of alreadyPaid) {
+      logger.warn(
+        { market_id: marketId, bet_id: bet.id },
+        "Skipping payout row already marked as paid_out"
+      );
+    }
 
     // Convert to stroops (7 decimal places = 10^7)
     const totalPoolStroops = BigInt(Math.floor(parseFloat(total_pool) * 1e7));
 
     // Get total winning stake in stroops
-    const winningStakeStroops = winners.rows.reduce((sum, b) => {
+    const winningStakeStroops = winners.reduce((sum, b) => {
       return sum + BigInt(Math.floor(parseFloat(b.amount) * 1e7));
     }, 0n);
 
     if (winningStakeStroops === 0n) {
+      await client.query("ROLLBACK");
+      inTransaction = false;
       return res.status(400).json({ error: "No winning stake" });
     }
 
@@ -276,13 +300,13 @@ router.post("/payout/:marketId", async (req, res) => {
     const payoutPoolStroops = (totalPoolStroops * 97n) / 100n;
 
     // Calculate payouts using BigInt arithmetic
-    const payouts = winners.rows.map((bet) => {
+    const payouts = winners.map((bet) => {
       const betAmountStroops = BigInt(Math.floor(parseFloat(bet.amount) * 1e7));
       // payout = (betAmount * payoutPool) / winningStake
       const payoutStroops = (betAmountStroops * payoutPoolStroops) / winningStakeStroops;
       // Convert back to XLM (divide by 10^7)
       const payoutXlm = Number(payoutStroops) / 1e7;
-      return { wallet: bet.wallet_address, payout: payoutXlm.toFixed(7) };
+      return { betId: bet.id, wallet: bet.wallet_address, payout: payoutXlm.toFixed(7) };
     });
 
     // Verify sum of payouts doesn't exceed payout pool
@@ -295,26 +319,37 @@ router.post("/payout/:marketId", async (req, res) => {
     if (totalPayoutStroops > payoutPoolStroops) {
       logger.error(
         {
-          market_id: req.params.marketId,
+          market_id: marketId,
           total_payout_stroops: totalPayoutStroops.toString(),
           payout_pool_stroops: payoutPoolStroops.toString(),
         },
         "Payout sum exceeds pool"
       );
+      await client.query("ROLLBACK");
+      inTransaction = false;
       return res.status(500).json({ error: "Payout calculation error: sum exceeds pool" });
     }
 
-    // Mark bets as paid
-    await db.query("UPDATE bets SET paid_out = TRUE WHERE market_id = $1 AND outcome_index = $2", [
-      req.params.marketId,
-      winning_outcome,
-    ]);
+    // Mark only the locked, unpaid rows. The predicate is re-checked atomically.
+    const winnerIds = winners.map((w) => w.id);
+    const markedPaid = await client.query(
+      "UPDATE bets SET paid_out = TRUE WHERE id = ANY($1::int[]) AND paid_out = FALSE RETURNING id, wallet_address",
+      [winnerIds]
+    );
+
+    const markedPaidIds = new Set(markedPaid.rows.map((row) => row.id));
+    const committedPayouts = payouts
+      .filter((p) => markedPaidIds.has(p.betId))
+      .map(({ wallet, payout }) => ({ wallet, payout }));
+
+    await client.query("COMMIT");
+    inTransaction = false;
 
     logger.info(
       {
-        market_id: req.params.marketId,
+        market_id: marketId,
         winning_outcome,
-        winners_count: winners.rows.length,
+        winners_count: committedPayouts.length,
         total_pool,
         winning_stake: Number(winningStakeStroops) / 1e7,
       },
@@ -322,21 +357,36 @@ router.post("/payout/:marketId", async (req, res) => {
     );
 
     // Invalidate portfolio cache for all winners
-    if (winners.rows.length > 0) {
-      const winnerAddresses = new Set(winners.rows.map((w) => w.wallet_address));
+    if (markedPaid.rows.length > 0) {
+      const winnerAddresses = new Set(markedPaid.rows.map((w) => w.wallet_address));
       const invalidationPromises = Array.from(winnerAddresses).map((addr) =>
         redis.del(`portfolio:${addr}`)
       );
       await Promise.all(invalidationPromises);
       logger.info(
-        { market_id: req.params.marketId, winners_count: winnerAddresses.size },
+        { market_id: marketId, winners_count: winnerAddresses.size },
         "[Cache] Invalidated portfolio cache for winners"
       );
     }
 
-    res.json({ payouts });
+    res.json({ payouts: committedPayouts });
   } catch (err) {
+    if (client && inTransaction) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackErr) {
+        logger.error({ err: rollbackErr, market_id: marketId }, "Payout rollback failed");
+      }
+    }
+
+    if (err && err.code === "40001") {
+      logger.warn({ market_id: marketId }, "Payout serialization conflict");
+      return res.status(409).json({ error: "Concurrent payout conflict, please retry" });
+    }
+
     res.status(500).json({ error: sanitizeError(err, req.requestId) });
+  } finally {
+    if (client) client.release();
   }
 });
 

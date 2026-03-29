@@ -79,6 +79,8 @@ app.use("/api/health", require("./routes/health/protocolHealth"));
 
 // Prometheus metrics — NOT behind App Check so Prometheus can scrape freely
 app.use("/metrics", require("./routes/metrics"));
+// Development utilities (guarded in-route by NODE_ENV)
+app.use("/api/dev", require("./routes/dev"));
 
 // ── App Check enforcement ───────────────────────────────────────────────────
 // All /api/* routes are protected. Any request without a valid
