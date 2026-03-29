@@ -112,6 +112,62 @@ async function callGetMarketStatus(marketId) {
   }
 }
 
+async function getFeeRateBps() {
+  if (!CONTRACT_ID) {
+    logger.warn("SOROBAN_CONTRACT_ID not set, defaulting fee_rate_bps=300");
+    return 300;
+  }
+
+  try {
+    const contract = new SorobanRpc.Contract(CONTRACT_ID);
+    const candidateMethods = ["get_fee_rate", "fee_rate"];
+    let result = null;
+
+    for (const method of candidateMethods) {
+      try {
+        const call = contract.call(method);
+        const account = { accountId: CONTRACT_ID, sequenceNumber: "0" };
+        const tx = new SorobanRpc.TransactionBuilder(account, {
+          fee: 100,
+          networkPassphrase: "Test SDF Network ; September 2015",
+        })
+          .addOperation(call)
+          .setTimeout(30)
+          .build();
+
+        const simulated = await Promise.race([
+          server.simulateTransaction(tx),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("RPC timeout")), RPC_TIMEOUT)),
+        ]);
+
+        if (simulated.error) {
+          throw new Error(`Simulation error: ${simulated.error}`);
+        }
+
+        result = simulated.results?.[0]?.result?.retval;
+        if (result) break;
+      } catch (err) {
+        logger.debug({ method, err: err.message }, "Fee rate contract method failed");
+      }
+    }
+
+    if (!result) {
+      throw new Error("Could not fetch fee rate from contract");
+    }
+
+    const parsed = Number(result.toString());
+    if (Number.isNaN(parsed) || parsed < 0 || parsed > 10000) {
+      throw new Error(`Invalid fee rate value from contract: ${result}`);
+    }
+
+    return parsed;
+  } catch (err) {
+    logger.error({ err: err.message }, "Failed to fetch fee_rate from contract, defaulting to 300 bps");
+    return 300;
+  }
+}
+
 module.exports = {
   getMarketStatus,
+  getFeeRateBps,
 };

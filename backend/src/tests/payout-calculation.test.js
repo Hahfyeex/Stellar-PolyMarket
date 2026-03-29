@@ -5,10 +5,8 @@ const assert = require("assert");
  * Ensures exact stroop-level accuracy without floating point errors
  */
 
-function calculatePayouts(totalPoolXlm, winners) {
-  const STROOP_MULTIPLIER = 10_000_000n;
+function calculatePayouts(totalPoolXlm, winners, feeRateBps = 300) {
   const totalPoolStroops = BigInt(Math.floor(totalPoolXlm * 1e7));
-  
   const winningStakeStroops = winners.reduce((sum, w) => {
     return sum + BigInt(Math.floor(w.amountXlm * 1e7));
   }, 0n);
@@ -17,7 +15,7 @@ function calculatePayouts(totalPoolXlm, winners) {
     throw new Error("No winning stake");
   }
 
-  const payoutPoolStroops = (totalPoolStroops * 97n) / 100n;
+  const payoutPoolStroops = (totalPoolStroops * BigInt(10000 - feeRateBps)) / 10000n;
 
   return winners.map((winner) => {
     const betAmountStroops = BigInt(Math.floor(winner.amountXlm * 1e7));
@@ -46,6 +44,19 @@ describe("Payout Calculation with BigInt", () => {
     payouts.forEach((p) => {
       assert.strictEqual(p.payout, 9.7);
     });
+  });
+
+  it("should support dynamic fee rates in basis points", () => {
+    const winners = [{ wallet: "addr1", amountXlm: 100 }];
+
+    const payout1 = calculatePayouts(100, winners, 100); // 1%
+    assert.strictEqual(payout1[0].payout, 99);
+
+    const payout3 = calculatePayouts(100, winners, 300); // 3%
+    assert.strictEqual(payout3[0].payout, 97);
+
+    const payout5 = calculatePayouts(100, winners, 500); // 5%
+    assert.strictEqual(payout5[0].payout, 95);
   });
 
   it("should calculate exact payouts for 100 winners with unequal stakes", () => {

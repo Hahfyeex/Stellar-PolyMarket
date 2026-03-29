@@ -11,6 +11,7 @@ const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
 const eventBus = require("../bots/eventBus");
 const { getOrSet, invalidateAll, listKey, detailKey, TTL } = require("../utils/cache");
+const { getFeeRateBps } = require("../utils/sorobanClient");
 const jwtAuth = require("../middleware/jwtAuth");
 
 const DISPUTE_WINDOW_HOURS = parseInt(process.env.DISPUTE_WINDOW_HOURS, 10) || 24;
@@ -143,10 +144,12 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
   }
 
   try {
+    const feeRateBps = await getFeeRateBps();
+
     // Market has passed all validation checks - create immediately without admin approval
     const result = await db.query(
-      "INSERT INTO markets (question, end_date, outcomes, contract_address, category_id, created_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING *",
-      [question, endDate, outcomes, contractAddress || null, categoryId]
+      "INSERT INTO markets (question, end_date, outcomes, contract_address, category_id, fee_rate_bps, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *",
+      [question, endDate, outcomes, contractAddress || null, categoryId, feeRateBps]
     );
 
     logger.info(

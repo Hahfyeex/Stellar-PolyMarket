@@ -71,11 +71,27 @@ router.post("/", async (req, res) => {
     }
   }
 
-  const { marketId, outcomeIndex, amount, walletAddress, transaction_hash } = req.body;
+  const { marketId, outcomeIndex, amount, walletAddress, transaction_hash, memo } = req.body;
   if (!marketId || outcomeIndex === undefined || !amount || !walletAddress || !transaction_hash) {
     return res.status(400).json({
       error: "marketId, outcomeIndex, amount, walletAddress, and transaction_hash are required",
     });
+  }
+
+  const MEMO_RE = /^STELLA-\d+-\d+$/;
+  const expectedMemo = `STELLA-${marketId}-${outcomeIndex}`;
+
+  if (memo !== undefined && memo !== null) {
+    if (typeof memo !== "string" || !MEMO_RE.test(memo)) {
+      return res.status(400).json({
+        error: "memo must match STELLA-[marketId]-[outcomeIndex]",
+      });
+    }
+    if (memo !== expectedMemo) {
+      return res.status(400).json({
+        error: `memo must be ${expectedMemo}`,
+      });
+    }
   }
 
   // Validate amount is a positive integer stroop value
@@ -124,6 +140,14 @@ router.post("/", async (req, res) => {
         .status(400)
         .json({ error: "On-chain transaction not found or does not match bet details" });
     }
+
+    const transactionMemo = transaction.memo || null;
+    if (transactionMemo && transactionMemo !== expectedMemo) {
+      return res.status(400).json({ error: "Transaction memo does not match expected market/outcome format" });
+    }
+
+    const memoToStore =
+      memo || (transactionMemo === expectedMemo ? transactionMemo : null);
 
     // Check market exists and is not resolved
     const market = await db.query(
@@ -193,8 +217,8 @@ router.post("/", async (req, res) => {
 
     // Record bet
     const bet = await db.query(
-      "INSERT INTO bets (market_id, wallet_address, outcome_index, amount, grace_period_ends_at, transaction_hash) VALUES ($1, $2, $3, $4, NOW() + ($5 || ' seconds')::interval, $6) RETURNING *",
-      [marketId, walletAddress, outcomeIndex, amount, GRACE_PERIOD_SECONDS, transaction_hash]
+      "INSERT INTO bets (market_id, wallet_address, outcome_index, amount, grace_period_ends_at, transaction_hash, memo) VALUES ($1, $2, $3, $4, NOW() + ($5 || ' seconds')::interval, $6, $7) RETURNING *",
+      [marketId, walletAddress, outcomeIndex, amount, GRACE_PERIOD_SECONDS, transaction_hash, memoToStore]
     );
 
     // Update total pool
@@ -270,7 +294,7 @@ router.get("/recent", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 50);
   try {
     const result = await db.query(
-      `SELECT b.id, b.wallet_address, b.outcome_index, b.amount, b.created_at,
+      `SELECT b.id, b.wallet_address, b.outcome_index, b.amount, b.created_at, b.memo,
               m.question, m.outcomes
        FROM bets b
        JOIN markets m ON m.id = b.market_id
