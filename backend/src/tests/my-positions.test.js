@@ -83,6 +83,18 @@ describe("GET /api/bets/my-positions", () => {
     expect(response.body.next_cursor).toBeNull();
   });
 
+  test("should include memo field in positions", async () => {
+    const mockBets = [
+      { id: 3, question: "Q3", amount: 25, market_status: "ACTIVE", memo: "STELLA-1-0" },
+    ];
+
+    db.query.mockResolvedValueOnce({ rows: mockBets });
+    const response = await request(app).get("/api/bets/my-positions?walletAddress=ADDR1&limit=1");
+
+    expect(response.status).toBe(200);
+    expect(response.body.positions[0].memo).toBe("STELLA-1-0");
+  });
+
   test("should handle database errors", async () => {
     db.query.mockRejectedValueOnce(new Error("DB Error"));
 

@@ -30,6 +30,7 @@ import LanguageSelector from "../components/LanguageSelector";
 import { useMarkets } from "../hooks/useMarkets";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMarketTabs } from "../hooks/useMarketTabs";
+import { useWatchlist } from "../hooks/useWatchlist";
 import MarketTabs from "../components/MarketTabs";
 import MarketListSkeleton from "../components/skeletons/MarketListSkeleton";
 import { useTranslation } from "react-i18next";
@@ -42,6 +43,7 @@ export default function Home() {
   const { t } = useTranslation("common");
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+  const { watchlist, toggleWatchlist } = useWatchlist();
 
   // Restore filter state from URL params on mount
   const [filters, setFilters] = useState<SearchFilters>(() => ({
@@ -52,11 +54,20 @@ export default function Home() {
     sort: (searchParams.get("sort") as SortKey) ?? "newest",
   }));
 
-  const { activeTab, setActiveTab, activeMarkets, resolvedMarkets, activeBadge, resolvedBadge } =
-    useMarketTabs(markets);
+  const {
+    activeTab,
+    setActiveTab,
+    activeMarkets,
+    resolvedMarkets,
+    watchlistMarkets,
+    activeBadge,
+    resolvedBadge,
+    watchlistBadge,
+  } = useMarketTabs(markets, watchlist);
 
   // Apply search/filter on top of the tab-filtered list
-  const tabMarkets = activeTab === "active" ? activeMarkets : resolvedMarkets;
+  const tabMarkets =
+    activeTab === "active" ? activeMarkets : activeTab === "watchlist" ? watchlistMarkets : resolvedMarkets;
   const filteredMarkets = useMarketSearch(tabMarkets, filters);
 
   const handleHelpClick = () => {
@@ -97,6 +108,11 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refetchMarkets() {
+    // Invalidate the React Query cache for markets to trigger a fresh fetch
+    await queryClient.invalidateQueries({ queryKey: ["markets"] });
   }
 
   useEffect(() => {

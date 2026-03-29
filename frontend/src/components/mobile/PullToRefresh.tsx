@@ -116,6 +116,11 @@ export default function PullToRefresh({ onRefresh, children }: Props) {
 
     // Check if the pull distance exceeded the minimum threshold (60px)
     if (pullDistance >= TRIGGER_THRESHOLD) {
+      // Add haptic feedback on trigger
+      if (navigator.vibrate) {
+        navigator.vibrate(50);
+      }
+
       // Set the synchronous guard to prevent concurrent refreshes
       isRefreshingRef.current = true;
 

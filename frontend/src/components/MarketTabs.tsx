@@ -6,14 +6,22 @@ interface Props {
   activeTab: TabKey;
   activeBadge: number;
   resolvedBadge: number;
+  watchlistBadge: number;
   onChange: (tab: TabKey) => void;
 }
 
-export default function MarketTabs({ activeTab, activeBadge, resolvedBadge, onChange }: Props) {
+export default function MarketTabs({
+  activeTab,
+  activeBadge,
+  resolvedBadge,
+  watchlistBadge,
+  onChange,
+}: Props) {
   const { t } = useTranslation("common");
 
   const tabs: { key: TabKey; label: string; count: number }[] = [
     { key: "active", label: t("markets.tabs.active"), count: activeBadge },
+    { key: "watchlist", label: t("markets.tabs.watchlist"), count: watchlistBadge },
     { key: "resolved", label: t("markets.tabs.resolved"), count: resolvedBadge },
   ];
 
@@ -21,7 +29,7 @@ export default function MarketTabs({ activeTab, activeBadge, resolvedBadge, onCh
     <div
       role="tablist"
       aria-label={t("markets.tabs.aria_label")}
-      className="flex gap-1 mb-6 border-b border-[var(--border-default)]"
+      className="flex gap-1 mb-6 border-b border-[var(--border-default)] overflow-x-auto"
     >
       {tabs.map(({ key, label, count }) => {
         const isActive = activeTab === key;
@@ -33,7 +41,7 @@ export default function MarketTabs({ activeTab, activeBadge, resolvedBadge, onCh
             aria-controls={`tabpanel-${key}`}
             id={`tab-${key}`}
             onClick={() => onChange(key)}
-            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
               isActive
                 ? "border-blue-500 text-blue-400"
                 : "border-transparent text-gray-400 hover:text-gray-200"

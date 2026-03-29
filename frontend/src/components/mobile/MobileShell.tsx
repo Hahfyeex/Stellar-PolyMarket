@@ -1,8 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import BottomNavBar, { NavTab } from "./BottomNavBar";
 import FloatingBetButton from "./FloatingBetButton";
 import TradeDrawer from "./TradeDrawer";
+import { useTheme } from "../../hooks/useTheme";
+import { useScrollRestoration } from "../../hooks/useScrollRestoration";
+import { useMetaThemeColor } from "../../hooks/useMetaThemeColor";
 import type { Market } from "../../types/market";
 
 interface Props {
@@ -12,9 +15,22 @@ interface Props {
   onBetPlaced?: () => void;
 }
 
-export default function MobileShell({ children, activeMarket, walletAddress, onBetPlaced }: Props) {
+export default function MobileShell({
+  children,
+  activeMarket,
+  walletAddress,
+  onBetPlaced,
+}: Props) {
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  // Get current theme and update meta theme-color
+  const { theme } = useTheme();
+  useMetaThemeColor(theme as "light" | "dark");
+
+  // Restore scroll position when navigating
+  useScrollRestoration(shellRef);
 
   function openDrawer() {
     if (activeMarket) setDrawerOpen(true);
@@ -26,9 +42,14 @@ export default function MobileShell({ children, activeMarket, walletAddress, onB
 
   return (
     <div
+      ref={shellRef}
       data-testid="mobile-shell"
       className="relative min-h-screen"
-      style={{ paddingTop: "env(safe-area-inset-top)" }}
+      style={{
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        overscrollBehavior: "contain",
+      }}
     >
       {/* Page content — add bottom padding so content isn't hidden behind nav bar */}
       <div className="pb-20">
