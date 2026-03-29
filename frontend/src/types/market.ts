@@ -5,6 +5,16 @@ export interface ResolutionSource {
 
 export type ResolutionState = "closed" | "proposed" | "disputed" | "settled";
 
+export interface MarketOddsEntry {
+  index: number;
+  odds: number;
+}
+
+export interface MarketAsset {
+  code: string;
+  issuer: string;
+}
+
 export interface Market {
   id: number;
   question: string;
@@ -22,5 +32,8 @@ export interface Market {
   resolution_state?: ResolutionState;
   resolution_notes?: string | null;
   resolution_sources?: ResolutionSource[];
-  asset?: { code: string; issuer: string };
+  asset?: MarketAsset;
+  outcome_pools?: Array<number | string>;
+  odds_bps?: Array<number | string>;
+  odds?: Array<number | MarketOddsEntry>;
 }
