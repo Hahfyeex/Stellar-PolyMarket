@@ -6,7 +6,7 @@
  * Handles outcome selection, amount input, slippage, and bet submission.
  * Reuses existing hooks (useFormPersistence, useTrustline, useBettingSlip).
  */
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useBettingSlip } from "../context/BettingSlipContext";
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useTrustline } from "../hooks/useTrustline";
@@ -60,16 +60,16 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
   const isExpired = new Date(market.end_date) <= new Date();
   const isDisabled = market.resolved || isExpired;
 
-  async function placeBet() {
+  const placeBet = useCallback(async () => {
     if (selectedOutcome === null || !amount || !walletAddress) return;
     if (market.asset) {
       await checkAndRun(market.asset, walletAddress, submitBet);
     } else {
       await submitBet();
     }
-  }
+  }, [selectedOutcome, amount, walletAddress, market.asset, checkAndRun, submitBet]);
 
-  async function submitBet() {
+  const submitBet = useCallback(async () => {
     if (selectedOutcome === null || !amount || !walletAddress) return;
     const xlm = parseFloat(amount);
     if (!isFinite(xlm) || xlm <= 0) {
@@ -104,7 +104,7 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
     } finally {
       setLoading(false);
     }
-  }
+  }, [selectedOutcome, amount, walletAddress, market.id, clearForm, onBetPlaced]);
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-4 sticky top-4">
@@ -167,7 +167,7 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
               type="number"
               placeholder="e.g. 100"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={useCallback((e: React.ChangeEvent<HTMLInputElement>) => setAmount(e.target.value), [setAmount])}
               className="w-full bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500 transition-colors"
             />
             {/* Quick-fill buttons */}
@@ -175,7 +175,7 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
               {[100, 500, 1000].map((v) => (
                 <button
                   key={v}
-                  onClick={() => setAmount(String(v))}
+                  onClick={useCallback(() => setAmount(String(v)), [setAmount])}
                   className="flex-1 text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white py-1.5 rounded-lg transition-colors border border-gray-700"
                 >
                   {v}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { Market } from "../types/market";
 import ResolutionCenter from "./ResolutionCenter";
 import { trackEvent } from "../lib/firebase";
@@ -17,6 +17,7 @@ import OptimisticBetIndicator from "./OptimisticBetIndicator";
 import OddsTicker from "./OddsTicker";
 import { useVolatilityPulse } from "../hooks/useVolatilityPulse";
 import { useOddsStream } from "../hooks/useOddsStream";
+import BetForm from "./BetForm";
 
 interface Props {
   market: Market;
@@ -122,7 +123,7 @@ export default function MarketCard({
     }
   };
 
-  async function submitBet() {
+  const submitBet = useCallback(async () => {
     if (selectedOutcome === null || !numericAmount || !walletAddress) return;
 
     setLoading(true);
@@ -147,9 +148,9 @@ export default function MarketCard({
       clearForm();
       onBetPlaced?.();
     }
-  }
+  }, [market.id, market.question, market.outcomes, selectedOutcome, numericAmount, walletAddress, submitOptimisticBet, toastError, toastSuccess, clearForm, onBetPlaced]);
 
-  async function placeBet() {
+  const placeBet = useCallback(async () => {
     if (selectedOutcome === null || !numericAmount || !walletAddress) return;
 
     const check = checkSlippage(numericAmount, outcomePool, totalPool, slippageTolerance);
@@ -167,7 +168,7 @@ export default function MarketCard({
     } else {
       await submitBet();
     }
-  }
+  }, [selectedOutcome, numericAmount, walletAddress, checkSlippage, outcomePool, totalPool, slippageTolerance, market.asset, checkAndRun, submitBet]);
 
   const proceedAfterSlippageWarning = async () => {
     if (!walletAddress) return;
@@ -271,22 +272,13 @@ export default function MarketCard({
 
       {!market.resolved && !isExpired && walletAddress && (
         <div className="flex flex-col gap-2">
-          <div className="flex gap-2">
-            <input
-              type="number"
-              placeholder="Amount (XLM)"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="bg-gray-800 text-white rounded-lg px-3 py-2 flex-1"
-            />
-            <button
-              onClick={placeBet}
-              disabled={loading || selectedOutcome === null || !numericAmount}
-              className="bg-blue-600 px-4 py-2 rounded-lg text-sm"
-            >
-              {loading ? "Placing..." : "Bet"}
-            </button>
-          </div>
+          <BetForm
+            amount={amount}
+            onAmountChange={setAmount}
+            onSubmit={placeBet}
+            disabled={selectedOutcome === null || !numericAmount}
+            loading={loading}
+          />
 
           <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
 
