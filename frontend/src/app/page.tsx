@@ -18,21 +18,52 @@ import ContractErrorBoundary from "../components/ContractErrorBoundary";
 import { store } from "../store";
 import { trackEvent } from "../lib/firebase";
 import { useTheme } from "../hooks/useTheme";
-import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
-import OnboardingWizard from "../components/onboarding/OnboardingWizard";
-import ThemeToggle from "../components/ThemeToggle";
-import { useMarkets } from "../hooks/useMarkets";
+import { useInfiniteMarkets } from "../hooks/useInfiniteMarkets";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMarketTabs } from "../hooks/useMarketTabs";
 import MarketTabs from "../components/MarketTabs";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+import OnboardingWizard from "../components/onboarding/OnboardingWizard";
+import ThemeToggle from "../components/ThemeToggle";
+import { useRef } from "react";
 
 export default function Home() {
   const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
+  
+  const {
+    data,
+    isLoading: loading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteMarkets();
+
+  const markets = data?.pages.flatMap((page) => page.markets) ?? DEMO_MARKETS;
+  
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+
+  // Sentinel for Infinite Scroll
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (sentinelRef.current) {
+      observer.observe(sentinelRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Restore filter state from URL params on mount
   const [filters, setFilters] = useState<SearchFilters>(() => ({
@@ -65,8 +96,9 @@ export default function Home() {
 
   // Auto-select first active market for the FAB
   useEffect(() => {
+    if (!markets || markets.length === 0) return;
     const first = markets.find((m) => !m.resolved && new Date(m.end_date) > new Date());
-    setActiveMarket(first ?? null);
+    if (first) setActiveMarket(first);
   }, [markets]);
 
   const pageContent = (
@@ -210,7 +242,7 @@ export default function Home() {
             aria-labelledby={`tab-${activeTab}`}
           >
             <MarketFilters filters={filters} onChange={setFilters} />
-            {loading ? (
+            {loading && !markets.length ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map((i) => (
                   <MarketCardSkeleton key={i} />
@@ -225,25 +257,44 @@ export default function Home() {
                   : "No resolved markets found."}
               </p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredMarkets.map((market) => (
-                  <div
-                    key={market.id}
-                    onClick={() => setActiveMarket(market)}
-                    className={`cursor-pointer rounded-xl transition-all ${
-                      activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
-                    }`}
-                  >
-                    <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
-                      <MarketCard
-                        market={market}
-                        walletAddress={publicKey}
-                        onBetPlaced={refetchMarkets}
-                      />
-                    </ContractErrorBoundary>
-                  </div>
-                ))}
-              </div>
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredMarkets.map((market) => (
+                    <div
+                      key={market.id}
+                      onClick={() => setActiveMarket(market)}
+                      className={`cursor-pointer rounded-xl transition-all ${
+                        activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
+                      }`}
+                    >
+                      <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
+                        <MarketCard
+                          market={market}
+                          walletAddress={publicKey}
+                          onBetPlaced={refetchMarkets}
+                        />
+                      </ContractErrorBoundary>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Infinite Scroll Sentinel */}
+                <div 
+                  ref={sentinelRef} 
+                  className="py-8 flex flex-col items-center justify-center gap-4"
+                >
+                  {isFetchingNextPage ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      <p className="text-sm text-gray-400">Loading more markets...</p>
+                    </div>
+                  ) : !hasNextPage && markets.length > 0 ? (
+                    <p className="text-sm text-gray-500 font-medium bg-gray-900 px-4 py-2 rounded-full">
+                      ✨ End of markets
+                    </p>
+                  ) : null}
+                </div>
+              </>
             )}
           </div>
         </div>
