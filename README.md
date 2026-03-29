@@ -113,6 +113,27 @@ resolve_market(market_id, winning_outcome)  // oracle-triggered
 distribute_rewards(market_id)
 ```
 
+## 🚨 Circuit Breaker
+
+The Soroban prediction market contract includes a per-market circuit breaker to slow down abnormal pool movement.
+
+- Each market stores a persistent `CircuitBreaker(market_id)` flag and a persistent `PoolSnapshot(market_id)` checkpoint.
+- On every `place_bet`, the contract compares the live pool against the last checkpoint once that checkpoint is at least 60 seconds old.
+- If pool movement is greater than 50% over that 60-second window, the contract flips the breaker on and emits a `breaker` contract event with the snapshot and current pool values.
+- Once active, all later `place_bet` calls fail with `CIRCUIT_BREAKER_ACTIVE` until an admin intervenes.
+
+### Breaker States
+
+- `inactive`: betting proceeds normally and the rolling pool snapshot is refreshed every 60 seconds.
+- `active`: new bets are rejected, but admin recovery actions remain available.
+- `resolved`: if the admin force-resolves the market, no new bets are accepted because the market is finalized.
+
+### Admin Recovery Procedure
+
+- Use `reopen_market(market_id)` to clear the breaker flag and reset the 60-second pool checkpoint to the current pool size.
+- Use `force_resolve(market_id, outcome)` if the market should be settled immediately instead of reopened.
+- `set_paused(market_id, true)` remains available as a separate manual pause control; reopening the breaker does not change the manual pause flag.
+
 ---
 
 ## 🪙 Token Model (Optional)

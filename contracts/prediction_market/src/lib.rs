@@ -1,12 +1,15 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, Map, String, Vec,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Map, String, Vec,
 };
 
 /// Maximum winners processed per batch_distribute call.
 /// Keeps CPU instruction count well below Soroban's per-tx ceiling (~100M instructions).
 /// At ~500k instructions per transfer, 25 winners ≈ 12.5M instructions — safe headroom.
 pub const MAX_BATCH_SIZE: u32 = 25;
+pub const CIRCUIT_BREAKER_WINDOW_SECS: u64 = 60;
+pub const CIRCUIT_BREAKER_THRESHOLD_PERCENT: i128 = 50;
+pub const CIRCUIT_BREAKER_ACTIVE: &str = "CIRCUIT_BREAKER_ACTIVE";
 
 #[contracttype]
 pub enum DataKey {
@@ -21,6 +24,12 @@ pub enum DataKey {
     IsPaused(u64),
     /// Hot: settlement cursor (index into winners vec) — Instance storage
     SettlementCursor(u64),
+    /// Persistent circuit breaker flag per market.
+    /// Stored durably so the lock survives across transactions once triggered.
+    CircuitBreaker(u64),
+    /// Persistent rolling pool checkpoint per market.
+    /// We update this every 60 seconds and compare the live pool against it.
+    PoolSnapshot(u64),
     /// Hot: global platform status — Instance storage.
     /// true = active (default), false = graceful shutdown.
     /// Only blocks create_market; existing markets resolve and pay out normally.
@@ -39,6 +48,23 @@ pub struct Market {
     pub token: Address,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolSnapshot {
+    pub timestamp: u64,
+    pub total_pool: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CircuitBreakerEvent {
+    pub market_id: u64,
+    pub snapshot_timestamp: u64,
+    pub snapshot_pool: i128,
+    pub current_pool: i128,
+    pub triggered_at: u64,
+}
+
 #[contract]
 pub struct PredictionMarket;
 
@@ -49,6 +75,119 @@ fn check_initialized(env: &Env) {
         .get(&DataKey::Initialized)
         .unwrap_or(false);
     assert!(!is_init, "Contract already initialized");
+}
+
+fn get_admin(env: &Env) -> Address {
+    env.storage().instance().get(&DataKey::Admin).unwrap()
+}
+
+fn get_market_or_panic(env: &Env, market_id: u64) -> Market {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Market(market_id))
+        .unwrap()
+}
+
+fn resolve_market_internal(env: &Env, market_id: u64, winning_outcome: u32) {
+    let mut market = get_market_or_panic(env, market_id);
+
+    assert!(!market.resolved, "Already resolved");
+    assert!(
+        winning_outcome < market.options.len(),
+        "Invalid outcome index"
+    );
+
+    market.resolved = true;
+    market.winning_outcome = winning_outcome;
+    env.storage()
+        .persistent()
+        .set(&DataKey::Market(market_id), &market);
+}
+
+fn get_total_shares_internal(env: &Env, market_id: u64) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalShares(market_id))
+        .unwrap_or(0)
+}
+
+fn get_pool_snapshot_internal(env: &Env, market_id: u64) -> PoolSnapshot {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PoolSnapshot(market_id))
+        .unwrap_or(PoolSnapshot {
+            timestamp: env.ledger().timestamp(),
+            total_pool: 0,
+        })
+}
+
+fn set_pool_snapshot(env: &Env, market_id: u64, total_pool: i128) {
+    env.storage().persistent().set(
+        &DataKey::PoolSnapshot(market_id),
+        &PoolSnapshot {
+            timestamp: env.ledger().timestamp(),
+            total_pool,
+        },
+    );
+}
+
+fn get_circuit_breaker_internal(env: &Env, market_id: u64) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CircuitBreaker(market_id))
+        .unwrap_or(false)
+}
+
+fn set_circuit_breaker_internal(env: &Env, market_id: u64, active: bool) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::CircuitBreaker(market_id), &active);
+}
+
+fn pool_movement_exceeds_threshold(snapshot_pool: i128, current_pool: i128) -> bool {
+    if snapshot_pool <= 0 {
+        return false;
+    }
+
+    let movement = if current_pool >= snapshot_pool {
+        current_pool - snapshot_pool
+    } else {
+        snapshot_pool - current_pool
+    };
+
+    movement * 100 > snapshot_pool * CIRCUIT_BREAKER_THRESHOLD_PERCENT
+}
+
+fn maybe_trigger_circuit_breaker(env: &Env, market_id: u64, current_pool: i128) {
+    let snapshot = get_pool_snapshot_internal(env, market_id);
+    let now = env.ledger().timestamp();
+
+    if snapshot.total_pool == 0 {
+        set_pool_snapshot(env, market_id, current_pool);
+        return;
+    }
+
+    if now.saturating_sub(snapshot.timestamp) < CIRCUIT_BREAKER_WINDOW_SECS {
+        return;
+    }
+
+    // Compare against the prior 60-second checkpoint first, then roll the checkpoint
+    // forward. This keeps the hot path deterministic while preserving a durable audit trail.
+    if pool_movement_exceeds_threshold(snapshot.total_pool, current_pool) {
+        set_circuit_breaker_internal(env, market_id, true);
+        env.events().publish(
+            (symbol_short!("breaker"), market_id),
+            CircuitBreakerEvent {
+                market_id,
+                snapshot_timestamp: snapshot.timestamp,
+                snapshot_pool: snapshot.total_pool,
+                current_pool,
+                triggered_at: now,
+            },
+        );
+    }
+
+    set_pool_snapshot(env, market_id, current_pool);
 }
 
 #[contractimpl]
@@ -75,7 +214,7 @@ impl PredictionMarket {
         deadline: u64,
         token: Address,
     ) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin = get_admin(&env);
         admin.require_auth();
 
         // Graceful shutdown guard — checked before any other work
@@ -107,14 +246,23 @@ impl PredictionMarket {
         };
 
         // Cold: market metadata + user positions map → Persistent
-        env.storage().persistent().set(&DataKey::Market(id), &market);
         env.storage()
             .persistent()
-            .set(&DataKey::UserPosition(id), &Map::<Address, (u32, i128)>::new(&env));
+            .set(&DataKey::Market(id), &market);
+        env.storage().persistent().set(
+            &DataKey::UserPosition(id),
+            &Map::<Address, (u32, i128)>::new(&env),
+        );
 
         // Hot: total_shares + is_paused → Instance (cheaper reads/writes)
-        env.storage().instance().set(&DataKey::TotalShares(id), &0i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalShares(id), &0i128);
         env.storage().instance().set(&DataKey::IsPaused(id), &false);
+        // Persistent breaker state survives across transactions and lets us inspect
+        // the last 60-second checkpoint even after the market is locked.
+        set_circuit_breaker_internal(&env, id, false);
+        set_pool_snapshot(&env, id, 0);
     }
 
     /// Place a bet on an option.
@@ -130,13 +278,12 @@ impl PredictionMarket {
             .get(&DataKey::IsPaused(market_id))
             .unwrap_or(false);
         assert!(!paused, "Market is paused");
+        if get_circuit_breaker_internal(&env, market_id) {
+            panic!("{}", CIRCUIT_BREAKER_ACTIVE);
+        }
 
         // Cold read: market metadata from Persistent
-        let market: Market = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap();
+        let market = get_market_or_panic(&env, market_id);
 
         assert!(!market.resolved, "Market already resolved");
         assert!(
@@ -160,20 +307,19 @@ impl PredictionMarket {
             .set(&DataKey::UserPosition(market_id), &positions);
 
         // Hot write: total_shares → Instance (avoids expensive Persistent write on every bet)
-        let shares: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::TotalShares(market_id))
-            .unwrap_or(0);
+        let shares = get_total_shares_internal(&env, market_id);
+        let updated_pool = shares + amount;
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares(market_id), &(shares + amount));
+            .set(&DataKey::TotalShares(market_id), &updated_pool);
+
+        maybe_trigger_circuit_breaker(&env, market_id, updated_pool);
     }
 
     /// Pause or unpause a market (admin only).
     /// Writes to Instance storage — single cheap write.
     pub fn set_paused(env: Env, market_id: u64, paused: bool) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin = get_admin(&env);
         admin.require_auth();
         env.storage()
             .instance()
@@ -185,7 +331,7 @@ impl PredictionMarket {
     /// active=true  → platform re-opened.
     /// Single Instance write — cheapest possible admin action.
     pub fn set_global_status(env: Env, active: bool) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin = get_admin(&env);
         admin.require_auth();
         env.storage()
             .instance()
@@ -202,26 +348,27 @@ impl PredictionMarket {
 
     /// Resolve market — only admin (oracle-triggered).
     pub fn resolve_market(env: Env, market_id: u64, winning_outcome: u32) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin = get_admin(&env);
         admin.require_auth();
+        resolve_market_internal(&env, market_id, winning_outcome);
+    }
 
-        let mut market: Market = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap();
+    /// Admin recovery path after a breaker trigger.
+    /// Clears the persistent lock and refreshes the rolling checkpoint to the current pool.
+    pub fn reopen_market(env: Env, market_id: u64) {
+        let admin = get_admin(&env);
+        admin.require_auth();
+        let _ = get_market_or_panic(&env, market_id);
+        set_circuit_breaker_internal(&env, market_id, false);
+        set_pool_snapshot(&env, market_id, get_total_shares_internal(&env, market_id));
+    }
 
-        assert!(!market.resolved, "Already resolved");
-        assert!(
-            winning_outcome < market.options.len(),
-            "Invalid outcome index"
-        );
-
-        market.resolved = true;
-        market.winning_outcome = winning_outcome;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Market(market_id), &market);
+    /// Emergency admin resolution path.
+    /// Useful when a breaker-triggered market should be finalized instead of reopened.
+    pub fn force_resolve(env: Env, market_id: u64, winning_outcome: u32) {
+        let admin = get_admin(&env);
+        admin.require_auth();
+        resolve_market_internal(&env, market_id, winning_outcome);
     }
 
     /// Batch-distribute rewards to at most `batch_size` winners per call.
@@ -323,18 +470,12 @@ impl PredictionMarket {
 
     /// Read a market's stored metadata.
     pub fn get_market(env: Env, market_id: u64) -> Market {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Market(market_id))
-            .unwrap()
+        get_market_or_panic(&env, market_id)
     }
 
     /// Get total shares for a market (hot read from Instance).
     pub fn get_total_shares(env: Env, market_id: u64) -> i128 {
-        env.storage()
-            .instance()
-            .get(&DataKey::TotalShares(market_id))
-            .unwrap_or(0)
+        get_total_shares_internal(&env, market_id)
     }
 
     /// Get pause state for a market (hot read from Instance).
@@ -344,12 +485,25 @@ impl PredictionMarket {
             .get(&DataKey::IsPaused(market_id))
             .unwrap_or(false)
     }
+
+    /// Read the persistent circuit breaker flag for a market.
+    pub fn get_circuit_breaker(env: Env, market_id: u64) -> bool {
+        get_circuit_breaker_internal(&env, market_id)
+    }
+
+    /// Read the latest persistent pool checkpoint for a market.
+    pub fn get_pool_snapshot(env: Env, market_id: u64) -> PoolSnapshot {
+        get_pool_snapshot_internal(&env, market_id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+    use soroban_sdk::{
+        testutils::{Address as _, Events as _, Ledger as _},
+        vec, Env, String, Symbol, TryFromVal,
+    };
 
     // ── shared helpers ────────────────────────────────────────────────────────
 
@@ -370,8 +524,7 @@ mod tests {
         let contract_id = env.register_contract(None, PredictionMarket);
         let client = PredictionMarketClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        // Use a dummy address for token — tests that don't do real transfers use mock_all_auths
-        let token = Address::generate(&env);
+        let token = setup_token(&env, &[]);
         client.initialize(&admin);
         let deadline = env.ledger().timestamp() + 86400;
         let question = String::from_str(&env, "Will BTC exceed $100k?");
@@ -384,11 +537,43 @@ mod tests {
         (env, client, admin, token, deadline)
     }
 
+    fn setup_with_real_token(
+        market_id: u64,
+    ) -> (
+        Env,
+        PredictionMarketClient<'static>,
+        Address,
+        Address,
+        Address,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, PredictionMarket);
+        let client = PredictionMarketClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let bettor = Address::generate(&env);
+        let token = setup_token(&env, &[(&bettor, 1_000i128)]);
+
+        client.initialize(&admin);
+        client.create_market(
+            &market_id,
+            &String::from_str(&env, "Circuit breaker market"),
+            &vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+            &(env.ledger().timestamp() + 86400),
+            &token,
+        );
+
+        (env, client, admin, bettor, token)
+    }
+
     /// Build a market with `n` winners (option 0) and 1 loser (option 1),
     /// using a real SAC token so transfers actually execute.
-    fn setup_market_with_winners(
-        n: u32,
-    ) -> (Env, PredictionMarketClient<'static>, Vec<Address>) {
+    fn setup_market_with_winners(n: u32) -> (Env, PredictionMarketClient<'static>, Vec<Address>) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -450,7 +635,13 @@ mod tests {
         assert_eq!(market.options.len(), 2);
         assert_eq!(market.deadline, deadline);
         assert!(!market.resolved);
-        soroban_sdk::log!(&env, "✅ Market stored: id={}, deadline={}, resolved={}", market.id, market.deadline, market.resolved);
+        soroban_sdk::log!(
+            &env,
+            "✅ Market stored: id={}, deadline={}, resolved={}",
+            market.id,
+            market.deadline,
+            market.resolved
+        );
     }
 
     #[test]
@@ -482,7 +673,9 @@ mod tests {
         let client = PredictionMarketClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let token_addr = Address::generate(&env);
+        let bettor1 = Address::generate(&env);
+        let bettor2 = Address::generate(&env);
+        let token_addr = setup_token(&env, &[(&bettor1, 1_000i128), (&bettor2, 1_000i128)]);
         client.initialize(&admin);
 
         let deadline = env.ledger().timestamp() + 86400;
@@ -499,22 +692,6 @@ mod tests {
             &token_addr,
         );
 
-        // Register a mock token contract so transfers succeed
-        let token_contract = env.register_stellar_asset_contract_v2(token_addr.clone());
-        let token_admin = soroban_sdk::testutils::MockAuth {
-            address: &token_addr,
-            invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                contract: &token_contract.address(),
-                fn_name: "transfer",
-                args: soroban_sdk::vec![&env].into(),
-                sub_invokes: &[],
-            },
-        };
-        let _ = token_admin; // suppress unused warning — mock_all_auths covers this
-
-        let bettor1 = Address::generate(&env);
-        let bettor2 = Address::generate(&env);
-
         client.place_bet(&2u64, &0u32, &bettor1, &100i128);
         client.place_bet(&2u64, &1u32, &bettor2, &200i128);
 
@@ -527,6 +704,14 @@ mod tests {
     fn test_is_paused_defaults_false() {
         let (_, client, _, _, _) = setup();
         assert!(!client.get_is_paused(&1u64));
+    }
+
+    #[test]
+    fn test_circuit_breaker_defaults_false() {
+        let (_, client, _, _, _) = setup();
+        assert!(!client.get_circuit_breaker(&1u64));
+        let snapshot = client.get_pool_snapshot(&1u64);
+        assert_eq!(snapshot.total_pool, 0i128);
     }
 
     #[test]
@@ -731,6 +916,119 @@ mod tests {
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
     }
 
+    // ── Circuit breaker ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_circuit_breaker_triggers_after_sixty_second_pool_spike() {
+        let (env, client, _, bettor, _) = setup_with_real_token(6u64);
+
+        client.place_bet(&6u64, &0u32, &bettor, &100i128);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CIRCUIT_BREAKER_WINDOW_SECS + 1);
+        client.place_bet(&6u64, &0u32, &bettor, &60i128);
+
+        assert!(client.get_circuit_breaker(&6u64));
+        assert_eq!(client.get_total_shares(&6u64), 160i128);
+
+        let mut found = false;
+        for (_, topics, data) in env.events().all().iter() {
+            if topics.len() == 2 {
+                let topic0 = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+                let topic1 = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+                if topic0 == symbol_short!("breaker") && topic1 == 6u64 {
+                    let event = CircuitBreakerEvent::try_from_val(&env, &data).unwrap();
+                    assert_eq!(
+                        event,
+                        CircuitBreakerEvent {
+                            market_id: 6u64,
+                            snapshot_timestamp: 0u64,
+                            snapshot_pool: 100i128,
+                            current_pool: 160i128,
+                            triggered_at: CIRCUIT_BREAKER_WINDOW_SECS + 1,
+                        }
+                    );
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "expected circuit breaker event");
+    }
+
+    #[test]
+    #[should_panic(expected = "CIRCUIT_BREAKER_ACTIVE")]
+    fn test_place_bet_blocked_after_circuit_breaker_trigger() {
+        let (env, client, _, bettor, _) = setup_with_real_token(7u64);
+
+        client.place_bet(&7u64, &0u32, &bettor, &100i128);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CIRCUIT_BREAKER_WINDOW_SECS + 1);
+        client.place_bet(&7u64, &0u32, &bettor, &60i128);
+
+        client.place_bet(&7u64, &0u32, &bettor, &10i128);
+    }
+
+    #[test]
+    fn test_circuit_breaker_does_not_trigger_at_exactly_fifty_percent() {
+        let (env, client, _, bettor, _) = setup_with_real_token(8u64);
+
+        client.place_bet(&8u64, &0u32, &bettor, &100i128);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CIRCUIT_BREAKER_WINDOW_SECS + 1);
+        client.place_bet(&8u64, &0u32, &bettor, &50i128);
+
+        assert!(!client.get_circuit_breaker(&8u64));
+        let snapshot = client.get_pool_snapshot(&8u64);
+        assert_eq!(snapshot.total_pool, 150i128);
+    }
+
+    #[test]
+    fn test_circuit_breaker_does_not_trigger_inside_window() {
+        let (env, client, _, bettor, _) = setup_with_real_token(9u64);
+
+        client.place_bet(&9u64, &0u32, &bettor, &100i128);
+        env.ledger().set_timestamp(env.ledger().timestamp() + 30);
+        client.place_bet(&9u64, &0u32, &bettor, &100i128);
+
+        assert!(!client.get_circuit_breaker(&9u64));
+        let snapshot = client.get_pool_snapshot(&9u64);
+        assert_eq!(snapshot.total_pool, 100i128);
+    }
+
+    #[test]
+    fn test_reopen_market_clears_circuit_breaker_and_refreshes_snapshot() {
+        let (env, client, _, bettor, _) = setup_with_real_token(10u64);
+
+        client.place_bet(&10u64, &0u32, &bettor, &100i128);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CIRCUIT_BREAKER_WINDOW_SECS + 1);
+        client.place_bet(&10u64, &0u32, &bettor, &60i128);
+
+        client.reopen_market(&10u64);
+        assert!(!client.get_circuit_breaker(&10u64));
+
+        let snapshot = client.get_pool_snapshot(&10u64);
+        assert_eq!(snapshot.total_pool, 160i128);
+        assert_eq!(snapshot.timestamp, CIRCUIT_BREAKER_WINDOW_SECS + 1);
+
+        client.place_bet(&10u64, &0u32, &bettor, &10i128);
+        assert_eq!(client.get_total_shares(&10u64), 170i128);
+    }
+
+    #[test]
+    fn test_force_resolve_works_after_circuit_breaker_trigger() {
+        let (env, client, _, bettor, _) = setup_with_real_token(11u64);
+
+        client.place_bet(&11u64, &0u32, &bettor, &100i128);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + CIRCUIT_BREAKER_WINDOW_SECS + 1);
+        client.place_bet(&11u64, &0u32, &bettor, &60i128);
+
+        client.force_resolve(&11u64, &0u32);
+        let market = client.get_market(&11u64);
+        assert!(market.resolved);
+        assert_eq!(market.winning_outcome, 0u32);
+    }
+
     // ── Batch distribute ──────────────────────────────────────────────────────
 
     /// Cursor starts at 0 before any settlement.
@@ -890,11 +1188,9 @@ mod tests {
     /// place_bet on an existing market still works during shutdown.
     #[test]
     fn test_place_bet_allowed_during_shutdown() {
-        let (env, client, _, _, _) = setup();
+        let (_, client, _, bettor, _) = setup_with_real_token(1u64);
         client.set_global_status(&false);
         // market 1 was created before shutdown — betting must still work
-        let bettor = Address::generate(&env);
-        // mock_all_auths covers token transfer; no panic expected
         client.place_bet(&1u64, &0u32, &bettor, &50i128);
         assert_eq!(client.get_total_shares(&1u64), 50i128);
     }
