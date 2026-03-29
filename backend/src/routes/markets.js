@@ -31,34 +31,42 @@ router.get("/", async (req, res) => {
 // 1. validateMarketCreation - checks metadata (duplicates, end date, description, outcomes)
 // 2. rateLimitMarketCreation - enforces 3 markets per wallet per 24 hours
 router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, res) => {
-  const { question, endDate, outcomes, contractAddress, walletAddress } = req.body;
+  const { question, endDate, outcomes, contractAddress, walletAddress, categoryId } = req.body;
 
   const sanitizedQuestion =
     typeof question === "string"
       ? sanitizeHtml(question, { allowedTags: [], allowedAttributes: {} }).trim()
       : "";
-  
+
   // Basic required field validation (middleware handles detailed validation)
-  if (!sanitizedQuestion || !endDate || !outcomes?.length || !walletAddress) {
-    return res.status(400).json({ 
+  if (
+    !sanitizedQuestion ||
+    !endDate ||
+    !outcomes?.length ||
+    !walletAddress ||
+    categoryId === undefined ||
+    categoryId === null
+  ) {
+    return res.status(400).json({
       error: {
-        code: 'MISSING_REQUIRED_FIELDS',
-        message: 'question, endDate, outcomes, and walletAddress are required',
+        code: "MISSING_REQUIRED_FIELDS",
+        message: "question, endDate, outcomes, walletAddress, and categoryId are required",
         details: {
           question: !!sanitizedQuestion,
           endDate: !!endDate,
           outcomes: !!outcomes?.length,
-          walletAddress: !!walletAddress
-        }
-      }
+          walletAddress: !!walletAddress,
+          categoryId: categoryId !== undefined && categoryId !== null,
+        },
+      },
     });
   }
-  
+
   try {
     // Market has passed all validation checks - create immediately without admin approval
     const result = await db.query(
-      "INSERT INTO markets (question, end_date, outcomes, contract_address, created_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING *",
-      [sanitizedQuestion, endDate, outcomes, contractAddress || null]
+      "INSERT INTO markets (question, end_date, outcomes, contract_address, category_id, created_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING *",
+      [sanitizedQuestion, endDate, outcomes, contractAddress || null, categoryId]
     );
     
     logger.info({

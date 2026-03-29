@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
 const logger = require("./utils/logger");
 
 // ── Firebase Admin SDK initialisation ──────────────────────────────────────
@@ -30,13 +31,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// Request logging middleware
+// Request tracking and logging middleware
 app.use((req, res, next) => {
+  req.requestId = req.headers["x-request-id"] || crypto.randomUUID();
+  res.setHeader("X-Request-ID", req.requestId);
+
   const start = Date.now();
   res.on("finish", () => {
     const duration = Date.now() - start;
     logger.info(
       {
+        request_id: req.requestId,
         method: req.method,
         path: req.path,
         status: res.statusCode,
