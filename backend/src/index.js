@@ -114,11 +114,50 @@ app.use("/api/archive", require("./routes/archive"));
 app.use("/api/portfolio", require("./routes/portfolio"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
 
-// GraphQL endpoint (graphql-yoga as Express middleware)
-const { createYoga } = require("graphql-yoga");
-const schema = require("./graphql/schema");
-const yoga = createYoga({ schema, graphqlEndpoint: "/graphql", logging: false });
-app.use("/graphql", yoga);
+// ── Apollo Server (GraphQL API) ────────────────────────────────────────────
+const { ApolloServer } = require("@apollo/server");
+const { expressMiddleware } = require("@apollo/server/express4");
+const { makeExecutableSchema } = require("@graphql-tools/schema");
+const bodyParser = require("body-parser");
+const jwt = require("jsonwebtoken");
+const { typeDefs } = require("./graphql/schema");
+const gqlResolvers = require("./graphql/resolvers");
+const { createLoaders } = require("./graphql/dataLoaders");
+
+const executableSchema = makeExecutableSchema({ typeDefs, resolvers: gqlResolvers });
+
+const apolloServer = new ApolloServer({
+  schema: executableSchema,
+  // Playground (sandbox) is enabled by default in Apollo Server 4 when NODE_ENV !== 'production'
+  introspection: process.env.NODE_ENV !== "production",
+});
+
+// Apollo Server must be started before applying middleware
+apolloServer.start().then(() => {
+  app.use(
+    "/graphql",
+    bodyParser.json(),
+    expressMiddleware(apolloServer, {
+      context: async ({ req }) => {
+        // JWT validation on every GraphQL request
+        const auth = req.headers.authorization || "";
+        let user = null;
+        if (auth.startsWith("Bearer ")) {
+          try {
+            user = jwt.verify(
+              auth.slice(7),
+              process.env.JWT_SECRET || "change-me-in-production"
+            );
+          } catch {
+            // Invalid token — user stays null; resolvers can enforce auth as needed
+          }
+        }
+        return { user, loaders: createLoaders() };
+      },
+    })
+  );
+});
+// ────────────────────────────────────────────────────────────────────────────
 
 // Initialise bot registry — subscribes all strategies to the event bus
 require("./bots/registry");
@@ -152,7 +191,7 @@ const http = require("http");
 const httpServer = http.createServer(app);
 
 // Attach graphql-ws WebSocket server (subscriptions at /graphql)
-require("./graphql/wsServer").attach(httpServer, schema);
+require("./graphql/wsServer").attach(httpServer, executableSchema);
 
 // Attach market updates WebSocket server (real-time updates at /ws/markets)
 require("./websocket/marketUpdates").attach(httpServer);
