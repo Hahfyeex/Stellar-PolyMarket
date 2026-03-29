@@ -1,14 +1,18 @@
 /**
  * graphql/schema.js
  *
- * GraphQL type definitions for the Mercury Indexer data layer.
- * Covers: markets, bets, users, events.
+ * GraphQL type definitions — Apollo Server compatible (plain SDL string).
+ * Covers: Market, Bet, User, Category, Event types with all relevant fields.
  */
 
-const { createSchema } = require('graphql-yoga');
-const resolvers = require('./resolvers');
+"use strict";
 
 const typeDefs = /* GraphQL */ `
+  type Category {
+    name: String!
+    market_count: Int!
+  }
+
   type Market {
     id: Int!
     question: String!
@@ -21,7 +25,6 @@ const typeDefs = /* GraphQL */ `
     category: String
     contract_address: String
     created_at: String!
-    # Aggregated bet stats for this market
     bet_count: Int
     bets: [Bet!]
   }
@@ -45,8 +48,17 @@ const typeDefs = /* GraphQL */ `
     win_count: Int!
     first_seen: String!
     last_seen: String!
-    # All bets placed by this user
     bets: [Bet!]
+  }
+
+  type LeaderboardEntry {
+    rank: Int!
+    wallet_address: String!
+    total_bets: Int!
+    wins: Int
+    accuracy_pct: String
+    total_volume_xlm: String
+    total_winnings_xlm: String
   }
 
   type Event {
@@ -66,7 +78,6 @@ const typeDefs = /* GraphQL */ `
     total_pool: String!
     bet_count: Int!
     unique_bettors: Int!
-    # Stake per outcome index
     outcome_stakes: [OutcomeStake!]!
   }
 
@@ -77,29 +88,41 @@ const typeDefs = /* GraphQL */ `
   }
 
   type Query {
-    # Single market by id
     market(id: Int!): Market
-
-    # All markets, optionally filtered
     markets(status: String, category: String, limit: Int, offset: Int): [Market!]!
-
-    # Bet history for a wallet (user portfolio)
+    bets(market_id: Int, wallet_address: String, limit: Int, offset: Int): [Bet!]!
     betsByWallet(wallet_address: String!, limit: Int, offset: Int): [Bet!]!
-
-    # All bets for a market
     betsByMarket(market_id: Int!, limit: Int, offset: Int): [Bet!]!
-
-    # Aggregated stats for a market
     marketStats(market_id: Int!): MarketStats
-
-    # User profile + aggregate stats
     user(wallet_address: String!): User
-
-    # Raw event log, filterable by topic
+    leaderboard(type: String, limit: Int, offset: Int): [LeaderboardEntry!]!
     events(contract_id: String, topic: String, limit: Int, offset: Int): [Event!]!
+    categories: [Category!]!
+  }
+
+  type BetPlacedEvent {
+    market_id: Int!
+    wallet_address: String!
+    outcome_index: Int!
+    amount: String!
+  }
+
+  type MarketResolvedEvent {
+    market_id: Int!
+    winning_outcome: Int!
+    total_pool: String!
+  }
+
+  type OddsChangedEvent {
+    market_id: Int!
+    odds_bps: [String!]!
+  }
+
+  type Subscription {
+    onBetPlaced(marketId: Int!): BetPlacedEvent!
+    onMarketResolved(marketId: Int!): MarketResolvedEvent!
+    onOddsChanged(marketId: Int!): OddsChangedEvent!
   }
 `;
 
-const schema = createSchema({ typeDefs, resolvers });
-
-module.exports = schema;
+module.exports = { typeDefs };

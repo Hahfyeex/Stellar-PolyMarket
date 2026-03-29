@@ -16,6 +16,8 @@
  */
 import { useBettingSlip, MAX_BETS } from "../context/BettingSlipContext";
 import { useBatchTransaction } from "../hooks/useBatchTransaction";
+import { useOnlineStatus } from "../hooks/useOnlineStatus";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   walletAddress: string | null;
@@ -28,6 +30,8 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
     clearBets();
     onBatchPlaced?.();
   });
+  const isOnline = useOnlineStatus();
+  const { t } = useTranslation("common");
 
   async function handleSubmit() {
     if (!walletAddress || !bets.length) return;
@@ -70,16 +74,16 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
           <div>
-            <h3 className="text-white font-semibold text-lg">Betting Slip</h3>
+            <h3 className="text-white font-semibold text-lg">{t("betting_slip.title")}</h3>
             <p className="text-gray-400 text-xs">
-              {bets.length} / {MAX_BETS} bets queued
+              {t("betting_slip.bets_queued", { count: bets.length, max: MAX_BETS })}
             </p>
           </div>
           <button
             data-testid="close-slip"
             onClick={close}
             className="text-gray-400 hover:text-white transition-colors"
-            aria-label="Close betting slip"
+            aria-label={t("betting_slip.close")}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -91,7 +95,7 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 max-h-[50vh] lg:max-h-[calc(100vh-200px)]">
           {bets.length === 0 ? (
             <p className="text-gray-500 text-sm text-center py-8">
-              No bets queued yet. Add bets from any market to batch them together.
+              {t("betting_slip.empty")}
             </p>
           ) : (
             bets.map((bet) => (
@@ -103,17 +107,17 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
                 <div className="flex-1 min-w-0">
                   <p className="text-white text-sm font-medium truncate">{bet.marketTitle}</p>
                   <p className="text-gray-400 text-xs mt-0.5">
-                    Outcome: <span className="text-blue-400">{bet.outcomeName}</span>
+                    {t("betting_slip.outcome")} <span className="text-blue-400">{bet.outcomeName}</span>
                   </p>
                   <p className="text-gray-400 text-xs">
-                    Amount: <span className="text-white font-medium">{bet.amount} XLM</span>
+                    {t("betting_slip.amount")} <span className="text-white font-medium">{bet.amount} XLM</span>
                   </p>
                 </div>
                 <button
                   data-testid={`remove-bet-${bet.id}`}
                   onClick={() => removeBet(bet.id)}
                   className="text-red-400 hover:text-red-300 transition-colors shrink-0"
-                  aria-label={`Remove bet on ${bet.marketTitle}`}
+                  aria-label={t("betting_slip.remove_bet", { title: bet.marketTitle })}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
                     <path d="M18 6L6 18M6 6l12 12" />
@@ -128,7 +132,7 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
         {bets.length > 0 && (
           <div className="border-t border-gray-800 px-4 py-3 space-y-3">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-400">Total stake:</span>
+              <span className="text-gray-400">{t("betting_slip.total_stake")}</span>
               <span className="text-white font-semibold" data-testid="total-stake">
                 {totalAmount.toFixed(2)} XLM
               </span>
@@ -141,17 +145,32 @@ export default function BettingSlip({ walletAddress, onBatchPlaced }: Props) {
             )}
 
             {walletAddress ? (
-              <button
-                data-testid="submit-batch"
-                onClick={handleSubmit}
-                disabled={submitting || bets.length === 0}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-3 rounded-xl text-sm font-bold transition-colors"
-              >
-                {submitting ? "Submitting..." : `Place ${bets.length} Bet${bets.length > 1 ? "s" : ""}`}
-              </button>
+              <div className="relative group">
+                <button
+                  data-testid="submit-batch"
+                  onClick={handleSubmit}
+                  disabled={submitting || bets.length === 0 || !isOnline}
+                  aria-disabled={!isOnline}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-3 rounded-xl text-sm font-bold transition-colors"
+                >
+                  {submitting
+                    ? t("betting_slip.submitting")
+                    : t(bets.length === 1 ? "betting_slip.submit_one" : "betting_slip.submit_other", { count: bets.length })}
+                </button>
+                {!isOnline && (
+                  <div
+                    role="tooltip"
+                    data-testid="offline-bet-tooltip"
+                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ backgroundColor: "var(--bg-elevated)", color: "var(--status-warning)" }}
+                  >
+                    {t("betting_slip.offline_tooltip")}
+                  </div>
+                )}
+              </div>
             ) : (
               <p className="text-gray-400 text-xs text-center py-2">
-                Connect your wallet to submit bets
+                {t("betting_slip.connect_wallet")}
               </p>
             )}
           </div>

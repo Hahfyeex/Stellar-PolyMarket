@@ -9,8 +9,8 @@ import { useWallet } from "../hooks/useWallet";
 
 interface WalletState {
   publicKey: string | null;
-  connecting: boolean;
-  error: string | null;
+  isLoading: boolean;
+  walletError: string | null;
   connect: () => void;
   disconnect: () => void;
 }

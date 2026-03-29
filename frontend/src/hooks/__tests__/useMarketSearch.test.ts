@@ -56,6 +56,7 @@ const MARKETS: Market[] = [
 const DEFAULT_FILTERS: SearchFilters = {
   query: "",
   category: "",
+  categories: [],
   status: "",
   sort: "newest",
 };
@@ -207,5 +208,44 @@ describe("useMarketSearch", () => {
   it("is case-insensitive for category filter", () => {
     const results = run({ category: "crypto" });
     expect(results.every((m) => m.category?.toLowerCase() === "crypto")).toBe(true);
+  });
+
+  // ── threshold 0.3 — tolerates minor typos ──────────────────────────────────
+
+  it("matches with one transposed character (threshold 0.3)", () => {
+    // "Bitconi" — one transposition
+    const results = run({ query: "Bitconi" });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].question).toMatch(/Bitcoin/i);
+  });
+
+  it("returns no results for heavily misspelled query beyond threshold", () => {
+    const results = run({ query: "zzzzzzzzz" });
+    expect(results).toHaveLength(0);
+  });
+
+  // ── empty state ────────────────────────────────────────────────────────────
+
+  it("returns empty array when query matches nothing", () => {
+    const results = run({ query: "xyzxyzxyz" });
+    expect(results).toHaveLength(0);
+  });
+
+  it("returns empty array when category filter matches nothing", () => {
+    const results = run({ category: "NonExistentCategory" });
+    expect(results).toHaveLength(0);
+  });
+
+  // ── multi-select categories ────────────────────────────────────────────────
+
+  it("filters by multiple categories", () => {
+    const results = run({ categories: ["Crypto", "Sports"] });
+    expect(results.every((m) => ["Crypto", "Sports"].includes(m.category ?? ""))).toBe(true);
+    expect(results).toHaveLength(2);
+  });
+
+  it("multi-category filter returns all when empty array", () => {
+    const results = run({ categories: [] });
+    expect(results).toHaveLength(MARKETS.length);
   });
 });

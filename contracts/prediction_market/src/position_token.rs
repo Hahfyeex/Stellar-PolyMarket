@@ -40,6 +40,7 @@ pub fn mint(env: &Env, market_id: u64, outcome_index: u32, owner: &Address, amou
     let prev = balances.get(owner.clone()).unwrap_or(0);
     balances.set(owner.clone(), prev + amount);
     env.storage().persistent().set(&key, &balances);
+    env.storage().persistent().extend_ttl(&key, super::LEDGER_TTL_EXTEND / 2, super::LEDGER_TTL_EXTEND);
 
     // Emit Mint event — visible in stellar-events log
     env.events().publish(
@@ -49,6 +50,39 @@ pub fn mint(env: &Env, market_id: u64, outcome_index: u32, owner: &Address, amou
         ),
         (market_id, outcome_index, owner.clone(), amount),
     );
+}
+
+/// Burn `amount` position tokens held by `owner` for `(market_id, outcome_index)`.
+/// Returns the remaining balance.
+pub fn burn_partial(env: &Env, market_id: u64, outcome_index: u32, owner: &Address, amount: i128) -> i128 {
+    let key = TokenKey::Balances(market_id, outcome_index);
+    let mut balances: Map<Address, i128> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Map::new(env));
+
+    let prev = balances.get(owner.clone()).unwrap_or(0);
+    assert!(prev >= amount, "Not enough balance to burn");
+
+    let new_bal = prev - amount;
+    if new_bal == 0 {
+        balances.remove(owner.clone());
+    } else {
+        balances.set(owner.clone(), new_bal);
+    }
+    env.storage().persistent().set(&key, &balances);
+    env.storage().persistent().extend_ttl(&key, super::LEDGER_TTL_EXTEND / 2, super::LEDGER_TTL_EXTEND);
+
+    env.events().publish(
+        (
+            String::from_str(env, "position_token"),
+            String::from_str(env, "burn"),
+        ),
+        (market_id, outcome_index, owner.clone(), amount),
+    );
+
+    new_bal
 }
 
 /// Burn all position tokens held by `owner` for `(market_id, outcome_index)`.
@@ -69,6 +103,7 @@ pub fn burn(env: &Env, market_id: u64, outcome_index: u32, owner: &Address) -> i
 
     balances.remove(owner.clone());
     env.storage().persistent().set(&key, &balances);
+    env.storage().persistent().extend_ttl(&key, super::LEDGER_TTL_EXTEND / 2, super::LEDGER_TTL_EXTEND);
 
     env.events().publish(
         (
@@ -81,13 +116,17 @@ pub fn burn(env: &Env, market_id: u64, outcome_index: u32, owner: &Address) -> i
     amount
 }
 
-/// Return the position-token balance for `owner` on `(market_id, outcome_index)`.
-pub fn balance_of(env: &Env, market_id: u64, outcome_index: u32, owner: &Address) -> i128 {
+/// Return the full balance Map for a given (market_id, outcome_index).
+pub fn get_balances(env: &Env, market_id: u64, outcome_index: u32) -> Map<Address, i128> {
     let key = TokenKey::Balances(market_id, outcome_index);
-    let balances: Map<Address, i128> = env
-        .storage()
+    env.storage()
         .persistent()
         .get(&key)
-        .unwrap_or_else(|| Map::new(env));
+        .unwrap_or_else(|| Map::new(env))
+}
+
+/// Return the position-token balance for `owner` on `(market_id, outcome_index)`.
+pub fn balance_of(env: &Env, market_id: u64, outcome_index: u32, owner: &Address) -> i128 {
+    let balances = get_balances(env, market_id, outcome_index);
     balances.get(owner.clone()).unwrap_or(0)
 }

@@ -1,29 +1,37 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import BottomNavBar, { NavTab } from "./BottomNavBar";
 import FloatingBetButton from "./FloatingBetButton";
 import TradeDrawer from "./TradeDrawer";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-}
+import { useTheme } from "../../hooks/useTheme";
+import { useScrollRestoration } from "../../hooks/useScrollRestoration";
+import { useMetaThemeColor } from "../../hooks/useMetaThemeColor";
+import type { Market } from "../../types/market";
 
 interface Props {
   children: React.ReactNode;
-  activeMarket: Market | null;
-  walletAddress: string | null;
+  activeMarket?: Market | null;
+  walletAddress?: string | null;
   onBetPlaced?: () => void;
+  unreadCount?: number;
 }
 
-export default function MobileShell({ children, activeMarket, walletAddress, onBetPlaced }: Props) {
+export default function MobileShell({
+  children,
+  activeMarket,
+  walletAddress,
+  onBetPlaced,
+}: Props) {
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  // Get current theme and update meta theme-color
+  const { theme } = useTheme();
+  useMetaThemeColor(theme as "light" | "dark");
+
+  // Restore scroll position when navigating
+  useScrollRestoration(shellRef);
 
   function openDrawer() {
     if (activeMarket) setDrawerOpen(true);
@@ -35,12 +43,17 @@ export default function MobileShell({ children, activeMarket, walletAddress, onB
 
   return (
     <div
+      ref={shellRef}
       data-testid="mobile-shell"
       className="relative min-h-screen"
-      style={{ paddingTop: "env(safe-area-inset-top)" }}
+      style={{
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        overscrollBehavior: "contain",
+      }}
     >
-      {/* Page content — add bottom padding so content isn't hidden behind nav bar */}
-      <div className="pb-20">
+      {/* Page content — standard mobile padding */}
+      <div className="pb-[88px]"> {/* 64px nav + safe-area */}
         {children}
       </div>
 
@@ -52,7 +65,11 @@ export default function MobileShell({ children, activeMarket, walletAddress, onB
       />
 
       {/* Bottom Nav Bar */}
-      <BottomNavBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <BottomNavBar 
+        activeTab={activeTab} 
+        onTabChange={() => {}} 
+        unreadCount={currentUnreadCount}
+      />
 
       {/* Trade Drawer */}
       <TradeDrawer
@@ -65,3 +82,4 @@ export default function MobileShell({ children, activeMarket, walletAddress, onB
     </div>
   );
 }
+

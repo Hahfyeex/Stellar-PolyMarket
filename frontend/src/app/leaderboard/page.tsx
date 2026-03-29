@@ -7,8 +7,10 @@
  * The connected user's row is highlighted and sorted to the top if present.
  */
 import { useWalletContext } from "../../context/WalletContext";
+import { useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import type { LeaderboardEntry } from "../../components/LeaderboardRow";
+import LeaderboardSkeleton from "../../components/skeletons/LeaderboardSkeleton";
 
 // Lazy-load — leaderboard table is heavy enough to warrant code splitting
 const LeaderboardRow = dynamic(
@@ -31,13 +33,33 @@ const MOCK_ENTRIES: LeaderboardEntry[] = [
 ];
 // ─────────────────────────────────────────────────────────────────────────────
 
+function useLeaderboard() {
+  return useQuery<LeaderboardEntry[]>({
+    queryKey: ["leaderboard"],
+    queryFn: async () => {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/leaderboard`);
+      if (!res.ok) throw new Error("Failed to fetch leaderboard");
+      return res.json();
+    },
+    placeholderData: MOCK_ENTRIES,
+    staleTime: 60_000,
+  });
+}
+
 export default function LeaderboardPage() {
   const { publicKey } = useWalletContext();
 
-  return (
+  // isLoading drives the skeleton; falls back to mock data when API is unavailable
+  const { data: entries = MOCK_ENTRIES, isLoading } = useLeaderboard();
+
+  const unreadCount = useSelector((state: RootState) => 
+    state.notifications.items.filter((n) => !n.read).length
+  );
+
+  const pageContent = (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10 safe-top">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-yellow-900/50 border border-yellow-700 flex items-center justify-center">
@@ -56,56 +78,75 @@ export default function LeaderboardPage() {
         </div>
       </header>
 
-      <div className="max-w-3xl mx-auto px-4 py-8 flex flex-col gap-6">
-        {/* Summary stats */}
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { label: "Total Predictors", value: "1,284", color: "text-white" },
-            { label: "Avg Accuracy", value: "54.2%", color: "text-green-400" },
-            { label: "Diamond Tier", value: "12", color: "text-cyan-400" },
-          ].map((stat) => (
-            <div key={stat.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-              <p className={`text-xl font-bold ${stat.color}`}>{stat.value}</p>
-              <p className="text-gray-500 text-xs mt-1">{stat.label}</p>
-            </div>
-          ))}
-        </div>
+      {isLoading ? (
+        <LeaderboardSkeleton />
+      ) : (
+        <div className="max-w-3xl mx-auto px-4 py-8 flex flex-col gap-6 mobile-pb">
+          {/* Summary stats */}
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { label: "Total Predictors", value: "1,284", color: "text-white" },
+              { label: "Avg Accuracy", value: "54.2%", color: "text-green-400" },
+              { label: "Diamond Tier", value: "12", color: "text-cyan-400" },
+            ].map((stat) => (
+              <div key={stat.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
+                <p className={`text-xl font-bold ${stat.color}`}>{stat.value}</p>
+                <p className="text-gray-500 text-xs mt-1">{stat.label}</p>
+              </div>
+            ))}
+          </div>
 
-        {/* Table */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-800">
-                <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider w-12">
-                  Rank
-                </th>
-                <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">
-                  Predictor
-                </th>
-                <th className="px-4 py-3 text-right text-xs text-gray-500 uppercase tracking-wider">
-                  Markets
-                </th>
-                <th className="px-4 py-3 text-right text-xs text-gray-500 uppercase tracking-wider">
-                  Accuracy
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {MOCK_ENTRIES.map((entry) => (
-                <LeaderboardRow
-                  key={entry.walletAddress}
-                  entry={entry}
-                  isCurrentUser={!!publicKey && entry.walletAddress === publicKey}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+          {/* Table */}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider w-12">
+                    Rank
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs text-gray-500 uppercase tracking-wider">
+                    Predictor
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs text-gray-500 uppercase tracking-wider">
+                    Markets
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs text-gray-500 uppercase tracking-wider">
+                    Accuracy
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((entry) => (
+                  <LeaderboardRow
+                    key={entry.walletAddress}
+                    entry={entry}
+                    isCurrentUser={!!publicKey && entry.walletAddress === publicKey}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-        <p className="text-center text-gray-600 text-xs">
-          Showing top 10 predictors · Updated every 10 minutes
-        </p>
-      </div>
+          <p className="text-center text-gray-600 text-xs">
+            Showing top 10 predictors · Updated every 10 minutes
+          </p>
+        </div>
+      )}
     </main>
+  );
+
+  return (
+    <>
+      {/* Desktop */}
+      <div className="hidden md:block">
+        {pageContent}
+      </div>
+      {/* Mobile */}
+      <div className="block md:hidden">
+        <MobileShell walletAddress={publicKey} unreadCount={unreadCount}>
+          {pageContent}
+        </MobileShell>
+      </div>
+    </>
   );
 }

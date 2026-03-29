@@ -1,0 +1,95 @@
+{
+  "app": {
+    "title": "Stella Polymarket",
+    "tagline": "Tabiri. Weka Dau. Pata.",
+    "description": "Masoko ya utabiri yaliyogatuliwa kwenye Stellar. Haraka, bei nafuu, na wazi."
+  },
+  "nav": {
+    "home": "Nyumbani",
+    "search": "Tafuta",
+    "portfolio": "Mkoba",
+    "profile": "Wasifu",
+    "help": "Msaada & Nyaraka"
+  },
+  "wallet": {
+    "connect": "Unganisha Pochi",
+    "connect_short": "Unganisha",
+    "connecting": "Inaunganisha...",
+    "connecting_short": "...",
+    "disconnect": "Ondoa Muunganisho"
+  },
+  "stats": {
+    "active_markets": "Masoko Yanayofanya Kazi",
+    "total_staked": "Jumla Iliyowekwa Dau",
+    "markets": "Masoko"
+  },
+  "activity": {
+    "recent": "Shughuli za Hivi Karibuni"
+  },
+  "filters": {
+    "search_placeholder": "Tafuta masoko…",
+    "search_label": "Tafuta masoko",
+    "all": "Yote",
+    "all_statuses": "Hali Zote",
+    "sort_prefix": "Panga: {{label}}",
+    "filter_by_status": "Chuja kwa hali",
+    "sort_markets": "Panga masoko",
+    "categories": {
+      "crypto": "Crypto",
+      "sports": "Michezo",
+      "politics": "Siasa",
+      "economics": "Uchumi",
+      "tech": "Teknolojia",
+      "other": "Mengine"
+    },
+    "statuses": {
+      "open": "Wazi",
+      "closed": "Imefungwa",
+      "resolved": "Imesuluhiwa"
+    },
+    "sorts": {
+      "volume": "Kiasi",
+      "end_date": "Tarehe ya Mwisho",
+      "newest": "Mpya Zaidi"
+    }
+  },
+  "markets": {
+    "tabs": {
+      "active": "Masoko Yanayofanya Kazi",
+      "resolved": "Masoko Yaliyosuluhiwa",
+      "aria_label": "Vichupo vya hali ya soko"
+    },
+    "empty": {
+      "no_results": "Hakuna masoko yaliyopatikana kwa \"{{query}}\"",
+      "no_active": "Hakuna masoko yanayofanya kazi yaliyopatikana.",
+      "no_resolved": "Hakuna masoko yaliyosuluhiwa yaliyopatikana."
+    }
+  },
+  "betting_slip": {
+    "title": "Karatasi ya Dau",
+    "bets_queued": "{{count}} / {{max}} madau yamepangwa",
+    "empty": "Hakuna madau yaliyopangwa bado. Ongeza madau kutoka sokoni mwovote kuyaunganisha.",
+    "close": "Funga karatasi ya dau",
+    "total_stake": "Jumla ya Dau:",
+    "submit_one": "Weka Dau {{count}}",
+    "submit_other": "Weka Madau {{count}}",
+    "submitting": "Inatuma...",
+    "outcome": "Matokeo:",
+    "amount": "Kiasi:",
+    "offline_tooltip": "Uko nje ya mtandao — kutuma dau hakuwezekani",
+    "connect_wallet": "Unganisha pochi yako kutuma madau",
+    "remove_bet": "Ondoa dau kwenye {{title}}"
+  },
+  "theme": {
+    "switch_to_light": "Badilisha hadi mandhari nyepesi",
+    "switch_to_dark": "Badilisha hadi mandhari ya giza"
+  },
+  "language": {
+    "selector_label": "Chagua lugha",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Kiswahili"
+  }
+}

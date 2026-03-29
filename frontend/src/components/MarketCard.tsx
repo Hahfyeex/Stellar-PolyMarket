@@ -1,35 +1,46 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { Market } from "../types/market";
+import ResolutionCenter from "./ResolutionCenter";
 import { trackEvent } from "../lib/firebase";
 import WhatIfSimulator from "./WhatIfSimulator";
 import { useBettingSlip } from "../context/BettingSlipContext";
 import Toast from "./Toast";
 import PoolOwnershipChart from "./PoolOwnershipChart";
 import { useFormPersistence } from "../hooks/useFormPersistence";
+import { useSlippageGuard } from "../hooks/useSlippageGuard";
 import { useTrustline } from "../hooks/useTrustline";
-import TrustlineModal from "./TrustlineModal";
 import SlippageSettings from "./SlippageSettings";
 import SlippageWarningModal from "./SlippageWarningModal";
-import { useSlippageGuard } from "../hooks/useSlippageGuard";
-
-interface Market {
-  id: number;
-  question: string;
-  end_date: string;
-  outcomes: string[];
-  resolved: boolean;
-  winning_outcome: number | null;
-  total_pool: string;
-  /** Optional custom asset required to bet on this market */
-  asset?: { code: string; issuer: string };
-}
+import TrustlineModal from "./TrustlineModal";
+import { useOptimisticBet } from "../hooks/useOptimisticBet";
+import OptimisticBetIndicator from "./OptimisticBetIndicator";
+import OddsTicker from "./OddsTicker";
+import { useVolatilityPulse } from "../hooks/useVolatilityPulse";
+import { useOddsStream } from "../hooks/useOddsStream";
 
 interface Props {
   market: Market;
   walletAddress: string | null;
   onBetPlaced?: () => void;
+  showFullCard?: boolean;
+  isError?: boolean;
+  onRetry?: () => void;
+  isWatched?: boolean;
+  onToggleWatchlist?: (marketId: number) => void;
 }
 
-export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
+export default function MarketCard({
+  market,
+  walletAddress,
+  onBetPlaced,
+  isError = false,
+  onRetry,
+  isWatched = false,
+  onToggleWatchlist,
+}: Props) {
+  const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
+
   const {
     outcomeIndex: selectedOutcome,
     amount,
@@ -42,77 +53,119 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [showQueueFullToast, setShowQueueFullToast] = useState(false);
   const [slippageWarning, setSlippageWarning] = useState<{
     expectedPayout: number;
     currentPayout: number;
   } | null>(null);
 
-  const { addBet } = useBettingSlip();
-  const { state: trustlineState, pendingAsset, errorMessage: trustlineError,
-          checkAndRun, confirmTrustline, dismiss: dismissTrustline, retry: retryTrustline } = useTrustline();
+  const {
+    state: trustlineState,
+    pendingAsset,
+    errorMessage: trustlineError,
+    checkAndRun,
+    confirmTrustline,
+    dismiss: dismissTrustline,
+    retry: retryTrustline,
+  } = useTrustline();
+
   const { snapshotOdds, checkSlippage } = useSlippageGuard();
+  const { submitBet: submitOptimisticBet, betsForMarket } = useOptimisticBet();
+
+  const pendingBets = betsForMarket(market.id);
   const isExpired = new Date(market.end_date) <= new Date();
 
-  // Snapshot odds whenever the user selects an outcome or changes amount
-  const outcomePool = parseFloat(market.total_pool) / market.outcomes.length;
   const totalPool = parseFloat(market.total_pool);
+  const outcomePool = totalPool / market.outcomes.length;
+  const numericAmount = parseFloat(amount) || 0;
+
+  const defaultOdds = 100 / market.outcomes.length;
+
+  const { odds: liveOdds, connected: oddsConnected, changedIndices } = useOddsStream(market.id);
+
+  const tickerOdds = liveOdds[0] ?? defaultOdds;
+  const { isPulsing, direction } = useVolatilityPulse(tickerOdds);
+
   useEffect(() => {
-    if (selectedOutcome !== null && amount) {
-      snapshotOdds(parseFloat(amount) || 0, outcomePool, totalPool);
+    if (selectedOutcome !== null && numericAmount) {
+      snapshotOdds(numericAmount, outcomePool, totalPool);
     }
-  }, [selectedOutcome, amount, outcomePool, totalPool, snapshotOdds]);
+  }, [selectedOutcome, numericAmount, outcomePool, totalPool, snapshotOdds]);
 
   const handleShareMarket = async () => {
     const shareData = {
       title: market.question,
-      text: `Check out this prediction market: ${market.question}\nPool: ${parseFloat(market.total_pool).toFixed(2)} XLM`,
+      text: `Check out this prediction market: ${market.question}\nPool: ${totalPool.toFixed(
+        2
+      )} XLM`,
       url: `${window.location.origin}?market=${market.id}`,
     };
 
     try {
       if (navigator.share) {
         await navigator.share(shareData);
-        trackEvent('share_market', {
+        trackEvent("share_market", {
           market_id: market.id,
-          share_method: 'native_share_api',
-          market_question: market.question.substring(0, 50), // Truncate for privacy
+          share_method: "native_share_api",
         });
       } else {
-        // Fallback: copy to clipboard
-        await navigator.clipboard.writeText(`${shareData.title}\n${shareData.text}\n${shareData.url}`);
-        trackEvent('share_market', {
+        await navigator.clipboard.writeText(
+          `${shareData.title}\n${shareData.text}\n${shareData.url}`
+        );
+        trackEvent("share_market", {
           market_id: market.id,
-          share_method: 'clipboard',
-          market_question: market.question.substring(0, 50), // Truncate for privacy
+          share_method: "clipboard",
         });
         setMessage("Market link copied to clipboard!");
         setTimeout(() => setMessage(""), 3000);
       }
     } catch (err) {
-      trackEvent('share_error', {
+      trackEvent("share_error", {
         market_id: market.id,
-        error_message: err instanceof Error ? err.message.substring(0, 100) : 'Unknown error',
+        error_message: err instanceof Error ? err.message.substring(0, 100) : "Unknown error",
       });
     }
   };
 
-  async function placeBet() {
-    if (selectedOutcome === null || !amount || !walletAddress) return;
+  async function submitBet() {
+    if (selectedOutcome === null || !numericAmount || !walletAddress) return;
 
-    // Check slippage against current pool state before submitting
-    const check = checkSlippage(
-      parseFloat(amount),
-      outcomePool,
-      totalPool,
-      slippageTolerance
+    setLoading(true);
+    setMessage("");
+
+    const success = await submitOptimisticBet(
+      {
+        marketId: market.id,
+        marketTitle: market.question,
+        outcomeIndex: selectedOutcome,
+        outcomeName: market.outcomes[selectedOutcome],
+        amount: numericAmount,
+        walletAddress,
+      },
+      (reason) => toastError(`Bet failed: ${reason}`)
     );
+
+    setLoading(false);
+
+    if (success) {
+      toastSuccess("Bet placed successfully!");
+      clearForm();
+      onBetPlaced?.();
+    }
+  }
+
+  async function placeBet() {
+    if (selectedOutcome === null || !numericAmount || !walletAddress) return;
+
+    const check = checkSlippage(numericAmount, outcomePool, totalPool, slippageTolerance);
+
     if (check.exceeded) {
-      setSlippageWarning({ expectedPayout: check.expectedPayout, currentPayout: check.currentPayout });
+      setSlippageWarning({
+        expectedPayout: check.expectedPayout,
+        currentPayout: check.currentPayout,
+      });
       return;
     }
 
-    // If this market uses a custom asset, run the trustline check first.
     if (market.asset) {
       await checkAndRun(market.asset, walletAddress, submitBet);
     } else {
@@ -120,36 +173,34 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
     }
   }
 
-  async function submitBet() {
-    if (selectedOutcome === null || !amount || !walletAddress) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          marketId: market.id,
-          outcomeIndex: selectedOutcome,
-          amount: parseFloat(amount),
-          walletAddress,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setMessage("Bet placed successfully!");
-      clearForm();
-      onBetPlaced?.();
-    } catch (err: any) {
-      setMessage(`Error: ${err.message}`);
-    } finally {
-      setLoading(false);
+  const proceedAfterSlippageWarning = async () => {
+    if (!walletAddress) return;
+
+    if (market.asset) {
+      await checkAndRun(market.asset, walletAddress, submitBet);
+    } else {
+      await submitBet();
     }
+  };
+
+  if (isError) {
+    return (
+      <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-red-800 items-center justify-center min-h-[200px]">
+        <p className="text-red-400 text-sm font-medium">Failed to load market</p>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-semibold"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-3 border border-gray-800">
-      {/* Trustline modal — rendered at card level, portal-like via fixed positioning */}
+    <div className="bg-gray-900 rounded-xl p-5 flex flex-col gap-4 border border-gray-800">
       <TrustlineModal
         state={trustlineState}
         asset={pendingAsset}
@@ -159,7 +210,6 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
         onRetry={retryTrustline}
       />
 
-      {/* Slippage warning modal — shown when drift exceeds tolerance */}
       {slippageWarning && (
         <SlippageWarningModal
           expectedPayout={slippageWarning.expectedPayout}
@@ -167,138 +217,132 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
           tolerancePct={slippageTolerance}
           onProceed={async () => {
             setSlippageWarning(null);
-            // User chose to proceed despite slippage — submit directly
-            if (market.asset) {
-              await checkAndRun(market.asset, walletAddress!, submitBet);
-            } else {
-              await submitBet();
-            }
+            await proceedAfterSlippageWarning();
           }}
           onCancel={() => setSlippageWarning(null)}
         />
       )}
-      <div className="flex justify-between items-start">
-        <h3 className="font-semibold text-white text-lg leading-snug flex-1">{market.question}</h3>
-        <div className="flex items-center gap-2">
+
+      <div className="flex justify-between items-start gap-2">
+        <h3 className="font-semibold text-white text-lg flex-1">{market.question}</h3>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => onToggleWatchlist?.(market.id)}
+            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+            title={isWatched ? "Remove from watchlist" : "Add to watchlist"}
+            aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}
+          >
+            {isWatched ? (
+              <svg
+                className="w-5 h-5 text-yellow-400 fill-current"
+                viewBox="0 0 24 24"
+              >
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+            ) : (
+              <svg
+                className="w-5 h-5 text-gray-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+            )}
+          </button>
+
           <button
             onClick={handleShareMarket}
             className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
-            title="Share market"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400">
-              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/>
-            </svg>
+            Share
           </button>
-          {market.resolved ? (
-            <span className="text-xs bg-green-800 text-green-300 px-2 py-1 rounded-full">Resolved</span>
-          ) : isExpired ? (
-            <span className="text-xs bg-yellow-800 text-yellow-300 px-2 py-1 rounded-full">Ended</span>
-          ) : (
-            <span className="text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded-full">Live</span>
-          )}
         </div>
       </div>
 
       <p className="text-gray-400 text-sm">
-        Pool: <span className="text-white font-medium">{parseFloat(market.total_pool).toFixed(2)} XLM</span>
-        &nbsp;·&nbsp;Ends: {new Date(market.end_date).toLocaleDateString()}
+        Pool: <span className="text-white font-medium">{totalPool.toFixed(2)} XLM</span> · Ends:{" "}
+        {new Date(market.end_date).toLocaleDateString()}
       </p>
 
-      {/* Pool ownership pie chart — live updates via WebSocket */}
+      <Link
+        href={`/market/${market.id}`}
+        className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+      >
+        View Details →
+      </Link>
+
       <PoolOwnershipChart marketId={market.id} />
 
-      {/* Outcomes */}
+      {oddsConnected && (
+        <span className="text-xs text-green-400 flex items-center gap-1">● Live</span>
+      )}
+
       <div className="flex gap-2 flex-wrap">
-        {market.outcomes.map((outcome, i) => (
-          <button
-            key={i}
-            onClick={() => setSelectedOutcome(i)}
-            disabled={market.resolved || isExpired}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
-              ${market.resolved && market.winning_outcome === i
-                ? "bg-green-600 text-white"
-                : selectedOutcome === i
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+        {market.outcomes.map((outcome, i) => {
+          const outcomeOdds = liveOdds[i] ?? defaultOdds;
+          const isFlashing = changedIndices.has(i);
+
+          return (
+            <button
+              key={i}
+              onClick={() => setSelectedOutcome(i)}
+              disabled={market.resolved || isExpired}
+              className={`px-4 py-2 rounded-lg text-sm ${isFlashing ? "flash-update" : ""} ${
+                selectedOutcome === i ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-300"
               }`}
-          >
-            {outcome}
-          </button>
-        ))}
+            >
+              {outcome}
+              <OddsTicker value={outcomeOdds} size="sm" />
+            </button>
+          );
+        })}
       </div>
 
-      {/* Bet input */}
       {!market.resolved && !isExpired && walletAddress && (
-        <div className="flex flex-col gap-2 mt-1">
+        <div className="flex flex-col gap-2">
           <div className="flex gap-2">
             <input
               type="number"
               placeholder="Amount (XLM)"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="bg-gray-800 text-white rounded-lg px-3 py-2 text-sm flex-1 outline-none border border-gray-700 focus:border-blue-500"
+              className="bg-gray-800 text-white rounded-lg px-3 py-2 flex-1"
             />
             <button
               onClick={placeBet}
-              disabled={loading || selectedOutcome === null || !amount}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
+              disabled={loading || selectedOutcome === null || !numericAmount}
+              className="bg-blue-600 px-4 py-2 rounded-lg text-sm"
             >
               {loading ? "Placing..." : "Bet"}
             </button>
-            {/* Add to betting slip queue */}
-            <button
-              data-testid="add-to-slip"
-              onClick={() => {
-                if (selectedOutcome === null || !amount) return;
-                addBet(
-                  {
-                    marketId: market.id,
-                    marketTitle: market.question,
-                    outcomeIndex: selectedOutcome,
-                    outcomeName: market.outcomes[selectedOutcome],
-                    amount: parseFloat(amount),
-                  },
-                  () => setShowQueueFullToast(true)
-                );
-              }}
-              disabled={selectedOutcome === null || !amount}
-              className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap"
-              title="Add to betting slip"
-            >
-              + Slip
-            </button>
           </div>
 
-          {/* Slippage tolerance + clear form row */}
-          <div className="flex items-center justify-between gap-3">
-            <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
-            <button
-              data-testid="clear-form"
-              onClick={() => { clearForm(); setMessage(""); }}
-              className="text-xs text-gray-500 hover:text-red-400 transition-colors"
-            >
-              Clear form
-            </button>
-          </div>
+          <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
 
-          {/* Payout tooltip — live Soroban simulation */}
           <PayoutTooltip
             contractId={process.env.NEXT_PUBLIC_CONTRACT_ID ?? null}
             walletAddress={walletAddress}
             marketId={market.id}
             outcomeIndex={selectedOutcome}
-            stakeAmount={parseFloat(amount) || 0}
-            poolForOutcome={parseFloat(market.total_pool) / market.outcomes.length}
-            totalPool={parseFloat(market.total_pool)}
+            stakeAmount={numericAmount}
+            poolForOutcome={outcomePool}
+            totalPool={totalPool}
           />
         </div>
       )}
 
-      {message && (
-        <p className={`text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
-          {message}
-        </p>
+      {message && <p className="text-sm text-green-400">{message}</p>}
+
+      <OptimisticBetIndicator bets={pendingBets} />
+
+      {!market.resolved && !isExpired && selectedOutcome !== null && (
+        <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
       )}
+
+      <ResolutionCenter market={market} compact />
 
       {/* Queue-full toast */}
       {showQueueFullToast && (
