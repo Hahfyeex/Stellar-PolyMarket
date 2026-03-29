@@ -30,7 +30,7 @@ import MarketListSkeleton from "../components/skeletons/MarketListSkeleton";
 import { useTranslation } from "react-i18next";
 
 export default function Home() {
-  const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
+  const { publicKey, isLoading, walletError, connect, disconnect } = useWalletContext();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
@@ -160,7 +160,7 @@ export default function Home() {
         ) : (
           <button
             onClick={connect}
-            disabled={connecting}
+            disabled={isLoading}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
           >
             {connecting ? t("wallet.connecting") : t("wallet.connect")}
@@ -190,7 +190,7 @@ export default function Home() {
           ) : (
             <button
               onClick={connect}
-              disabled={connecting}
+              disabled={isLoading}
               className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
             >
               {connecting ? t("wallet.connecting_short") : t("wallet.connect_short")}
@@ -199,9 +199,9 @@ export default function Home() {
         </div>
       </div>
 
-      {error && (
+      {walletError && (
         <div className="max-w-4xl mx-auto px-4 mt-4">
-          <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{error}</p>
+          <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{walletError}</p>
         </div>
       )}
 

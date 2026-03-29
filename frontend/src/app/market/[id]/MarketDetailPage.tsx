@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useWallet } from "../../../hooks/useWallet";
+import { useWalletContext } from "../../../context/WalletContext";
 import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
 import OddsTicker from "../../../components/OddsTicker";
@@ -375,7 +375,7 @@ interface BettingPanelProps {
 const HORIZON = "https://horizon-testnet.stellar.org";
 
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
-  const { publicKey, connecting, connect } = useWallet();
+  const { publicKey, isLoading, walletError, connect } = useWalletContext();
   const { success: toastSuccess, error: toastError } = useToast();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
@@ -443,6 +443,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           <div className="text-gray-400 text-xs mb-1">YES</div>
           <div className="text-white text-2xl font-bold">
             {(odds.yes * 100).toFixed(0)}%
+          </div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.yes * 100} size="lg" />
           </div>
@@ -465,6 +466,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           <div className="text-gray-400 text-xs mb-1">NO</div>
           <div className="text-white text-2xl font-bold">
             {(odds.no * 100).toFixed(0)}%
+          </div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.no * 100} size="lg" />
           </div>
@@ -530,11 +532,11 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       ) : (
         <button
           onClick={connect}
-          disabled={connecting}
+          disabled={isLoading}
           className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
 
-          {connecting ? "Connecting..." : "Connect Wallet to Bet"}
+          {isLoading ? "Connecting..." : "Connect Wallet to Bet"}
         </button>
       )}
 
@@ -572,7 +574,7 @@ interface MarketDetailPageProps {
 
 export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TabType>("about");
-  const { publicKey, disconnect } = useWallet();
+  const { publicKey, disconnect } = useWalletContext();
 
   // Fetch market detail via shared hook
   const { data: marketData, isLoading: marketLoading, error: marketError } = useMarket(marketId);
@@ -695,6 +697,7 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
                     <span className="text-green-400">{(odds.yes * 100).toFixed(0)}%</span>
                     {" / "}
                     <span className="text-red-400">{(odds.no * 100).toFixed(0)}%</span>
+                  </p>
                   <p className="text-white font-semibold flex items-center justify-end gap-1">
                     <OddsTicker value={odds.yes * 100} size="sm" className="text-green-400" />
                     <span className="text-gray-500">/</span>

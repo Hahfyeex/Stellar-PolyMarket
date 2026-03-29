@@ -61,11 +61,11 @@ function PortfolioSummary({ summary }: PortfolioSummaryProps) {
 
 
 export default function ProfilePage() {
-  const { publicKey, connecting, connect } = useWalletContext();
+  const { publicKey, isLoading, walletError, connect } = useWalletContext();
   const { tier, stats, isLoading: badgeLoading, error: badgeError } = useUserBadge();
   const { data: portfolio, isLoading: portfolioLoading } = usePortfolio(publicKey);
 
-  const isLoading = badgeLoading || portfolioLoading;
+  const loadingStats = badgeLoading || portfolioLoading;
 
 
   // ── Wallet not connected ──────────────────────────────────────────────────
@@ -93,10 +93,10 @@ export default function ProfilePage() {
           </div>
           <button
             onClick={connect}
-            disabled={connecting}
+            disabled={isLoading}
             className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl text-white font-semibold transition-colors"
           >
-            {connecting ? "Connecting..." : "Connect Freighter Wallet"}
+            {isLoading ? "Connecting..." : "Connect Freighter Wallet"}
           </button>
         </div>
       </main>
@@ -104,7 +104,7 @@ export default function ProfilePage() {
   }
 
   // ── Loading stats ─────────────────────────────────────────────────────────
-  if (isLoading) {
+  if (loadingStats) {
     return (
       <main className="min-h-screen bg-gray-950 text-white">
         <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
@@ -177,9 +177,9 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            {error && (
+            {walletError && (
               <p className="text-red-400 text-xs bg-red-900/20 border border-red-900/40 rounded-lg px-3 py-2">
-                Could not load stats: {error}
+                Could not load stats: {walletError}
               </p>
             )}
 

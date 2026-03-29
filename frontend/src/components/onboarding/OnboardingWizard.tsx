@@ -25,7 +25,7 @@ import StepPayouts from "./StepPayouts";
 const STEP_LABELS = ["Wallet", "Markets", "Betting", "Payouts"];
 
 export default function OnboardingWizard() {
-  const { publicKey, connecting, connect } = useWalletContext();
+  const { publicKey, isLoading, connect } = useWalletContext();
   const { showWizard, currentStep, nextStep, prevStep, skip, complete } = useOnboarding();
 
   if (!showWizard) return null;
@@ -33,7 +33,7 @@ export default function OnboardingWizard() {
   const isLastStep = currentStep === TOTAL_STEPS - 1;
 
   const steps = [
-    <StepWallet key="wallet" publicKey={publicKey} connecting={connecting} onConnect={connect} />,
+    <StepWallet key="wallet" publicKey={publicKey} isLoading={isLoading} onConnect={connect} />,
     <StepMarkets key="markets" />,
     <StepBetting key="betting" />,
     <StepPayouts key="payouts" />,
