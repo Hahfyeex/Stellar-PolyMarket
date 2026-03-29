@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS markets (
   total_pool NUMERIC DEFAULT 0,
   status TEXT DEFAULT 'ACTIVE',
   contract_address TEXT,
+  payout_distributed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -245,98 +245,22 @@ router.post("/", async (req, res) => {
 // POST /api/bets/payout/:marketId — distribute rewards to winners
 router.post("/payout/:marketId", async (req, res) => {
   try {
-    const market = await db.query("SELECT * FROM markets WHERE id = $1 AND resolved = TRUE", [
-      req.params.marketId,
-    ]);
-    if (!market.rows.length) {
-      logger.warn({ market_id: req.params.marketId }, "Payout rejected: market not resolved");
-      return res.status(400).json({ error: "Market not resolved yet" });
-    }
-
-    const { winning_outcome, total_pool } = market.rows[0];
-
-    // Get all winning bets
-    const winners = await db.query(
-      "SELECT * FROM bets WHERE market_id = $1 AND outcome_index = $2 AND paid_out = FALSE",
-      [req.params.marketId, winning_outcome]
-    );
-
-    // Convert to stroops (7 decimal places = 10^7)
-    const totalPoolStroops = BigInt(Math.floor(parseFloat(total_pool) * 1e7));
-
-    // Get total winning stake in stroops
-    const winningStakeStroops = winners.rows.reduce((sum, b) => {
-      return sum + BigInt(Math.floor(parseFloat(b.amount) * 1e7));
-    }, 0n);
-
-    if (winningStakeStroops === 0n) {
+    const { distributePayouts } = require("../services/payoutService");
+    const result = await distributePayouts(req.params.marketId);
+    
+    if (result.winningStake === 0 && result.totalPool > 0) {
       return res.status(400).json({ error: "No winning stake" });
     }
 
-    // Calculate payout pool after 3% platform fee: pool * 97 / 100
-    const payoutPoolStroops = (totalPoolStroops * 97n) / 100n;
-
-    // Calculate payouts using BigInt arithmetic
-    const payouts = winners.rows.map((bet) => {
-      const betAmountStroops = BigInt(Math.floor(parseFloat(bet.amount) * 1e7));
-      // payout = (betAmount * payoutPool) / winningStake
-      const payoutStroops = (betAmountStroops * payoutPoolStroops) / winningStakeStroops;
-      // Convert back to XLM (divide by 10^7)
-      const payoutXlm = Number(payoutStroops) / 1e7;
-      return { wallet: bet.wallet_address, payout: payoutXlm.toFixed(7) };
-    });
-
-    // Verify sum of payouts doesn't exceed payout pool
-    let totalPayoutStroops = 0n;
-    for (const payout of payouts) {
-      const payoutStroops = BigInt(Math.round(parseFloat(payout.payout) * 10_000_000));
-      totalPayoutStroops += payoutStroops;
-    }
-
-    if (totalPayoutStroops > payoutPoolStroops) {
-      logger.error(
-        {
-          market_id: req.params.marketId,
-          total_payout_stroops: totalPayoutStroops.toString(),
-          payout_pool_stroops: payoutPoolStroops.toString(),
-        },
-        "Payout sum exceeds pool"
-      );
-      return res.status(500).json({ error: "Payout calculation error: sum exceeds pool" });
-    }
-
-    // Mark bets as paid
-    await db.query("UPDATE bets SET paid_out = TRUE WHERE market_id = $1 AND outcome_index = $2", [
-      req.params.marketId,
-      winning_outcome,
-    ]);
-
-    logger.info(
-      {
-        market_id: req.params.marketId,
-        winning_outcome,
-        winners_count: winners.rows.length,
-        total_pool,
-        winning_stake: Number(winningStakeStroops) / 1e7,
-      },
-      "Payouts distributed"
-    );
-
-    // Invalidate portfolio cache for all winners
-    if (winners.rows.length > 0) {
-      const winnerAddresses = new Set(winners.rows.map((w) => w.wallet_address));
-      const invalidationPromises = Array.from(winnerAddresses).map((addr) =>
-        redis.del(`portfolio:${addr}`)
-      );
-      await Promise.all(invalidationPromises);
-      logger.info(
-        { market_id: req.params.marketId, winners_count: winnerAddresses.size },
-        "[Cache] Invalidated portfolio cache for winners"
-      );
-    }
-
-    res.json({ payouts });
+    res.json({ payouts: result.payouts });
   } catch (err) {
+    if (err.message === "Market not found or not resolved") {
+      logger.warn({ market_id: req.params.marketId }, "Payout rejected: market not resolved");
+      return res.status(400).json({ error: "Market not resolved yet" });
+    }
+    if (err.message === "Payout calculation error: sum exceeds pool") {
+      return res.status(500).json({ error: err.message });
+    }
     res.status(500).json({ error: sanitizeError(err, req.requestId) });
   }
 });
