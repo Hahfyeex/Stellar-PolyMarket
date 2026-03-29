@@ -7,6 +7,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+const mobileShellPropsSpy = jest.fn();
+
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "1" }),
@@ -23,16 +25,16 @@ process.env = {
 // Mock fetch
 global.fetch = jest.fn();
 
-// Mock useWallet hook — mutable so individual suites can override
-const mockUseWallet = jest.fn(() => ({
+// Mock WalletContext hook — mutable so individual suites can override
+const mockUseWalletContext = jest.fn(() => ({
   publicKey: null as string | null,
-  connecting: false,
-  error: null,
+  isLoading: false,
+  walletError: null,
   connect: jest.fn(),
   disconnect: jest.fn(),
 }));
-jest.mock("../../../../hooks/useWallet", () => ({
-  useWallet: (...args: unknown[]) => mockUseWallet(...args),
+jest.mock("../../../../context/WalletContext", () => ({
+  useWalletContext: (...args: unknown[]) => mockUseWalletContext(...args),
 }));
 
 // Mock usePlaceBet hook — default idle state; overridden per test suite
@@ -48,12 +50,19 @@ jest.mock("../../../../hooks/usePlaceBet", () => ({
   usePlaceBet: (...args: unknown[]) => mockUsePlaceBet(...args),
 }));
 
+const mockToastSuccess = jest.fn();
+const mockToastError = jest.fn();
+jest.mock("../../../../components/ToastProvider", () => ({
+  useToast: () => ({ success: mockToastSuccess, error: mockToastError }),
+}));
+
 // Mock MobileShell component
 jest.mock("../../../../components/mobile/MobileShell", () => ({
   __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="mobile-shell">{children}</div>
-  ),
+  default: (props: { children: React.ReactNode; onBetPlaced?: () => void }) => {
+    mobileShellPropsSpy(props);
+    return <div data-testid="mobile-shell">{props.children}</div>;
+  },
 }));
 
 // Demo data matching the component
@@ -268,8 +277,8 @@ describe("MarketDetailPage", () => {
     });
 
     it("should maintain tab state when switching", async () => {
-      const positionsTab = screen.getByRole("button", { name: /Positions/i });
-      const activityTab = screen.getByRole("button", { name: /Activity/i });
+      const positionsTab = screen.getAllByRole("button", { name: /Positions/i })[0];
+      const activityTab = screen.getAllByRole("button", { name: /Activity/i })[0];
 
       await userEvent.click(positionsTab);
       expect(positionsTab).toHaveClass("border-blue-500");
@@ -522,13 +531,37 @@ describe("MarketDetailPage", () => {
     });
   });
 
+  describe("Rerender Optimization", () => {
+    beforeEach(async () => {
+      render(<MarketDetailPage marketId="1" />, { wrapper: createWrapper() });
+      await waitFor(() => {
+        expect(screen.getAllByText(/Will Bitcoin reach/i).length).toBeGreaterThan(0);
+      });
+    });
+
+    it("keeps onBetPlaced callback reference stable across parent rerenders", async () => {
+      expect(mobileShellPropsSpy).toHaveBeenCalled();
+      const firstOnBetPlaced = mobileShellPropsSpy.mock.calls.at(0)?.[0]?.onBetPlaced;
+
+      const positionsTab = screen.getAllByRole("button", { name: /Positions/i })[0];
+      const activityTab = screen.getAllByRole("button", { name: /Activity/i })[0];
+      await userEvent.click(positionsTab);
+      await userEvent.click(activityTab);
+
+      const lastOnBetPlaced = mobileShellPropsSpy.mock.calls.at(-1)?.[0]?.onBetPlaced;
+
+      expect(typeof firstOnBetPlaced).toBe("function");
+      expect(lastOnBetPlaced).toBe(firstOnBetPlaced);
+    });
+  });
+
   describe("isPending Disabled State", () => {
     beforeEach(async () => {
       // Simulate connected wallet
-      mockUseWallet.mockReturnValue({
+      mockUseWalletContext.mockReturnValue({
         publicKey: "GTEST1234WALLET",
-        connecting: false,
-        error: null,
+        isLoading: false,
+        walletError: null,
         connect: jest.fn(),
         disconnect: jest.fn(),
       });
@@ -550,10 +583,10 @@ describe("MarketDetailPage", () => {
 
     afterEach(() => {
       // Restore defaults
-      mockUseWallet.mockReturnValue({
+      mockUseWalletContext.mockReturnValue({
         publicKey: null,
-        connecting: false,
-        error: null,
+        isLoading: false,
+        walletError: null,
         connect: jest.fn(),
         disconnect: jest.fn(),
       });
