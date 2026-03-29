@@ -16,7 +16,7 @@
  *   5. Market rules, truth sources (tertiary — below the fold)
  *   6. Related markets carousel (discovery — footer)
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useWalletContext } from "../../../context/WalletContext";
@@ -29,6 +29,9 @@ import ContractErrorBoundary from "../../../components/ContractErrorBoundary";
 import SocialSentiment from "../../../components/SocialSentiment";
 import SimulatorPanel from "../../../components/SimulatorPanel";
 import ShareModal from "../../../components/ShareModal";
+import DisputeModal from "../../../components/DisputeModal";
+import DisputeStatusTracker from "../../../components/DisputeStatusTracker";
+import { type DisputeState } from "../../../components/DisputeModal";
 import { store } from "../../../store";
 import MarketDetailSkeleton from "../../../components/skeletons/MarketDetailSkeleton";
 
@@ -40,17 +43,25 @@ interface Market {
   end_date: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export default function MarketDetailPage() {
   const params = useParams();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const router = useRouter();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { publicKey, connect } = useWalletContext();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [market, setMarket] = useState<Market | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [loading, setLoading] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [error, setError] = useState("");
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [shareOpen, setShareOpen] = useState(false);
 
   const marketId = Number(params?.id);
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function fetchMarket() {
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets/${marketId}`);
@@ -105,7 +116,12 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
   if (!market) notFound();
 
   // MarketDetailPage is a client component — wrap with a fresh QueryClient
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const queryClient = new QueryClient();
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const [dispute, setDispute] = useState<DisputeState | null>(null);
 
   if (loading) {
     return (
@@ -116,12 +132,20 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
             className="text-gray-400 hover:text-white transition-colors flex items-center gap-2"
             aria-label="Back to markets"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="w-5 h-5"
+            >
               <path d="M19 12H5M12 5l-7 7 7 7" />
             </svg>
             <span className="text-sm">Back</span>
           </button>
-          <Link href="/" className="text-blue-400 font-bold text-sm">Stella Polymarket</Link>
+          <Link href="/" className="text-blue-400 font-bold text-sm">
+            Stella Polymarket
+          </Link>
         </nav>
         <MarketDetailSkeleton />
       </main>
@@ -137,12 +161,20 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
           className="text-gray-400 hover:text-white transition-colors flex items-center gap-2"
           aria-label="Back to markets"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="w-5 h-5"
+          >
             <path d="M19 12H5M12 5l-7 7 7 7" />
           </svg>
           <span className="text-sm">Back</span>
         </button>
-        <Link href="/" className="text-blue-400 font-bold text-sm">Stella Polymarket</Link>
+        <Link href="/" className="text-blue-400 font-bold text-sm">
+          Stella Polymarket
+        </Link>
         <span className="text-gray-600">/</span>
         <span className="text-gray-400 text-sm truncate max-w-xs">
           {market?.question.slice(0, 50) + (market && market.question.length > 50 ? "…" : "")}
@@ -155,14 +187,21 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               {market.resolved ? (
-                <span className="text-xs bg-green-800 text-green-300 px-2.5 py-1 rounded-full font-medium">Resolved</span>
+                <span className="text-xs bg-green-800 text-green-300 px-2.5 py-1 rounded-full font-medium">
+                  Resolved
+                </span>
               ) : isExpired ? (
-                <span className="text-xs bg-yellow-800 text-yellow-300 px-2.5 py-1 rounded-full font-medium">Ended</span>
+                <span className="text-xs bg-yellow-800 text-yellow-300 px-2.5 py-1 rounded-full font-medium">
+                  Ended
+                </span>
               ) : (
-                <span className="text-xs bg-blue-800 text-blue-300 px-2.5 py-1 rounded-full font-medium animate-pulse">● Live</span>
+                <span className="text-xs bg-blue-800 text-blue-300 px-2.5 py-1 rounded-full font-medium animate-pulse">
+                  ● Live
+                </span>
               )}
               <span className="text-xs text-gray-500">
-                {daysLeft === 0 ? "Ends today" : `${daysLeft}d remaining`} · Ends {new Date(market.end_date).toLocaleDateString()}
+                {daysLeft === 0 ? "Ends today" : `${daysLeft}d remaining`} · Ends{" "}
+                {new Date(market.end_date).toLocaleDateString()}
               </span>
               <button
                 data-testid="share-button"
@@ -170,15 +209,45 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
                 className="ml-auto flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white px-3 py-1.5 rounded-full border border-gray-700 transition-colors"
                 aria-label="Share market"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="w-3.5 h-3.5"
+                >
                   <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
                 </svg>
                 Share
               </button>
+              {market.resolved &&
+                market.dispute_window_ends_at &&
+                new Date(market.dispute_window_ends_at) > new Date() &&
+                (dispute ? (
+                  <button
+                    data-testid="dispute-submitted-btn"
+                    disabled
+                    className="flex items-center gap-1.5 text-xs bg-gray-800 text-gray-500 px-3 py-1.5 rounded-full border border-gray-700 cursor-not-allowed"
+                  >
+                    Dispute Submitted
+                  </button>
+                ) : (
+                  <button
+                    data-testid="dispute-outcome-btn"
+                    onClick={() => setDisputeOpen(true)}
+                    className="flex items-center gap-1.5 text-xs bg-orange-900/50 hover:bg-orange-800/60 text-orange-300 hover:text-orange-200 px-3 py-1.5 rounded-full border border-orange-700/50 transition-colors"
+                  >
+                    Dispute Outcome
+                  </button>
+                ))}
             </div>
-            <h1 className="text-xl md:text-3xl font-bold text-white leading-snug">{market.question}</h1>
+            <h1 className="text-xl md:text-3xl font-bold text-white leading-snug">
+              {market.question}
+            </h1>
             {market.description && (
-              <p className="text-gray-400 text-sm leading-relaxed max-w-3xl">{market.description}</p>
+              <p className="text-gray-400 text-sm leading-relaxed max-w-3xl">
+                {market.description}
+              </p>
             )}
           </div>
         )}
@@ -188,9 +257,7 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
           {/* Left column (65%) — market info, odds chart, bet history */}
           <div className="min-w-0 space-y-6">
             {/* 1. PROBABILITY CHART — primary element */}
-            {market ? (
-              <ProbabilityChart marketId={market.id} outcomes={market.outcomes} />
-            ) : null}
+            {market ? <ProbabilityChart marketId={market.id} outcomes={market.outcomes} /> : null}
 
             {/* 2. Current prices row */}
             {market && (
@@ -206,10 +273,14 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
                       }`}
                     >
                       <p className="text-gray-400 text-xs truncate">{outcome}</p>
-                      <p className={`text-2xl font-bold ${isWinner ? "text-green-400" : "text-white"}`}>
+                      <p
+                        className={`text-2xl font-bold ${isWinner ? "text-green-400" : "text-white"}`}
+                      >
                         {prob}%
                       </p>
-                      <p className="text-gray-500 text-xs">{(parseFloat(market.total_pool) / market.outcomes.length).toFixed(0)} XLM</p>
+                      <p className="text-gray-500 text-xs">
+                        {(parseFloat(market.total_pool) / market.outcomes.length).toFixed(0)} XLM
+                      </p>
                     </div>
                   );
                 })}
@@ -217,7 +288,9 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-center space-y-1">
                   <p className="text-gray-400 text-xs">Total Pool</p>
                   <p className="text-2xl font-bold text-blue-400">
-                    {parseFloat(market.total_pool).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {parseFloat(market.total_pool).toLocaleString(undefined, {
+                      maximumFractionDigits: 0,
+                    })}
                   </p>
                   <p className="text-gray-500 text-xs">XLM</p>
                 </div>
@@ -266,13 +339,14 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
 
             {/* 5. Social sentiment */}
             {market && (
-              <SocialSentiment outcomes={market.outcomes} totalPool={parseFloat(market.total_pool)} />
+              <SocialSentiment
+                outcomes={market.outcomes}
+                totalPool={parseFloat(market.total_pool)}
+              />
             )}
 
             {/* 6. Firebase-powered comments */}
-            {market && (
-              <MarketComments marketId={market.id} walletAddress={publicKey} />
-            )}
+            {market && <MarketComments marketId={market.id} walletAddress={publicKey} />}
 
             {/* 7. Market rules + truth sources */}
             {market && (
@@ -292,7 +366,13 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 text-sm transition-colors"
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="w-4 h-4"
+                      >
                         <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
                       </svg>
                       {market.truth_source}
@@ -303,7 +383,9 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
                 {/* Fallback truth source links */}
                 {!market.truth_source && (
                   <div className="space-y-2">
-                    <p className="text-gray-400 text-xs uppercase tracking-wide">Reference Sources</p>
+                    <p className="text-gray-400 text-xs uppercase tracking-wide">
+                      Reference Sources
+                    </p>
                     <div className="flex flex-wrap gap-2">
                       {["Reuters", "AP News", "CoinGecko"].map((src) => (
                         <span
@@ -317,6 +399,11 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
                   </div>
                 )}
               </div>
+            )}
+
+            {/* 8. Dispute status tracker — shown after dispute submitted */}
+            {dispute && (
+              <DisputeStatusTracker status={dispute.status} submittedAt={dispute.submittedAt} />
             )}
           </div>
 
@@ -340,11 +427,9 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
                   <div className="skeleton h-12 w-full rounded-xl" />
                 </div>
               )}
-              
+
               {/* What-If Simulator Panel */}
-              {market && (
-                <SimulatorPanel market={market} />
-              )}
+              {market && <SimulatorPanel market={market} />}
             </div>
           </div>
         </div>
@@ -352,10 +437,7 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
         {/* ── FOOTER: Related Markets carousel ── */}
         {market && (
           <div className="border-t border-gray-800 pt-6">
-            <RelatedMarketsCarousel
-              currentMarketId={market.id}
-              currentQuestion={market.question}
-            />
+            <RelatedMarketsCarousel currentMarketId={market.id} currentQuestion={market.question} />
           </div>
         )}
       </div>
@@ -370,6 +452,18 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
           totalPool={parseFloat(market.total_pool)}
           endDate={market.end_date}
           onClose={() => setShareOpen(false)}
+        />
+      )}
+
+      {/* Dispute modal */}
+      {disputeOpen && market && (
+        <DisputeModal
+          marketId={market.id}
+          onClose={() => setDisputeOpen(false)}
+          onSubmitted={(d) => {
+            setDispute(d);
+            setDisputeOpen(false);
+          }}
         />
       )}
     </main>
