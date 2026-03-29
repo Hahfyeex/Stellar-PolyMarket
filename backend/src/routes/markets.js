@@ -1,4 +1,5 @@
 const express = require("express");
+const sanitizeHtml = require("sanitize-html");
 const router = express.Router();
 const db = require("../db");
 const { triggerNotification } = require("../utils/notifications");
@@ -31,15 +32,20 @@ router.get("/", async (req, res) => {
 // 2. rateLimitMarketCreation - enforces 3 markets per wallet per 24 hours
 router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, res) => {
   const { question, endDate, outcomes, contractAddress, walletAddress } = req.body;
+
+  const sanitizedQuestion =
+    typeof question === "string"
+      ? sanitizeHtml(question, { allowedTags: [], allowedAttributes: {} }).trim()
+      : "";
   
   // Basic required field validation (middleware handles detailed validation)
-  if (!question || !endDate || !outcomes?.length || !walletAddress) {
+  if (!sanitizedQuestion || !endDate || !outcomes?.length || !walletAddress) {
     return res.status(400).json({ 
       error: {
         code: 'MISSING_REQUIRED_FIELDS',
         message: 'question, endDate, outcomes, and walletAddress are required',
         details: {
-          question: !!question,
+          question: !!sanitizedQuestion,
           endDate: !!endDate,
           outcomes: !!outcomes?.length,
           walletAddress: !!walletAddress
@@ -52,12 +58,12 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
     // Market has passed all validation checks - create immediately without admin approval
     const result = await db.query(
       "INSERT INTO markets (question, end_date, outcomes, contract_address, created_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING *",
-      [question, endDate, outcomes, contractAddress || null]
+      [sanitizedQuestion, endDate, outcomes, contractAddress || null]
     );
     
     logger.info({
       market_id: result.rows[0].id,
-      question,
+      question: sanitizedQuestion,
       wallet_address: walletAddress,
       contract_address: contractAddress,
       outcomes_count: outcomes.length,
@@ -73,12 +79,12 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
     // Emit market.created so registered bot strategies can seed initial liquidity
     eventBus.emit("market.created", {
       marketId: result.rows[0].id,
-      question,
+      question: sanitizedQuestion,
       outcomes: outcomes ?? [],
       totalPool: 0,
     });
   } catch (err) {
-    logger.error({ err, question, wallet_address: walletAddress }, "Failed to create market");
+    logger.error({ err, question: sanitizedQuestion, wallet_address: walletAddress }, "Failed to create market");
     res.status(500).json({ 
       error: {
         code: 'DATABASE_ERROR',

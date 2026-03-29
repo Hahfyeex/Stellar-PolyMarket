@@ -24,6 +24,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Mitigate impact of any HTML echoed by clients: enforce baseline CSP on every response.
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", "default-src 'self'");
+  next();
+});
+
 // Request logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
