@@ -1,10 +1,16 @@
 "use client";
 /**
- * StakePresets
+ * StakePresets - Issue #508
  *
- * Renders quick-select preset buttons below a stake input.
- * Clicking a preset fills the input; typing a custom value deselects all presets.
- * The "Max" button calculates available balance minus a gas buffer.
+ * Quick-select preset buttons for faster bet placement.
+ * Reduces friction by eliminating manual typing, especially on mobile.
+ * 
+ * Features:
+ * - Preset buttons: 10, 50, 100, 500 XLM (configurable via BET_PRESETS constant)
+ * - Max button: calculates wallet balance minus 0.5 XLM gas buffer
+ * - Active preset highlighted with brand color (bg-blue-600)
+ * - Typing custom amount deselects all presets
+ * - Values in XLM (not stroops) for user-friendly display
  *
  * Usage:
  *   <StakePresets amount={amount} onSelect={setAmount} walletBalance="120.50" />

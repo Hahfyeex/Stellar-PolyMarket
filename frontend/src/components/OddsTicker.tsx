@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, useSpring, useTransform, animate } from "framer-motion";
 
 interface Props {
   value: number; // Percentage (0-100)
@@ -22,11 +22,18 @@ const SIZE_CLASSES = {
  * Max one animation per 500ms (debounced).
  */
 export default function OddsTicker({ value, size = "md", className = "" }: Props) {
-  const [displayValue, setDisplayValue] = useState(value);
   const [flashColor, setFlashColor] = useState<"green" | "red" | null>(null);
   const prevValueRef = useRef(value);
   const lastAnimationTimeRef = useRef(0);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Framer motion spring for the numerical counter
+  const springValue = useSpring(value, {
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.001
+  });
+  const displayValue = useTransform(springValue, (latest) => latest.toFixed(0));
 
   useEffect(() => {
     const now = Date.now();
@@ -40,7 +47,10 @@ export default function OddsTicker({ value, size = "md", className = "" }: Props
       // Determine direction
       const direction = newVal > prevVal ? "green" : "red";
       setFlashColor(direction);
-      setDisplayValue(newVal);
+      
+      // Animate the spring to the new target value
+      springValue.set(newVal);
+      
       prevValueRef.current = newVal;
       lastAnimationTimeRef.current = Date.now();
 
@@ -64,26 +74,36 @@ export default function OddsTicker({ value, size = "md", className = "" }: Props
     return () => {
       if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
     };
-  }, [value]);
+  }, [value, springValue]);
 
-  const flashClasses = flashColor === "green" 
-    ? "text-green-400 transition-colors duration-200" 
-    : flashColor === "red" 
-    ? "text-red-400 transition-colors duration-200" 
-    : "text-white transition-colors duration-600";
+  // Determine classes for color flash
+  let colorClass = "text-white";
+  if (flashColor === "green") colorClass = "text-green-400";
+  if (flashColor === "red") colorClass = "text-red-400";
 
   return (
-    <div className={`inline-flex items-center tabular-nums ${SIZE_CLASSES[size]} ${className}`}>
-      <motion.span
-        key={displayValue}
-        initial={{ y: flashColor === "green" ? 10 : -10, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: flashColor === "green" ? -10 : 10, opacity: 0 }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
-        className={flashClasses}
+    <div className={`inline-flex items-center tabular-nums gap-1 ${SIZE_CLASSES[size]} ${className}`}>
+      <div 
+        className={`transition-colors duration-600 ease-out ${colorClass}`}
+        style={{ 
+          textShadow: flashColor ? `0 0 8px ${flashColor === 'green' ? '#4ade80' : '#f87171'}` : 'none',
+          transitionProperty: 'color, text-shadow'
+        }}
       >
-        {displayValue.toFixed(0)}%
-      </motion.span>
+        <motion.span>{displayValue}</motion.span>%
+      </div>
+      
+      {/* Visual cue indicator arrows (optional but enhances UIUX) */}
+      {flashColor && (
+        <motion.span
+          initial={{ opacity: 0, scale: 0.5, y: flashColor === "green" ? 5 : -5 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          className={flashColor === "green" ? "text-green-400" : "text-red-400"}
+        >
+          {flashColor === "green" ? "↑" : "↓"}
+        </motion.span>
+      )}
     </div>
   );
 }

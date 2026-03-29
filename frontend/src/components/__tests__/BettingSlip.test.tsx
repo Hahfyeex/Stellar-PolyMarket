@@ -131,3 +131,56 @@ describe("BettingSlip", () => {
     });
   });
 });
+
+// ── Offline behaviour ────────────────────────────────────────────────────────
+
+const OFFLINE_BETS = [
+  { marketId: 1, title: "Will BTC hit 100k?", outcome: "Yes", amount: 50 },
+];
+
+function setOnline(value: boolean) {
+  Object.defineProperty(navigator, "onLine", {
+    configurable: true,
+    get: () => value,
+  });
+}
+
+describe("BettingSlip — offline", () => {
+  afterEach(() => setOnline(true));
+
+  it("disables submit button when offline", async () => {
+    setOnline(false);
+    renderSlip("GTEST", OFFLINE_BETS);
+    await waitFor(() => screen.getByTestId("submit-batch"));
+    expect(screen.getByTestId("submit-batch")).toBeDisabled();
+  });
+
+  it("shows offline tooltip on submit button when offline", async () => {
+    setOnline(false);
+    renderSlip("GTEST", OFFLINE_BETS);
+    await waitFor(() => screen.getByTestId("offline-bet-tooltip"));
+    expect(screen.getByTestId("offline-bet-tooltip")).toBeInTheDocument();
+    expect(screen.getByTestId("offline-bet-tooltip")).toHaveTextContent(/offline/i);
+  });
+
+  it("enables submit button when back online", async () => {
+    setOnline(false);
+    renderSlip("GTEST", OFFLINE_BETS);
+    await waitFor(() => screen.getByTestId("submit-batch"));
+    expect(screen.getByTestId("submit-batch")).toBeDisabled();
+
+    // Simulate coming back online
+    setOnline(true);
+    fireEvent(window, new Event("online"));
+    await waitFor(() => {
+      expect(screen.getByTestId("submit-batch")).not.toBeDisabled();
+    });
+  });
+
+  it("does not show offline tooltip when online", async () => {
+    setOnline(true);
+    renderSlip("GTEST", OFFLINE_BETS);
+    await waitFor(() => screen.getByTestId("submit-batch"));
+    expect(screen.queryByTestId("offline-bet-tooltip")).not.toBeInTheDocument();
+  });
+});

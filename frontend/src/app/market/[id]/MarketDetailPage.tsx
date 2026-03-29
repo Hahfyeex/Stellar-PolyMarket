@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useWallet } from "../../../hooks/useWallet";
+import { useWalletContext } from "../../../context/WalletContext";
 import { formatWallet, formatRelativeTime } from "../../../hooks/useRecentActivity";
 import MobileShell from "../../../components/mobile/MobileShell";
 import OddsTicker from "../../../components/OddsTicker";
@@ -13,6 +13,8 @@ import { usePlaceBet } from "../../../hooks/usePlaceBet";
 import EmptyState from "../../../components/EmptyState";
 import { NoActivityIllustration, NoPositionsIllustration } from "../../../assets/emptyStates";
 import StakePresets from "../../../components/StakePresets";
+import { useToast } from "../../../components/ToastProvider";
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -381,25 +383,26 @@ interface BettingPanelProps {
 }
 
 function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
-  const { publicKey, connecting, connect } = useWallet();
+  const { publicKey, isLoading, walletError, connect } = useWalletContext();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [selectedOutcome, setSelectedOutcome] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+
 
   const betMutation = usePlaceBet(market.id);
 
   // Sync mutation state to local message
   useEffect(() => {
     if (betMutation.isSuccess) {
-      setMessage({ type: "success", text: "Bet placed successfully!" });
+      toastSuccess("Bet placed successfully!");
       setSelectedOutcome(null);
       setAmount("");
       onBetPlaced();
       setIsConfirmModalOpen(false);
     }
     if (betMutation.isError) {
-      setMessage({ type: "error", text: (betMutation.error as Error).message });
+      toastError((betMutation.error as Error).message);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [betMutation.isSuccess, betMutation.isError]);
@@ -407,11 +410,13 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
   function handleBet() {
     if (selectedOutcome === null || !amount || parseFloat(amount) <= 0) return;
     if (!publicKey) {
-      setMessage({ type: "error", text: "Please connect your wallet" });
+      toastError("Please connect your wallet to bet");
       return;
     }
+
     setIsConfirmModalOpen(true);
   }
+
 
   function handleConfirmBet() {
     if (selectedOutcome === null || !amount || !publicKey) return;
@@ -425,6 +430,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
 
   const isExpired = new Date(market.end_date) <= new Date();
   const canBet = !market.resolved && !isExpired && publicKey;
+  const isPending = betMutation.isPending;
 
   return (
     <div className="bg-gray-900 rounded-xl p-5 border border-gray-800 space-y-4">
@@ -434,14 +440,18 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={() => setSelectedOutcome(0)}
-          disabled={!canBet}
-          className={`relative p-4 rounded-xl transition-all ${
+          disabled={!canBet || isPending}
+          className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 0
-              ? "bg-green-600 ring-2 ring-green-400"
+              ? "bg-green-600 ring-2 ring-green-400 shadow-lg shadow-green-900/30"
               : "bg-gray-800 hover:bg-gray-700"
-          } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+          } ${!canBet || isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
+
           <div className="text-gray-400 text-xs mb-1">YES</div>
+          <div className="text-white text-2xl font-bold">
+            {(odds.yes * 100).toFixed(0)}%
+          </div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.yes * 100} size="lg" />
           </div>
@@ -453,14 +463,18 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
 
         <button
           onClick={() => setSelectedOutcome(1)}
-          disabled={!canBet}
-          className={`relative p-4 rounded-xl transition-all ${
+          disabled={!canBet || isPending}
+          className={`relative p-4 rounded-xl transition-all btn-press-scale ${
             selectedOutcome === 1
-              ? "bg-red-600 ring-2 ring-red-400"
+              ? "bg-red-600 ring-2 ring-red-400 shadow-lg shadow-red-900/30"
               : "bg-gray-800 hover:bg-gray-700"
-          } ${!canBet ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+          } ${!canBet || isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
+
           <div className="text-gray-400 text-xs mb-1">NO</div>
+          <div className="text-white text-2xl font-bold">
+            {(odds.no * 100).toFixed(0)}%
+          </div>
           <div className="text-white text-2xl font-bold flex justify-center">
             <OddsTicker value={odds.no * 100} size="lg" />
           </div>
@@ -480,7 +494,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            disabled={!canBet}
+            disabled={!canBet || isPending}
             className="flex-1 bg-gray-800 text-white rounded-lg px-4 py-3 text-lg outline-none border border-gray-700 focus:border-blue-500 disabled:opacity-50"
             min="0"
             step="0.01"
@@ -493,6 +507,7 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
           walletBalance={null}
           disabled={!canBet}
         />
+
 
         {/* Potential Payout */}
         {selectedOutcome !== null && amount && parseFloat(amount) > 0 && (
@@ -509,12 +524,14 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       {publicKey ? (
         <button
           onClick={handleBet}
-          disabled={!canBet || selectedOutcome === null || !amount || betMutation.isPending}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-colors"
+          disabled={!canBet || selectedOutcome === null || !amount || isPending}
+          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
-          {betMutation.isPending ? (
+
+          {isPending ? (
             <span className="flex items-center justify-center gap-2">
-              <span className="animate-spin">⟳</span> Placing Bet...
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Confirming...
             </span>
           ) : (
             "Place Bet"
@@ -523,25 +540,18 @@ function BettingPanel({ market, odds, onBetPlaced }: BettingPanelProps) {
       ) : (
         <button
           onClick={connect}
-          disabled={connecting}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-lg transition-colors"
+          disabled={isLoading}
+          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-lg transition-all btn-press-scale shadow-xl shadow-blue-900/20"
         >
-          {connecting ? "Connecting..." : "Connect Wallet to Bet"}
+
+          {isLoading ? "Connecting..." : "Connect Wallet to Bet"}
         </button>
       )}
 
-      {/* Message */}
-      {message && (
-        <div
-          className={`text-sm text-center p-3 rounded-lg ${
-            message.type === "success"
-              ? "bg-green-900/50 text-green-400"
-              : "bg-red-900/50 text-red-400"
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
+      <div className="md:hidden pt-4">
+        {/* Mobile Spacer */}
+      </div>
+
 
       {selectedOutcome !== null && (
         <BetConfirmationModal
@@ -572,7 +582,7 @@ interface MarketDetailPageProps {
 
 export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TabType>("about");
-  const { publicKey, disconnect } = useWallet();
+  const { publicKey, disconnect } = useWalletContext();
 
   // Fetch market detail via shared hook
   const { data: marketData, isLoading: marketLoading, error: marketError } = useMarket(marketId);
@@ -587,6 +597,9 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
 
   const market = marketData?.market ?? DEMO_MARKET;
   const bets = marketData?.bets ?? DEMO_BETS;
+  const outcomeDataAvailable = Array.isArray(market.outcomes) && market.outcomes.length > 0;
+  const outcomes = outcomeDataAvailable ? market.outcomes : ["Yes", "No"];
+  const marketWithOutcomes = { ...market, outcomes };
   const positions = calculatePositions(bets);
   const odds = {
     yes: calculateOdds(bets, 0),
@@ -688,6 +701,11 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
                 </div>
                 <div className="text-right">
                   <p className="text-blue-300 text-sm">Live Odds</p>
+                  <p className="text-white font-semibold">
+                    <span className="text-green-400">{(odds.yes * 100).toFixed(0)}%</span>
+                    {" / "}
+                    <span className="text-red-400">{(odds.no * 100).toFixed(0)}%</span>
+                  </p>
                   <p className="text-white font-semibold flex items-center justify-end gap-1">
                     <OddsTicker value={odds.yes * 100} size="sm" className="text-green-400" />
                     <span className="text-gray-500">/</span>
@@ -711,19 +729,25 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
               </div>
             </div>
 
+            {!outcomeDataAvailable && (
+              <div className="bg-gray-900 rounded-xl p-4 border border-gray-800 mb-6">
+                <p className="text-gray-400">Outcome data unavailable</p>
+              </div>
+            )}
+
             {/* Tab Content */}
             {activeTab === "about" && (
               <AboutTab market={market} poolSize={poolData?.pool_size ?? market.total_pool} />
             )}
             {activeTab === "positions" && (
-              <PositionsTab positions={positions} outcomes={market.outcomes} />
+              <PositionsTab positions={positions} outcomes={outcomes} />
             )}
-            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={market.outcomes} />}
+            {activeTab === "activity" && <ActivityTab bets={bets} outcomes={outcomes} />}
 
             {/* Mobile Sticky Betting Panel */}
             <div className="fixed bottom-0 left-0 right-0 bg-gray-950 border-t border-gray-800 p-4 md:static md:mt-6 md:bg-transparent md:border-0 md:p-0 z-20">
               <div className="max-w-4xl mx-auto">
-                <BettingPanel market={market} odds={odds} onBetPlaced={handleBetPlaced} />
+                <BettingPanel market={marketWithOutcomes} odds={odds} onBetPlaced={handleBetPlaced} />
               </div>
             </div>
           </>
@@ -739,7 +763,11 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
 
       {/* Mobile layout */}
       <div className="block md:hidden">
-        <MobileShell activeMarket={market} walletAddress={publicKey} onBetPlaced={handleBetPlaced}>
+        <MobileShell
+          activeMarket={marketWithOutcomes}
+          walletAddress={publicKey}
+          onBetPlaced={handleBetPlaced}
+        >
           {pageContent}
         </MobileShell>
       </div>

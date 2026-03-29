@@ -1,15 +1,15 @@
 "use client";
-import { useRef, useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Market } from "../../types/market";
-import MarketResolutionTracker from "../MarketResolutionTracker";
+import ResolutionCenter from "../ResolutionCenter";
 import { trackEvent } from "../../lib/firebase";
 import WhatIfSimulator from "../WhatIfSimulator";
 import { useFormPersistence } from "../../hooks/useFormPersistence";
 import StakePresets from "../StakePresets";
-
-const HORIZON = "https://horizon-testnet.stellar.org";
-
-
+import SlippageSettings from "../SlippageSettings";
+import SlippageWarningModal from "../SlippageWarningModal";
+import { useSlippageCheck } from "../../hooks/useSlippageCheck";
+import { toStroops, calcPayoutStroops, stroopsToXlm } from "../../utils/slippageCalc";
 
 interface Props {
   market: Market | null;
@@ -42,13 +42,82 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
   const [message, setMessage] = useState("");
   const isExpired = market ? new Date(market.end_date) <= new Date() : false;
 
+  const { checkSlippage, slippageState, dismiss, checking } = useSlippageCheck();
+
+  /**
+   * Compute the expected payout in XLM using BigInt stroop arithmetic.
+   * Called at the moment the user clicks "Bet" to capture the current odds.
+   */
+  function computeExpectedPayout(): number {
+    if (!market || selectedOutcome === null) return 0;
+    const stakeXlm = parseFloat(amount) || 0;
+    const totalPool = parseFloat(market.total_pool) || 0;
+    // Approximate per-outcome pool as equal split (same as TradeDrawer's WhatIfSimulator)
+    const outcomePool = totalPool / market.outcomes.length;
+    const payout = calcPayoutStroops(
+      toStroops(stakeXlm),
+      toStroops(outcomePool),
+      toStroops(totalPool)
+    );
+    return stroopsToXlm(payout);
+  }
+
+  /** Submit the bet to the API — called after slippage check passes */
+  async function submitBet() {
+    if (selectedOutcome === null || !amount || !walletAddress || !market) return;
+    const xlm = parseFloat(amount);
+    if (!isFinite(xlm) || xlm <= 0) {
+      setMessage("Error: Enter a valid positive amount");
+      return;
+    }
+    const stroops = Math.round(xlm * 1e7);
+    if (!Number.isInteger(stroops) || stroops <= 0) {
+      setMessage("Error: Amount too small");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketId: market.id,
+          outcomeIndex: selectedOutcome,
+          amount: stroops.toString(),
+          walletAddress,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setMessage("Bet placed successfully!");
+      trackEvent("bet_placed", {
+        market_id: market.id,
+        outcome_index: selectedOutcome,
+        amount: stroops,
+        outcome_name: market.outcomes[selectedOutcome],
+      });
+      clearForm();
+      onBetPlaced?.();
+    } catch (err: any) {
+      setMessage(`Error: ${err.message}`);
+      trackEvent("bet_error", {
+        market_id: market?.id,
+        error_message: err.message.substring(0, 100),
+        amount: stroops,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // Reset drag when drawer opens/closes
   useEffect(() => {
     if (!open) setDragY(0);
-    
+
     // Track begin_checkout event when bet modal opens
     if (open && market) {
-      trackEvent('begin_checkout', {
+      trackEvent("begin_checkout", {
         market_id: market.id,
         market_question: market.question.substring(0, 50), // Truncate for privacy
         total_pool: parseFloat(market.total_pool),
@@ -82,6 +151,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
     }
   }
 
+  /** Entry point — checks slippage before submitting */
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress || !market) return;
     setLoading(true);
@@ -100,9 +170,9 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setMessage("Bet placed successfully!");
-      
+
       // Track successful bet placement
-      trackEvent('bet_placed', {
+      trackEvent("bet_placed", {
         market_id: market.id,
         outcome_index: selectedOutcome,
         amount: parseFloat(amount),
@@ -114,9 +184,9 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
       onBetPlaced?.();
     } catch (err: any) {
       setMessage(`Error: ${err.message}`);
-      
+
       // Track bet placement error
-      trackEvent('bet_error', {
+      trackEvent("bet_error", {
         market_id: market?.id,
         error_message: err.message.substring(0, 100), // Truncate for privacy
         amount: parseFloat(amount) || 0,
@@ -130,6 +200,19 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
   return (
     <>
+      {/* Slippage warning modal — rendered above the drawer */}
+      {slippageState?.exceeded && (
+        <SlippageWarningModal
+          expectedPayout={slippageState.expectedPayout}
+          currentPayout={slippageState.currentPayout}
+          tolerancePct={slippageState.tolerancePct}
+          onProceed={async () => {
+            dismiss();
+            await submitBet();
+          }}
+          onCancel={dismiss}
+        />
+      )}
       {/* Backdrop */}
       <div
         data-testid="trade-drawer-backdrop"
@@ -176,7 +259,7 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               </p>
 
               {/* Outcome buttons */}
-              <div className="flex gap-3 mb-5">
+              <div className="flex gap-3 mb-5" role="group" aria-label="Select outcome">
                 {market.outcomes.map((outcome, i) => (
                   <button
                     key={i}
@@ -196,22 +279,44 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
               </div>
 
               {/* Amount input */}
-              {walletAddress ? (
+              {walletAddress && !market.resolved && !isExpired ? (
+                <div className="flex gap-3">
+                  <input
+                    type="number"
+                    placeholder="Amount (XLM)"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
+                  />
+                  <button
+                    onClick={placeBet}
+                    disabled={loading || selectedOutcome === null || !amount}
+                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
+                  >
+                    {loading ? "..." : "Bet"}
+                  </button>
+              {walletAddress && !market.resolved && !isExpired ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-3">
+                    <label htmlFor="trade-drawer-amount" className="sr-only">
+                      Stake amount in XLM
+                    </label>
                     <input
+                      id="trade-drawer-amount"
                       type="number"
                       placeholder="Amount (XLM)"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       className="flex-1 bg-gray-800 text-white rounded-xl px-4 py-3 text-sm outline-none border border-gray-700 focus:border-blue-500"
+                      aria-label="Stake amount in XLM"
                     />
                     <button
                       onClick={placeBet}
-                      disabled={loading || selectedOutcome === null || !amount}
+                      disabled={loading || checking || selectedOutcome === null || !amount}
+                      aria-label="Place bet"
                       className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-6 py-3 rounded-xl text-sm font-bold"
                     >
-                      {loading ? "..." : "Bet"}
+                      {loading || checking ? "..." : "Bet"}
                     </button>
                   </div>
                   <StakePresets
@@ -223,23 +328,13 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
 
                   {/* Slippage + clear row */}
                   <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 text-xs text-gray-400">
-                      Slippage
-                      <select
-                        data-testid="slippage-select"
-                        value={slippageTolerance}
-                        onChange={(e) => setSlippageTolerance(parseFloat(e.target.value))}
-                        className="bg-gray-800 text-white rounded px-2 py-1 text-xs border border-gray-700 outline-none"
-                      >
-                        <option value={0.1}>0.1%</option>
-                        <option value={0.5}>0.5%</option>
-                        <option value={1}>1%</option>
-                        <option value={2}>2%</option>
-                      </select>
-                    </label>
+                    <SlippageSettings value={slippageTolerance} onChange={setSlippageTolerance} />
                     <button
                       data-testid="clear-form"
-                      onClick={() => { clearForm(); setMessage(""); }}
+                      onClick={() => {
+                        clearForm();
+                        setMessage("");
+                      }}
                       className="text-xs text-gray-500 hover:text-red-400 transition-colors"
                     >
                       Clear form
@@ -248,19 +343,22 @@ export default function TradeDrawer({ market, open, onClose, walletAddress, onBe
                 </div>
               ) : (
                 <p className="text-gray-400 text-sm text-center py-2">
-                  Connect your wallet to place a bet
+                  {walletAddress ? "Betting is closed for this market" : "Connect your wallet to place a bet"}
                 </p>
               )}
 
               {message && (
-                <p className={`text-sm mt-3 ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+                <p
+                  className={`text-sm mt-3 ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}
+                >
                   {message}
                 </p>
               )}
 
               <div className="mt-5">
-                <MarketResolutionTracker market={market} />
+                <ResolutionCenter market={market} />
               </div>
+
               {/* What-If Simulator — shown when an outcome is selected */}
               {selectedOutcome !== null && (
                 <WhatIfSimulator

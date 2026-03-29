@@ -2,34 +2,44 @@
 import EmptyState from "../components/EmptyState";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useWalletContext } from "../context/WalletContext";
-import MarketCard from "../components/MarketCard";
-import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
-import MarketFilters from "../components/MarketFilters";
-import NotificationManager from "../components/NotificationManager";
+import { useEffect, useState } from "react";
+import ContractErrorBoundary from "../components/ContractErrorBoundary";
+import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
 import LiveActivityFeed from "../components/LiveActivityFeed";
+import MarketCard from "../components/MarketCard";
+import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
+import MarketFilters from "../components/MarketFilters";
 import SocialTicker from "../components/SocialTicker";
 import NotificationInbox from "../components/NotificationInbox";
 import MobileShell from "../components/mobile/MobileShell";
 import PullToRefresh from "../components/mobile/PullToRefresh";
-import type { Market } from "../types/market";
-import InsufficientGasModal from "../components/ErrorStates/InsufficientGasModal";
-import MarketDiscoveryGrid from "../components/MarketDiscoveryGrid";
-import ContractErrorBoundary from "../components/ContractErrorBoundary";
-import { store } from "../store";
-import { trackEvent } from "../lib/firebase";
+import NotificationManager from "../components/NotificationManager";
+import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
+import { useWalletContext } from "../context/WalletContext";
+import { SearchFilters, SortKey, useMarketSearch } from "../hooks/useMarketSearch";
 import { useTheme } from "../hooks/useTheme";
 import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
-import { useMarkets } from "../hooks/useMarkets";
 import { useQueryClient } from "@tanstack/react-query";
 import { NoMarketsIllustration } from "@/assets/emptyStates";
+import { trackEvent } from "../lib/firebase";
+import { store } from "../store";
+import type { Market } from "../types/market";
+import OnboardingWizard from "../components/onboarding/OnboardingWizard";
+import ThemeToggle from "../components/ThemeToggle";
+import LanguageSelector from "../components/LanguageSelector";
+import { useMarkets } from "../hooks/useMarkets";
+import { useQueryClient } from "@tanstack/react-query";
+import { useMarketTabs } from "../hooks/useMarketTabs";
+import MarketTabs from "../components/MarketTabs";
+import MarketListSkeleton from "../components/skeletons/MarketListSkeleton";
+import { useTranslation } from "react-i18next";
 
 export default function Home() {
-  const { publicKey, connecting, error, connect, disconnect } = useWalletContext();
-  const { theme, toggleTheme } = useTheme();
+  const { publicKey, isLoading, walletError, connect, disconnect } = useWalletContext();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
+  const { t } = useTranslation("common");
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
 
@@ -42,7 +52,12 @@ export default function Home() {
     sort: (searchParams.get("sort") as SortKey) ?? "newest",
   }));
 
-  const filteredMarkets = useMarketSearch(markets as any, filters);
+  const { activeTab, setActiveTab, activeMarkets, resolvedMarkets, activeBadge, resolvedBadge } =
+    useMarketTabs(markets);
+
+  // Apply search/filter on top of the tab-filtered list
+  const tabMarkets = activeTab === "active" ? activeMarkets : resolvedMarkets;
+  const filteredMarkets = useMarketSearch(tabMarkets, filters);
 
   const handleHelpClick = () => {
     trackEvent("help_doc_read", {
@@ -55,7 +70,45 @@ export default function Home() {
     window.open(helpUrl, "_blank");
   };
 
-  const refetchMarkets = () => queryClient.invalidateQueries({ queryKey: ["markets"] });
+  async function fetchMarkets() {
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets`);
+      const data = await res.json();
+      const newMarkets = data.markets || [];
+
+      // Detect resolution transitions
+      newMarkets.forEach((newMarket: Market) => {
+        const oldMarket = markets.find((m) => m.id === newMarket.id);
+        if (oldMarket && !oldMarket.resolved && newMarket.resolved) {
+          // Market just resolved - show toast notification
+          const event = new CustomEvent("showToast", {
+            detail: {
+              message: `Market "${newMarket.question}" has been resolved. Claim your payout now.`,
+              type: "success",
+            },
+          });
+          window.dispatchEvent(event);
+        }
+      });
+
+      setMarkets(newMarkets);
+    } catch {
+      setMarkets(DEMO_MARKETS);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchMarkets();
+
+    // Poll for market updates every 30 seconds
+    const pollInterval = setInterval(() => {
+      fetchMarkets();
+    }, 30_000);
+
+    return () => clearInterval(pollInterval);
+  }, []);
 
   // Auto-select first active market for the FAB
   useEffect(() => {
@@ -66,9 +119,11 @@ export default function Home() {
   const pageContent = (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Navbar — hidden on mobile (replaced by BottomNavBar), visible on desktop */}
-      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <nav className="hidden md:flex items-center justify-between px-6 py-4 border-b border-[var(--border-default)]">
         <div className="flex items-center gap-4">
-          <span className="text-xl font-bold text-blue-400">Stella Polymarket</span>
+          <span className="text-xl font-bold text-blue-400">{t("app.title")}</span>
+          <ThemeToggle />
+          <LanguageSelector />
           <button
             onClick={toggleTheme}
             className="text-gray-400 hover:text-white transition-colors text-xl"
@@ -78,8 +133,8 @@ export default function Home() {
           </button>
           <button
             onClick={handleHelpClick}
-            className="text-gray-400 hover:text-white transition-colors"
-            title="Help & Documentation"
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            title={t("nav.help")}
           >
             <svg
               viewBox="0 0 24 24"
@@ -104,30 +159,26 @@ export default function Home() {
               onClick={disconnect}
               className="text-sm border border-gray-600 px-3 py-1.5 rounded-lg hover:border-gray-400"
             >
-              Disconnect
+              {t("wallet.disconnect")}
             </button>
           </div>
         ) : (
           <button
             onClick={connect}
-            disabled={connecting}
+            disabled={isLoading}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold"
           >
-            {connecting ? "Connecting..." : "Connect Wallet"}
+            {connecting ? t("wallet.connecting") : t("wallet.connect")}
           </button>
         )}
       </nav>
 
       {/* Mobile top bar */}
-      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-gray-800">
-        <span className="text-lg font-bold text-blue-400">Stella Polymarket</span>
+      <div className="flex md:hidden items-center justify-between px-4 py-3 border-b border-[var(--border-default)]">
+        <span className="text-lg font-bold text-blue-400">{t("app.title")}</span>
         <div className="flex items-center gap-3">
-          <button
-            onClick={toggleTheme}
-            className="text-gray-400 hover:text-white transition-colors text-lg"
-          >
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
+          <LanguageSelector />
+          <ThemeToggle />
           {publicKey ? (
             <>
               <NotificationInbox
@@ -144,18 +195,18 @@ export default function Home() {
           ) : (
             <button
               onClick={connect}
-              disabled={connecting}
+              disabled={isLoading}
               className="bg-blue-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-xs font-semibold"
             >
-              {connecting ? "..." : "Connect"}
+              {connecting ? t("wallet.connecting_short") : t("wallet.connect_short")}
             </button>
           )}
         </div>
       </div>
 
-      {error && (
+      {walletError && (
         <div className="max-w-4xl mx-auto px-4 mt-4">
-          <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{error}</p>
+          <p className="text-red-400 text-sm bg-red-900/30 px-4 py-2 rounded-lg">{walletError}</p>
         </div>
       )}
 
@@ -166,9 +217,9 @@ export default function Home() {
 
       {/* Hero */}
       <section className="flex flex-col items-center justify-center py-10 md:py-16 px-4 text-center">
-        <h1 className="text-3xl md:text-5xl font-bold mb-3">Predict. Stake. Earn.</h1>
+        <h1 className="text-3xl md:text-5xl font-bold mb-3">{t("app.tagline")}</h1>
         <p className="text-base md:text-xl text-gray-400 max-w-xl">
-          Decentralized prediction markets on Stellar. Fast, cheap, and transparent.
+          {t("app.description")}
         </p>
         <div className="max-w-md mx-auto w-full mt-4">
           <NotificationManager walletAddress={publicKey} />
@@ -178,12 +229,12 @@ export default function Home() {
       {/* Stats */}
       <section className="grid grid-cols-3 gap-3 max-w-2xl mx-auto px-4 pb-8 text-center">
         {[
-          { label: "Active Markets", value: markets.filter((m) => !m.resolved).length },
+          { label: t("stats.active_markets"), value: markets.filter((m) => !m.resolved).length },
           {
-            label: "Total Staked",
+            label: t("stats.total_staked"),
             value: `${markets.reduce((s, m) => s + parseFloat(m.total_pool || "0"), 0).toFixed(0)} XLM`,
           },
-          { label: "Markets", value: markets.length },
+          { label: t("stats.markets"), value: markets.length },
         ].map((stat) => (
           <div key={stat.label} className="bg-gray-900 rounded-xl p-4">
             <p className="text-2xl md:text-3xl font-bold text-blue-400">{stat.value}</p>
@@ -251,7 +302,7 @@ export default function Home() {
 
         {/* Live Activity Feed — hidden on mobile to save space */}
         <div className="hidden lg:block w-80 shrink-0">
-          <h2 className="text-2xl font-semibold mb-6">Recent Activity</h2>
+          <h2 className="text-2xl font-semibold mb-6">{t("activity.recent")}</h2>
           <LiveActivityFeed apiUrl={process.env.NEXT_PUBLIC_API_URL} />
         </div>
       </section>

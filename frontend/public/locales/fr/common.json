@@ -1,0 +1,95 @@
+{
+  "app": {
+    "title": "Stella Polymarket",
+    "tagline": "Prédire. Miser. Gagner.",
+    "description": "Marchés de prédiction décentralisés sur Stellar. Rapide, pas cher et transparent."
+  },
+  "nav": {
+    "home": "Accueil",
+    "search": "Rechercher",
+    "portfolio": "Portefeuille",
+    "profile": "Profil",
+    "help": "Aide & Documentation"
+  },
+  "wallet": {
+    "connect": "Connecter le Portefeuille",
+    "connect_short": "Connecter",
+    "connecting": "Connexion...",
+    "connecting_short": "...",
+    "disconnect": "Déconnecter"
+  },
+  "stats": {
+    "active_markets": "Marchés Actifs",
+    "total_staked": "Total Misé",
+    "markets": "Marchés"
+  },
+  "activity": {
+    "recent": "Activité Récente"
+  },
+  "filters": {
+    "search_placeholder": "Rechercher des marchés…",
+    "search_label": "Rechercher des marchés",
+    "all": "Tous",
+    "all_statuses": "Tous les Statuts",
+    "sort_prefix": "Trier : {{label}}",
+    "filter_by_status": "Filtrer par statut",
+    "sort_markets": "Trier les marchés",
+    "categories": {
+      "crypto": "Crypto",
+      "sports": "Sports",
+      "politics": "Politique",
+      "economics": "Économie",
+      "tech": "Tech",
+      "other": "Autre"
+    },
+    "statuses": {
+      "open": "Ouvert",
+      "closed": "Fermé",
+      "resolved": "Résolu"
+    },
+    "sorts": {
+      "volume": "Volume",
+      "end_date": "Date de Fin",
+      "newest": "Plus Récent"
+    }
+  },
+  "markets": {
+    "tabs": {
+      "active": "Marchés Actifs",
+      "resolved": "Marchés Résolus",
+      "aria_label": "Onglets de statut des marchés"
+    },
+    "empty": {
+      "no_results": "Aucun marché trouvé pour « {{query}} »",
+      "no_active": "Aucun marché actif trouvé.",
+      "no_resolved": "Aucun marché résolu trouvé."
+    }
+  },
+  "betting_slip": {
+    "title": "Fiche de Paris",
+    "bets_queued": "{{count}} / {{max}} paris en file",
+    "empty": "Aucun pari en file. Ajoutez des paris depuis n'importe quel marché pour les regrouper.",
+    "close": "Fermer la fiche de paris",
+    "total_stake": "Mise totale :",
+    "submit_one": "Placer {{count}} Pari",
+    "submit_other": "Placer {{count}} Paris",
+    "submitting": "Envoi en cours...",
+    "outcome": "Résultat :",
+    "amount": "Montant :",
+    "offline_tooltip": "Vous êtes hors ligne — envoi de paris indisponible",
+    "connect_wallet": "Connectez votre portefeuille pour soumettre des paris",
+    "remove_bet": "Supprimer le pari sur {{title}}"
+  },
+  "theme": {
+    "switch_to_light": "Passer au thème clair",
+    "switch_to_dark": "Passer au thème sombre"
+  },
+  "language": {
+    "selector_label": "Choisir la langue",
+    "en": "English",
+    "fr": "Français",
+    "yo": "Yorùbá",
+    "ha": "Hausa",
+    "sw": "Kiswahili"
+  }
+}

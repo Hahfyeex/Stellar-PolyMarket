@@ -1,6 +1,3 @@
-#!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
-
 echo "🔍 Running pre-commit checks..."
 
 # 1. Run lint-staged (ESLint + Prettier on staged JS/TS/CSS files)
@@ -9,11 +6,15 @@ npx lint-staged
 # 2. Run Clippy on Rust contracts if any .rs files are staged
 STAGED_RS=$(git diff --cached --name-only | grep '\.rs$' || true)
 if [ -n "$STAGED_RS" ]; then
-  echo "🦀 Running cargo clippy..."
-  cargo clippy --manifest-path contracts/prediction_market/Cargo.toml -- -D warnings
-  if [ $? -ne 0 ]; then
-    echo "❌ Clippy failed. Fix the warnings above before committing."
-    exit 1
+  if command -v cargo > /dev/null 2>&1; then
+    echo "🦀 Running cargo clippy..."
+    cargo clippy --manifest-path contracts/prediction_market/Cargo.toml -- -D warnings
+    if [ $? -ne 0 ]; then
+      echo "❌ Clippy failed. Fix the warnings above before committing."
+      exit 1
+    fi
+  else
+    echo "⚠️ cargo not found; skipping clippy check"
   fi
 fi
 
