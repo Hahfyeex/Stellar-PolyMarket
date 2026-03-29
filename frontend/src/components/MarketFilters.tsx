@@ -1,15 +1,13 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslation } from "react-i18next";
 import { SearchFilters, SortKey } from "../hooks/useMarketSearch";
 
-const CATEGORIES = ["Crypto", "Sports", "Politics", "Economics", "Tech", "Other"];
-const STATUSES = ["open", "closed", "resolved"];
-const SORTS: { value: SortKey; label: string }[] = [
-  { value: "volume", label: "Volume" },
-  { value: "end_date", label: "End Date" },
-  { value: "newest", label: "Newest" },
-];
+/** Internal keys used for i18n lookup; display labels are resolved at render time */
+const CATEGORY_KEYS = ["crypto", "sports", "politics", "economics", "tech", "other"] as const;
+const STATUS_KEYS = ["open", "closed", "resolved"] as const;
+const SORT_KEYS: SortKey[] = ["volume", "end_date", "newest"];
 
 interface Props {
   filters: SearchFilters;
@@ -21,6 +19,7 @@ export default function MarketFilters({ filters, onChange }: Props) {
   const searchParams = useSearchParams();
   const [inputValue, setInputValue] = useState(filters.query);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { t } = useTranslation("common");
 
   // Sync URL query params whenever filters change
   useEffect(() => {
@@ -66,11 +65,11 @@ export default function MarketFilters({ filters, onChange }: Props) {
         <input
           type="search"
           data-testid="market-search-input"
-          placeholder="Search markets…"
+          placeholder={t("filters.search_placeholder")}
           value={inputValue}
           onChange={(e) => handleQueryChange(e.target.value)}
           className="w-full bg-gray-800 text-white rounded-lg pl-9 pr-4 py-2.5 text-sm outline-none border border-gray-700 focus:border-blue-500"
-          aria-label="Search markets"
+          aria-label={t("filters.search_label")}
         />
       </div>
 
@@ -84,33 +83,36 @@ export default function MarketFilters({ filters, onChange }: Props) {
               : "bg-gray-800 text-gray-300 hover:bg-gray-700"
           }`}
         >
-          All
+          {t("filters.all")}
         </button>
-        {CATEGORIES.map((cat) => (
-          <button
-            key={cat}
-            onClick={() => set({ category: filters.category === cat ? "" : cat })}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              filters.category === cat
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-300 hover:bg-gray-700"
-            }`}
-          >
-            {cat}
-          </button>
-        ))}
+        {CATEGORY_KEYS.map((key) => {
+          const label = t(`filters.categories.${key}`);
+          return (
+            <button
+              key={key}
+              onClick={() => set({ category: filters.category === label ? "" : label })}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                filters.category === label
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
 
         {/* Status dropdown */}
         <select
           value={filters.status}
           onChange={(e) => set({ status: e.target.value })}
           className="ml-auto bg-gray-800 text-gray-300 text-xs rounded-lg px-3 py-1.5 border border-gray-700 outline-none"
-          aria-label="Filter by status"
+          aria-label={t("filters.filter_by_status")}
         >
-          <option value="">All Statuses</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+          <option value="">{t("filters.all_statuses")}</option>
+          {STATUS_KEYS.map((key) => (
+            <option key={key} value={key}>
+              {t(`filters.statuses.${key}`)}
             </option>
           ))}
         </select>
@@ -120,11 +122,11 @@ export default function MarketFilters({ filters, onChange }: Props) {
           value={filters.sort}
           onChange={(e) => set({ sort: e.target.value as SortKey })}
           className="bg-gray-800 text-gray-300 text-xs rounded-lg px-3 py-1.5 border border-gray-700 outline-none"
-          aria-label="Sort markets"
+          aria-label={t("filters.sort_markets")}
         >
-          {SORTS.map((s) => (
-            <option key={s.value} value={s.value}>
-              Sort: {s.label}
+          {SORT_KEYS.map((key) => (
+            <option key={key} value={key}>
+              {t("filters.sort_prefix", { label: t(`filters.sorts.${key}`) })}
             </option>
           ))}
         </select>

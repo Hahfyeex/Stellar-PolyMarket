@@ -8,6 +8,8 @@ module.exports = {
       testMatch: [
         "**/hooks/__tests__/**/*.test.ts",
         "**/store/__tests__/**/*.test.ts",
+        // i18n configuration tests run in node (no DOM needed)
+        "**/lib/__tests__/i18n.test.ts",
         "!**/hooks/__tests__/useMarketSearch.test.ts",
         "!**/hooks/__tests__/useBatchTransaction.test.ts",
         "!**/hooks/__tests__/useMarkets.test.ts",
@@ -24,6 +26,8 @@ module.exports = {
         "src/hooks/useOnboarding.ts",
         "src/hooks/useTheme.ts",
         "src/store/notificationSlice.ts",
+        // i18n configuration module — locale detection and loading logic
+        "src/lib/i18n.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },

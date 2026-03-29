@@ -1,4 +1,5 @@
 "use client";
+import { useTranslation } from "react-i18next";
 import type { TabKey } from "../hooks/useMarketTabs";
 
 interface Props {
@@ -9,15 +10,17 @@ interface Props {
 }
 
 export default function MarketTabs({ activeTab, activeBadge, resolvedBadge, onChange }: Props) {
+  const { t } = useTranslation("common");
+
   const tabs: { key: TabKey; label: string; count: number }[] = [
-    { key: "active", label: "Active Markets", count: activeBadge },
-    { key: "resolved", label: "Resolved Markets", count: resolvedBadge },
+    { key: "active", label: t("markets.tabs.active"), count: activeBadge },
+    { key: "resolved", label: t("markets.tabs.resolved"), count: resolvedBadge },
   ];
 
   return (
     <div
       role="tablist"
-      aria-label="Market status tabs"
+      aria-label={t("markets.tabs.aria_label")}
       className="flex gap-1 mb-6 border-b border-[var(--border-default)]"
     >
       {tabs.map(({ key, label, count }) => {
