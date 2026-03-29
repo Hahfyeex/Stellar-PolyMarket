@@ -20,6 +20,7 @@ import { trackEvent } from "../lib/firebase";
 import { store } from "../store";
 import type { Market } from "../types/market";
 import OnboardingWizard from "../components/onboarding/OnboardingWizard";
+import TrendingMarketsSection from "../components/TrendingMarketsSection";
 import ThemeToggle from "../components/ThemeToggle";
 import LanguageSelector from "../components/LanguageSelector";
 import { useMarkets } from "../hooks/useMarkets";
@@ -242,6 +243,9 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-4 pb-6 flex flex-col lg:flex-row gap-6">
         {/* Markets */}
         <div className="flex-1">
+          {/* Trending Markets — horizontal scroll section */}
+          <TrendingMarketsSection />
+
           {/* Discovery cards — personalised / trending top 6 */}
           <div className="mb-8">
             <MarketDiscoveryGrid
