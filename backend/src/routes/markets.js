@@ -1,4 +1,5 @@
 const express = require("express");
+const sanitizeHtml = require("sanitize-html");
 const router = express.Router();
 const db = require("../db");
 const { triggerNotification } = require("../utils/notifications");
@@ -11,6 +12,7 @@ const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
 const eventBus = require("../bots/eventBus");
 const { getOrSet, invalidateAll, listKey, detailKey, TTL } = require("../utils/cache");
+const { getFeeRateBps } = require("../utils/sorobanClient");
 const jwtAuth = require("../middleware/jwtAuth");
 
 const DISPUTE_WINDOW_HOURS = parseInt(process.env.DISPUTE_WINDOW_HOURS, 10) || 24;
@@ -125,28 +127,43 @@ router.get("/", async (req, res) => {
 router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, res) => {
   const { question, endDate, outcomes, contractAddress, walletAddress, categoryId } = req.body;
 
+  const sanitizedQuestion =
+    typeof question === "string"
+      ? sanitizeHtml(question, { allowedTags: [], allowedAttributes: {} }).trim()
+      : "";
+
   // Basic required field validation (middleware handles detailed validation)
-  if (!question || !endDate || !outcomes?.length || !walletAddress || !categoryId) {
+  if (
+    !sanitizedQuestion ||
+    !endDate ||
+    !outcomes?.length ||
+    !walletAddress ||
+    categoryId === undefined ||
+    categoryId === null
+  ) {
+
     return res.status(400).json({
       error: {
         code: "MISSING_REQUIRED_FIELDS",
         message: "question, endDate, outcomes, walletAddress, and categoryId are required",
         details: {
-          question: !!question,
+          question: !!sanitizedQuestion,
           endDate: !!endDate,
           outcomes: !!outcomes?.length,
           walletAddress: !!walletAddress,
-          categoryId: !!categoryId,
+          categoryId: categoryId !== undefined && categoryId !== null,
         },
       },
     });
   }
 
   try {
+    const feeRateBps = await getFeeRateBps();
+
     // Market has passed all validation checks - create immediately without admin approval
     const result = await db.query(
-      "INSERT INTO markets (question, end_date, outcomes, contract_address, category_id, creator_wallet, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *",
-      [question, endDate, outcomes, contractAddress || null, categoryId, walletAddress]
+      "INSERT INTO markets (question, end_date, outcomes, contract_address, category_id, fee_rate_bps, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *",
+      [sanitizedQuestion, endDate, outcomes, contractAddress || null, categoryId, feeRateBps]
     );
 
     const { updateCreatorStats } = require("../utils/creators");
@@ -155,7 +172,7 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
     logger.info(
       {
         market_id: result.rows[0].id,
-        question,
+        question: sanitizedQuestion,
         wallet_address: walletAddress,
         contract_address: contractAddress,
         outcomes_count: outcomes.length,
@@ -176,13 +193,12 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
     // Emit events
     eventBus.emit("market.created", {
       marketId: result.rows[0].id,
-      question,
+      question: sanitizedQuestion,
       outcomes: outcomes ?? [],
       totalPool: 0,
     });
-
   } catch (err) {
-    logger.error({ err, question, wallet_address: walletAddress }, "Failed to create market");
+    logger.error({ err, question: sanitizedQuestion, wallet_address: walletAddress }, "Failed to create market");
     res.status(500).json({
       error: {
         code: "DATABASE_ERROR",

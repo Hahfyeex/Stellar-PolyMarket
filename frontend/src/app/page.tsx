@@ -1,4 +1,6 @@
 "use client";
+import EmptyState from "../components/EmptyState";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import ContractErrorBoundary from "../components/ContractErrorBoundary";
@@ -16,6 +18,9 @@ import MarketCardSkeleton from "../components/skeletons/MarketCardSkeleton";
 import { useWalletContext } from "../context/WalletContext";
 import { SearchFilters, SortKey, useMarketSearch } from "../hooks/useMarketSearch";
 import { useTheme } from "../hooks/useTheme";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+import { useQueryClient } from "@tanstack/react-query";
+import { NoMarketsIllustration } from "@/assets/emptyStates";
 import { trackEvent } from "../lib/firebase";
 import { store } from "../store";
 import type { Market } from "../types/market";
@@ -25,6 +30,7 @@ import LanguageSelector from "../components/LanguageSelector";
 import { useMarkets } from "../hooks/useMarkets";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMarketTabs } from "../hooks/useMarketTabs";
+import { useWatchlist } from "../hooks/useWatchlist";
 import MarketTabs from "../components/MarketTabs";
 import MarketListSkeleton from "../components/skeletons/MarketListSkeleton";
 import { useTranslation } from "react-i18next";
@@ -37,6 +43,7 @@ export default function Home() {
   const { t } = useTranslation("common");
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
+  const { watchlist, toggleWatchlist } = useWatchlist();
 
   // Restore filter state from URL params on mount
   const [filters, setFilters] = useState<SearchFilters>(() => ({
@@ -47,11 +54,20 @@ export default function Home() {
     sort: (searchParams.get("sort") as SortKey) ?? "newest",
   }));
 
-  const { activeTab, setActiveTab, activeMarkets, resolvedMarkets, activeBadge, resolvedBadge } =
-    useMarketTabs(markets);
+  const {
+    activeTab,
+    setActiveTab,
+    activeMarkets,
+    resolvedMarkets,
+    watchlistMarkets,
+    activeBadge,
+    resolvedBadge,
+    watchlistBadge,
+  } = useMarketTabs(markets, watchlist);
 
   // Apply search/filter on top of the tab-filtered list
-  const tabMarkets = activeTab === "active" ? activeMarkets : resolvedMarkets;
+  const tabMarkets =
+    activeTab === "active" ? activeMarkets : activeTab === "watchlist" ? watchlistMarkets : resolvedMarkets;
   const filteredMarkets = useMarketSearch(tabMarkets, filters);
 
   const handleHelpClick = () => {
@@ -92,6 +108,11 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refetchMarkets() {
+    // Invalidate the React Query cache for markets to trigger a fresh fetch
+    await queryClient.invalidateQueries({ queryKey: ["markets"] });
   }
 
   useEffect(() => {
@@ -249,46 +270,50 @@ export default function Home() {
             />
           </div>
 
-          <MarketTabs
-            activeTab={activeTab}
-            activeBadge={activeBadge}
-            resolvedBadge={resolvedBadge}
-            onChange={setActiveTab}
-          />
-          <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
-            <MarketFilters filters={filters} onChange={setFilters} />
-            {loading ? (
-              <MarketListSkeleton />
-            ) : filteredMarkets.length === 0 ? (
-              <p className="text-gray-400" data-testid="no-markets-empty-state">
-                {filters.query
-                  ? t("markets.empty.no_results", { query: filters.query })
-                  : activeTab === "active"
-                    ? t("markets.empty.no_active")
-                    : t("markets.empty.no_resolved")}
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredMarkets.map((market) => (
-                  <div
-                    key={market.id}
-                    onClick={() => setActiveMarket(market)}
-                    className={`cursor-pointer rounded-xl transition-all ${
-                      activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
-                    }`}
-                  >
-                    <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
-                      <MarketCard
-                        market={market}
-                        walletAddress={publicKey}
-                        onBetPlaced={refetchMarkets}
-                      />
-                    </ContractErrorBoundary>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <h2 className="text-xl md:text-2xl font-semibold mb-4">Open Markets</h2>
+          <MarketFilters filters={filters} onChange={setFilters} />
+          {loading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <MarketCardSkeleton key={i} />
+              ))}
+            </div>
+          ) : filteredMarkets.length === 0 ? (
+            <EmptyState
+              illustration={<NoMarketsIllustration />}
+              title="No markets found"
+              message="No markets match your filters. Try adjusting your search."
+              ctaLabel="Browse Markets"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
+                  query: "",
+                  category: "",
+                  categories: [],
+                }))
+              }
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredMarkets.map((market) => (
+                <div
+                  key={market.id}
+                  onClick={() => setActiveMarket(market)}
+                  className={`cursor-pointer rounded-xl transition-all ${
+                    activeMarket?.id === market.id ? "ring-2 ring-blue-500" : ""
+                  }`}
+                >
+                  <ContractErrorBoundary context={`MarketCard-${market.id}`} store={store}>
+                    <MarketCard
+                      market={market}
+                      walletAddress={publicKey}
+                      onBetPlaced={refetchMarkets}
+                    />
+                  </ContractErrorBoundary>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Live Activity Feed — hidden on mobile to save space */}
@@ -302,10 +327,6 @@ export default function Home() {
 
   return (
     <>
-      {/* Onboarding wizard — shown once to new users, persisted in localStorage */}
-      <OnboardingWizard />
-
-      {/* Mobile layout: wrapped in MobileShell + PullToRefresh */}
       <div className="block md:hidden">
         <MobileShell
           activeMarket={activeMarket}

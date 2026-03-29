@@ -65,6 +65,25 @@ describe("TradeDrawer", () => {
     );
     expect(screen.getByText("Will Bitcoin reach $100k?")).toBeInTheDocument();
   });
+
+  it("renders market question as text nodes only (no HTML injection from question string)", () => {
+    const payload =
+      "<script>document.body.setAttribute('data-xss','1')</script>Will Bitcoin reach $100k?";
+    render(
+      <TradeDrawer
+        market={{ ...SAMPLE_MARKET, question: payload }}
+        open={true}
+        onClose={() => {}}
+        walletAddress={null}
+      />
+    );
+    const drawer = screen.getByTestId("trade-drawer");
+    const heading = drawer.querySelector("h3");
+    expect(heading).toBeTruthy();
+    expect(heading?.textContent).toBe(payload);
+    expect(heading?.innerHTML).not.toMatch(/<script/i);
+    expect(drawer.querySelectorAll("script")).toHaveLength(0);
+  });
 });
 
 // --- Swipe gesture helpers ---
