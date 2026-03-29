@@ -44,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <WalletProvider>
                 <ToastProvider>
                   <BettingSlipProvider>
-                    <main id="main-content" role="main">
+                    <main id="main-content" role="main" className="mobile-pb">
                       {children}
                     </main>
                     {/* BettingSlip mounted globally — persists across all pages */}

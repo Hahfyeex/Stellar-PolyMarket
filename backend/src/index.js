@@ -111,6 +111,7 @@ app.use("/api/governance", require("./routes/governance"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
 app.use("/api/archive", require("./routes/archive"));
+app.use("/api/creators", require("./routes/creators"));
 app.use("/api/portfolio", require("./routes/portfolio"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
 
