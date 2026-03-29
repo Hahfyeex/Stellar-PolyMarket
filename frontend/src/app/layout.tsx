@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { BettingSlipProvider } from "../context/BettingSlipContext";
 import { WalletProvider } from "../context/WalletContext";
@@ -10,6 +10,7 @@ import ThemeScript from "../components/ThemeScript";
 import OfflineBanner from "../components/OfflineBanner";
 import KeyboardShortcutsProvider from "../components/KeyboardShortcutsProvider";
 import I18nProvider from "../components/I18nProvider";
+import { appViewport } from "./viewportConfig";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
@@ -22,6 +23,8 @@ export const metadata: Metadata = {
     title: "Stella",
   },
 };
+
+export const viewport: Viewport = appViewport;
 
 import { ToastProvider } from "../components/ToastProvider";
 
