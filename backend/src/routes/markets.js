@@ -296,4 +296,63 @@ router.post("/:id/resolve", async (req, res) => {
   }
 });
 
+// POST /api/markets/:id/clone — clone a resolved market for a new event
+// Records parent-to-child lineage in audit logs for recurring prediction cycles.
+router.post("/:id/clone", async (req, res) => {
+  const sourceId = req.params.id;
+  try {
+    const sourceResult = await db.query("SELECT * FROM markets WHERE id = $1", [sourceId]);
+    if (sourceResult.rows.length === 0) {
+      logger.warn({ source_id: sourceId }, "Attempted to clone non-existent market");
+      return res.status(404).json({ 
+        error: {
+          code: 'MARKET_NOT_FOUND',
+          message: 'Source market not found'
+        }
+      });
+    }
+    
+    const source = sourceResult.rows[0];
+    
+    // Default new end date to +7 days from now (weekly recurrence pattern)
+    const newEndDate = new Date();
+    newEndDate.setDate(newEndDate.getDate() + 7);
+    
+    const result = await db.query(
+      `INSERT INTO markets (
+        question, 
+        end_date, 
+        outcomes, 
+        status, 
+        resolved, 
+        total_pool, 
+        created_at
+      ) VALUES ($1, $2, $3, 'ACTIVE', FALSE, 0, NOW()) RETURNING *`,
+      [source.question, newEndDate, source.outcomes]
+    );
+    
+    const newMarket = result.rows[0];
+    
+    // Audit log for traceability
+    logger.info({
+      source_market_id: sourceId,
+      new_market_id: newMarket.id,
+      question: source.question,
+      cloned_at: new Date().toISOString(),
+      recurrence: 'weekly_default'
+    }, "Market cloned for recurring event");
+    
+    res.status(201).json({ 
+      market: newMarket,
+      message: "Market cloned successfully" 
+    });
+    
+    // Invalidate list cache so child market appears immediately
+    await invalidateAll();
+  } catch (err) {
+    logger.error({ err, source_id: sourceId }, "Failed to clone market");
+    res.status(500).json({ error: { code: 'CLONE_FAILED', message: err.message } });
+  }
+});
+
 module.exports = router;

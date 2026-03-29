@@ -1,0 +1,48 @@
+
+> stella-polymarket-frontend@0.1.0 test
+> jest --coverage src/app/__tests__/Home.test.tsx --verbose
+
+ts-jest[ts-jest-transformer] (WARN) Define `ts-jest` config under `globals` is deprecated. Please do
+transform: {
+    <transform_regex>: ['ts-jest', { /* ts-jest config goes here in Jest */ }],
+},
+See more at https://kulshekhar.github.io/ts-jest/docs/getting-started/presets#advanced
+PASS jsdom src/app/__tests__/Home.test.tsx
+  Home Page Infinite Scroll
+    ✓ triggers fetchNextPage when sentinel enters viewport (71 ms)
+    ✓ shows loading spinner while fetching next page (37 ms)
+    ✓ shows "End of markets" message when all pages are loaded (17 ms)
+
+----------------------------|---------|----------|---------|---------|------------------------
+File                        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s      
+----------------------------|---------|----------|---------|---------|------------------------
+All files                   |   43.91 |    33.06 |   20.25 |   46.59 |                        
+ app                        |   84.93 |    65.45 |   63.15 |   89.23 |                        
+  page.tsx                  |   84.93 |    65.45 |   63.15 |   89.23 | 85-92,192,229-248,265  
+ components                 |      50 |       20 |   28.57 |   47.82 |                        
+  ContractErrorBoundary.tsx |      50 |       20 |   28.57 |   47.82 | 51-65,73,81-83,150-156 
+ components/ErrorStates     |   81.81 |    11.11 |   33.33 |      80 |                        
+  ErrorLayout.tsx           |      80 |        0 |       0 |      80 | 29                     
+  InsufficientGasModal.tsx  |   83.33 |      100 |      50 |      80 | 13                     
+ constants                  |   42.85 |        0 |       0 |      50 |                        
+  contractErrors.ts         |   42.85 |        0 |       0 |      50 | 126-129                
+ context                    |   45.45 |        0 |       0 |      50 |                        
+  WalletContext.tsx         |   45.45 |        0 |       0 |      50 | 21-22,26-28            
+ hooks                      |   13.54 |        0 |       0 |   14.45 |                        
+  useInfiniteMarkets.ts     |   18.18 |        0 |       0 |      20 | 15-20,29-37            
+  useMarketSearch.ts        |   14.28 |        0 |       0 |   15.15 | 30-53,63-65,69-99      
+  useMarketTabs.ts          |   13.63 |        0 |       0 |   14.28 | 18-50                  
+  useWallet.ts              |    9.52 |        0 |       0 |   10.52 | 14-39                  
+ lib                        |   15.38 |        0 |       0 |   15.38 |                        
+  monitoring.ts             |   15.38 |        0 |       0 |   15.38 | 27-48                  
+ store                      |   39.34 |    15.38 |    6.25 |   44.44 |                        
+  contractErrorSlice.ts     |   35.71 |        0 |       0 |   35.71 | 39-50                  
+  index.ts                  |     100 |      100 |     100 |     100 |                        
+  notificationSlice.ts      |      36 |    28.57 |   14.28 |    40.9 | 37-43,62-87            
+  optimisticBetsSlice.ts    |   29.41 |        0 |       0 |   38.46 | 55-90                  
+----------------------------|---------|----------|---------|---------|------------------------
+Test Suites: 1 passed, 1 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        3.665 s
+Ran all test suites matching /src\/app\/__tests__\/Home.test.tsx/i.

@@ -1,0 +1,27 @@
+
+> stella-polymarket-frontend@0.1.0 test
+> jest --coverage src/components/__tests__/CountUp.test.tsx --verbose
+
+ts-jest[ts-jest-transformer] (WARN) Define `ts-jest` config under `globals` is deprecated. Please do
+transform: {
+    <transform_regex>: ['ts-jest', { /* ts-jest config goes here in Jest */ }],
+},
+See more at https://kulshekhar.github.io/ts-jest/docs/getting-started/presets#advanced
+PASS jsdom src/components/__tests__/CountUp.test.tsx
+  CountUp Component
+    ✓ renders correctly with final value when prefers-reduced-motion is true (156 ms)
+    ✓ animates towards the target value when motion is enabled (16 ms)
+    ✓ formats large numbers correctly with commas and handles suffix (13 ms)
+    ✓ uses IntersectionObserver to trigger animation (7 ms)
+
+-------------|---------|----------|---------|---------|-------------------
+File         | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+-------------|---------|----------|---------|---------|-------------------
+All files    |     100 |      100 |     100 |     100 |                   
+ CountUp.tsx |     100 |      100 |     100 |     100 |                   
+-------------|---------|----------|---------|---------|-------------------
+Test Suites: 1 passed, 1 total
+Tests:       4 passed, 4 total
+Snapshots:   0 total
+Time:        2.566 s
+Ran all test suites matching /src\/components\/__tests__\/CountUp.test.tsx/i.

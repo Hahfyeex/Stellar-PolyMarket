@@ -38,6 +38,30 @@ export default function MarketDiscoveryCard({ market, onClick }: Props) {
   });
 
   return (
+  const handleClone = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Clone this market for a new recurring event?")) return;
+    
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/markets/${market.id}/clone`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Market cloned! New Market ID: ${data.market.id}`);
+        // Optionally refresh the page or trigger a notification
+        window.location.reload(); 
+      } else {
+        const errData = await res.json();
+        alert(`Clone failed: ${errData.error?.message || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error("Clone request failed", err);
+      alert("Clone request failed. check console for details.");
+    }
+  };
+
+  return (
     <article
       data-testid="discovery-card"
       onClick={() => onClick?.(market)}
@@ -107,6 +131,20 @@ export default function MarketDiscoveryCard({ market, onClick }: Props) {
             )}
           </span>
         </div>
+
+        {/* Clone button for resolved markets */}
+        {market.resolved && (
+          <button
+            onClick={handleClone}
+            className="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+            </svg>
+            Clone Market
+          </button>
+        )}
       </div>
     </article>
   );
