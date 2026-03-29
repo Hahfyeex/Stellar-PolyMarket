@@ -75,6 +75,8 @@ function applyRoutes(app) {
 
   // Prometheus metrics — NOT behind App Check so Prometheus can scrape freely
   app.use("/metrics", require("./routes/metrics"));
+  // Development-only tooling is guarded inside the route handler by NODE_ENV.
+  app.use("/api/dev", require("./routes/dev"));
 
   // ── App Check enforcement ─────────────────────────────────────────────────
   // All /api/* routes are protected. Any request without a valid

@@ -25,6 +25,55 @@ interface Props {
   showFullCard?: boolean;
 }
 
+function parseNumber(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function deriveOutcomePools(market: Market, totalPool: number): number[] {
+  const outcomesCount = Math.max(market.outcomes.length, 1);
+  const equalPools = Array.from({ length: outcomesCount }, () => totalPool / outcomesCount);
+
+  if (!Array.isArray(market.outcome_pools) || market.outcome_pools.length < outcomesCount) {
+    return equalPools;
+  }
+
+  const pools = market.outcome_pools.slice(0, outcomesCount).map(parseNumber);
+  const poolSum = pools.reduce((sum, p) => sum + p, 0);
+  return poolSum > 0 ? pools : equalPools;
+}
+
+function deriveOutcomeOdds(market: Market, outcomePools: number[]): number[] {
+  const outcomesCount = Math.max(market.outcomes.length, 1);
+  const defaultOdds = Array.from({ length: outcomesCount }, () => 100 / outcomesCount);
+
+  if (Array.isArray(market.odds_bps) && market.odds_bps.length >= outcomesCount) {
+    return defaultOdds.map((fallback, i) => {
+      const bps = parseNumber(market.odds_bps?.[i]);
+      const pct = bps / 100;
+      return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : fallback;
+    });
+  }
+
+  if (Array.isArray(market.odds) && market.odds.length >= outcomesCount) {
+    const directOdds = market.odds.map((entry) => {
+      if (typeof entry === "number") return entry;
+      if (entry && typeof entry === "object" && "odds" in entry) return parseNumber(entry.odds);
+      return NaN;
+    });
+    if (directOdds.every((v) => Number.isFinite(v))) {
+      return directOdds.slice(0, outcomesCount).map((v, i) => (v >= 0 && v <= 100 ? v : defaultOdds[i]));
+    }
+  }
+
+  const totalFromPools = outcomePools.reduce((sum, p) => sum + p, 0);
+  if (totalFromPools > 0) {
+    return outcomePools.map((pool) => (pool / totalFromPools) * 100);
+  }
+
+  return defaultOdds;
+}
+
 export default function MarketCard({ market, walletAddress, onBetPlaced }: Props) {
   const {
     outcomeIndex: selectedOutcome,
@@ -51,18 +100,21 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   const { submitBet: submitOptimisticBet, betsForMarket } = useOptimisticBet();
   const pendingBets = betsForMarket(market.id);
   const isExpired = new Date(market.end_date) <= new Date();
-  const totalPool = parseFloat(market.total_pool);
-  const outcomePool = totalPool / market.outcomes.length;
-  
-  // Default odds for display in the ticker (until real per-outcome pool data is available)
-  const defaultOdds = 100 / market.outcomes.length;
+  const totalPool = parseNumber(market.total_pool);
+  const outcomePools = deriveOutcomePools(market, totalPool);
+  const outcomeOdds = deriveOutcomeOdds(market, outcomePools);
+  const defaultOdds = 100 / Math.max(market.outcomes.length, 1);
+  const selectedOutcomePool =
+    selectedOutcome !== null
+      ? outcomePools[selectedOutcome] ?? totalPool / Math.max(market.outcomes.length, 1)
+      : totalPool / Math.max(market.outcomes.length, 1);
 
   // Snapshot odds whenever the user selects an outcome or changes amount
   useEffect(() => {
     if (selectedOutcome !== null && amount) {
-      snapshotOdds(parseFloat(amount) || 0, outcomePool, totalPool);
+      snapshotOdds(parseFloat(amount) || 0, selectedOutcomePool, totalPool);
     }
-  }, [selectedOutcome, amount, outcomePool, totalPool, snapshotOdds]);
+  }, [selectedOutcome, amount, selectedOutcomePool, totalPool, snapshotOdds]);
 
   const handleShareMarket = async () => {
     const shareData = {
@@ -121,7 +173,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
   async function placeBet() {
     if (selectedOutcome === null || !amount || !walletAddress) return;
 
-    const check = checkSlippage(parseFloat(amount), outcomePool, totalPool, slippageTolerance);
+    const check = checkSlippage(parseFloat(amount), selectedOutcomePool, totalPool, slippageTolerance);
     
     if (check.exceeded) {
       setSlippageWarning({ expectedPayout: check.expectedPayout, currentPayout: check.currentPayout });
@@ -192,7 +244,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             `}
           >
             <span>{outcome}</span>
-            <OddsTicker value={defaultOdds} size="sm" />
+            <OddsTicker value={outcomeOdds[i] ?? defaultOdds} size="sm" />
           </button>
         ))}
       </div>
@@ -229,7 +281,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
             marketId={market.id}
             outcomeIndex={selectedOutcome}
             stakeAmount={parseFloat(amount) || 0}
-            poolForOutcome={outcomePool}
+            poolForOutcome={selectedOutcomePool}
             totalPool={totalPool}
           />
         </div>
@@ -246,7 +298,7 @@ export default function MarketCard({ market, walletAddress, onBetPlaced }: Props
       )}
 
       {!market.resolved && !isExpired && selectedOutcome !== null && (
-        <WhatIfSimulator poolForOutcome={outcomePool} totalPool={totalPool} />
+        <WhatIfSimulator poolForOutcome={selectedOutcomePool} totalPool={totalPool} />
       )}
 
       <ResolutionCenter market={market} compact />
