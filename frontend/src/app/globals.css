@@ -223,6 +223,25 @@ body {
 }
 .activity-fade-in { animation: activityFadeIn 0.5s ease-out forwards; }
 
+/**
+ * flash-update — yellow highlight that fades out when live odds change.
+ *
+ * Applied for exactly 500 ms by useOddsStream consumers (MarketCard):
+ *   element.classList.add("flash-update");
+ *   setTimeout(() => element.classList.remove("flash-update"), 500);
+ *
+ * Implementation note: background-color is animated (not transform/opacity)
+ * so the layout is never disturbed — zero layout shift.
+ */
+@keyframes flashUpdate {
+  0%   { background-color: rgba(250, 204, 21, 0.35); } /* yellow-400 at 35% */
+  60%  { background-color: rgba(250, 204, 21, 0.15); }
+  100% { background-color: transparent; }
+}
+.flash-update {
+  animation: flashUpdate 0.5s ease-out forwards;
+}
+
 @keyframes drawerSlideUp {
   from { transform: translateY(100%); }
   to   { transform: translateY(0); }

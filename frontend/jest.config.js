@@ -13,6 +13,7 @@ module.exports = {
         "!**/hooks/__tests__/useMarkets.test.ts",
         "!**/hooks/__tests__/useOnlineStatus.test.ts",
         "!**/hooks/__tests__/useKeyboardShortcuts.test.ts",
+        "!**/hooks/__tests__/useOddsStream.test.ts",
       ],
       globals: {
         "ts-jest": { tsconfig: { esModuleInterop: true } },
@@ -34,7 +35,6 @@ module.exports = {
       testEnvironment: "jest-environment-jsdom",
       testMatch: [
         "**/components/__tests__/**/*.test.tsx",
-        "**/app/**/__tests__/**/*.test.tsx"
         "**/app/**/__tests__/**/*.test.tsx",
         "**/context/__tests__/**/*.test.tsx",
         "**/hooks/__tests__/useMarketSearch.test.ts",
@@ -43,6 +43,8 @@ module.exports = {
         "**/hooks/__tests__/useMarkets.test.ts",
         "**/hooks/__tests__/useOnlineStatus.test.ts",
         "**/hooks/__tests__/useKeyboardShortcuts.test.ts",
+        // Live WebSocket odds streaming — requires jsdom for WebSocket mock globals
+        "**/hooks/__tests__/useOddsStream.test.ts",
       ],
       globals: {
         "ts-jest": {
@@ -73,6 +75,8 @@ module.exports = {
         "src/components/onboarding/StepMarkets.tsx",
         "src/components/onboarding/StepBetting.tsx",
         "src/components/onboarding/StepPayouts.tsx",
+        // Live odds WebSocket hook
+        "src/hooks/useOddsStream.ts",
       ],
       coverageThreshold: {
         global: { lines: 90, functions: 90, branches: 90 },
