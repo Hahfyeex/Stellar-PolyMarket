@@ -153,10 +153,7 @@ apolloServer.start().then(() => {
         let user = null;
         if (auth.startsWith("Bearer ")) {
           try {
-            user = jwt.verify(
-              auth.slice(7),
-              process.env.JWT_SECRET || "change-me-in-production"
-            );
+            user = jwt.verify(auth.slice(7), process.env.JWT_SECRET || "change-me-in-production");
           } catch {
             // Invalid token — user stays null; resolvers can enforce auth as needed
           }
@@ -188,6 +185,9 @@ require("./workers/archive-worker").start();
 
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
+
+// Start real-time Mercury event stream with reconnection logic
+require("./indexer/mercury").startEventStream();
 
 // Initialize self-healing gap detection and recovery
 require("./indexer/gap-detector").initializeSelfHealing();
