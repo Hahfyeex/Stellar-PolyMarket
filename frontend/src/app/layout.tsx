@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { BettingSlipProvider } from "../context/BettingSlipContext";
 import { WalletProvider } from "../context/WalletContext";
@@ -10,6 +10,7 @@ import ThemeScript from "../components/ThemeScript";
 import OfflineBanner from "../components/OfflineBanner";
 import KeyboardShortcutsProvider from "../components/KeyboardShortcutsProvider";
 import I18nProvider from "../components/I18nProvider";
+import { appViewport } from "./viewportConfig";
 
 export const metadata: Metadata = {
   title: "Stella Polymarket",
@@ -23,7 +24,10 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = appViewport;
+
 import { ToastProvider } from "../components/ToastProvider";
+import { ChartThemeProvider } from "../components/ChartThemeProvider";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -44,7 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <WalletProvider>
                 <ToastProvider>
                   <BettingSlipProvider>
-                    <main id="main-content" role="main">
+                    <main id="main-content" role="main" className="mobile-pb">
                       {children}
                     </main>
                     {/* BettingSlip mounted globally — persists across all pages */}

@@ -12,6 +12,7 @@ import {
   TooltipProps,
 } from "recharts";
 import Skeleton from "./Skeleton";
+import { useChartTheme } from "./ChartThemeProvider";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -34,9 +35,6 @@ interface Props {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const RANGES: TimeRange[] = ["1H", "6H", "1D", "All"];
-
-const YES_COLOR = "#22c55e"; // green-500
-const NO_COLOR = "#f97316"; // orange-500
 
 // ── Mock data generator (used until real API exists) ──────────────────────────
 
@@ -81,22 +79,28 @@ async function defaultFetcher(marketId: number, range: TimeRange): Promise<OddsP
 // ── Crosshair Tooltip ─────────────────────────────────────────────────────────
 
 function CrosshairTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  const colors = useChartTheme();
   if (!active || !payload?.length) return null;
   const yes = payload.find((p) => p.dataKey === "yes");
   const no = payload.find((p) => p.dataKey === "no");
   return (
     <div
       data-testid="odds-tooltip"
-      className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs shadow-xl space-y-1"
+      style={{
+        backgroundColor: colors.tooltipBg,
+        borderColor: colors.tooltipBorder,
+        color: "white",
+      }}
+      className="rounded-lg px-3 py-2 text-xs shadow-xl space-y-1"
     >
       <p className="text-gray-400">{label}</p>
       {yes && (
-        <p style={{ color: YES_COLOR }} className="font-semibold">
+        <p style={{ color: colors.yes }} className="font-semibold">
           YES: {yes.value}%
         </p>
       )}
       {no && (
-        <p style={{ color: NO_COLOR }} className="font-semibold">
+        <p style={{ color: colors.no }} className="font-semibold">
           NO: {no.value}%
         </p>
       )}
@@ -110,6 +114,7 @@ export default function OddsChart({ marketId, initialData, fetcher = defaultFetc
   const [range, setRange] = useState<TimeRange>("1D");
   const [data, setData] = useState<OddsPoint[]>(initialData ?? []);
   const [loading, setLoading] = useState(!initialData);
+  const colors = useChartTheme();
 
   const loadData = useCallback(
     async (r: TimeRange) => {
@@ -170,14 +175,14 @@ export default function OddsChart({ marketId, initialData, fetcher = defaultFetc
         <span className="flex items-center gap-1.5">
           <span
             className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ background: YES_COLOR }}
+            style={{ backgroundColor: colors.yes }}
           />
           <span className="text-gray-300">YES</span>
         </span>
         <span className="flex items-center gap-1.5">
           <span
             className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ background: NO_COLOR }}
+            style={{ backgroundColor: colors.no }}
           />
           <span className="text-gray-300">NO</span>
         </span>
@@ -205,7 +210,7 @@ export default function OddsChart({ marketId, initialData, fetcher = defaultFetc
                   </linearGradient>
                 </defs>
 
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
 
                 <XAxis
                   dataKey="timestamp"

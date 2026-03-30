@@ -11,8 +11,10 @@ import BetConfirmationModal from "../../../components/BetConfirmationModal";
 import StakePresets from "../../../components/StakePresets";
 import { useMarket } from "../../../hooks/useMarket";
 import { usePlaceBet } from "../../../hooks/usePlaceBet";
+import EmptyState from "../../../components/EmptyState";
+import { NoActivityIllustration, NoPositionsIllustration } from "../../../assets/emptyStates";
+import StakePresets from "../../../components/StakePresets";
 import { useToast } from "../../../components/ToastProvider";
-
 
 // =============================================================================
 // Types
@@ -252,9 +254,13 @@ interface PositionsTabProps {
 function PositionsTab({ positions, outcomes }: PositionsTabProps) {
   if (positions.length === 0) {
     return (
-      <div className="bg-gray-900 rounded-xl p-8 border border-gray-800 text-center">
-        <p className="text-gray-400">No positions yet</p>
-      </div>
+      <EmptyState
+        illustration={<NoPositionsIllustration />}
+        title="No positions yet"
+        message="No one has opened a position in this market yet."
+        ctaLabel="Back to Markets"
+        onClick={() => window.location.assign("/")}
+      />
     );
   }
 
@@ -322,9 +328,13 @@ interface ActivityTabProps {
 function ActivityTab({ bets, outcomes }: ActivityTabProps) {
   if (bets.length === 0) {
     return (
-      <div className="bg-gray-900 rounded-xl p-8 border border-gray-800 text-center">
-        <p className="text-gray-400">No activity yet</p>
-      </div>
+      <EmptyState
+        illustration={<NoActivityIllustration />}
+        title="No activity yet"
+        message="There’s no trading activity for this market yet."
+        ctaLabel="Back to Markets"
+        onClick={() => window.location.assign("/")}
+      />
     );
   }
 
@@ -509,7 +519,7 @@ const BettingPanel = memo(function BettingPanel({ market, odds, onBetPlaced }: B
         <StakePresets
           amount={amount}
           onSelect={setAmount}
-          walletBalance={0} // Fixed missing variable
+          walletBalance={null}
           disabled={!canBet}
         />
 

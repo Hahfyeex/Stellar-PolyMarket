@@ -52,10 +52,14 @@ export default function LeaderboardPage() {
   // isLoading drives the skeleton; falls back to mock data when API is unavailable
   const { data: entries = MOCK_ENTRIES, isLoading } = useLeaderboard();
 
-  return (
+  const unreadCount = useSelector((state: RootState) => 
+    state.notifications.items.filter((n) => !n.read).length
+  );
+
+  const pageContent = (
     <main className="min-h-screen bg-gray-950 text-white">
       {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10 safe-top">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-yellow-900/50 border border-yellow-700 flex items-center justify-center">
@@ -77,7 +81,7 @@ export default function LeaderboardPage() {
       {isLoading ? (
         <LeaderboardSkeleton />
       ) : (
-        <div className="max-w-3xl mx-auto px-4 py-8 flex flex-col gap-6">
+        <div className="max-w-3xl mx-auto px-4 py-8 flex flex-col gap-6 mobile-pb">
           {/* Summary stats */}
           <div className="grid grid-cols-3 gap-4">
             {[
@@ -129,5 +133,20 @@ export default function LeaderboardPage() {
         </div>
       )}
     </main>
+  );
+
+  return (
+    <>
+      {/* Desktop */}
+      <div className="hidden md:block">
+        {pageContent}
+      </div>
+      {/* Mobile */}
+      <div className="block md:hidden">
+        <MobileShell walletAddress={publicKey} unreadCount={unreadCount}>
+          {pageContent}
+        </MobileShell>
+      </div>
+    </>
   );
 }

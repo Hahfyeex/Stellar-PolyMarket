@@ -1,4 +1,5 @@
 const express = require("express");
+const sanitizeHtml = require("sanitize-html");
 const router = express.Router();
 const db = require("../db");
 const { triggerNotification } = require("../utils/notifications");
@@ -72,25 +73,33 @@ router.get("/", async (req, res) => {
 
     // Category filter: slug
     const categorySlug = req.query.category;
+    const includeIlliquid = req.query.include_illiquid === "true";
 
     // Cache-aside: check Redis first, fall back to DB on miss or Redis failure
-    // Include categorySlug in cache key if present
+    // Include categorySlug and include_illiquid in cache key if present
     const key = categorySlug
-      ? `markets:cat:${categorySlug}:${limit}:${offset}`
-      : listKey(limit, offset);
+      ? `markets:cat:${categorySlug}:${includeIlliquid ? "all" : "liquid"}:${limit}:${offset}`
+      : `markets:${includeIlliquid ? "all" : "liquid"}:${limit}:${offset}`;
     const data = await getOrSet(key, TTL.LIST, async () => {
       // Cache miss — query the database
+      const liquidityCondition = includeIlliquid ? "" : " AND m.is_liquid = TRUE";
+
       let countQuery =
-        "SELECT COUNT(*) as total FROM markets m WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'";
+        "SELECT COUNT(*) as total FROM markets m WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'" +
+        liquidityCondition;
       let dataQuery =
-        "SELECT m.*, c.slug as category_slug FROM markets m LEFT JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'";
+        "SELECT m.*, c.slug as category_slug FROM markets m LEFT JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'" +
+        liquidityCondition;
       const params = [limit, offset];
 
       if (categorySlug) {
         countQuery =
-          "SELECT COUNT(*) as total FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $1";
+          "SELECT COUNT(*) as total FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $1" +
+          liquidityCondition;
         dataQuery =
-          "SELECT m.*, c.slug as category_slug FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $3 ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
+          "SELECT m.*, c.slug as category_slug FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $3" +
+          liquidityCondition +
+          " ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
         params.push(categorySlug);
       } else {
         dataQuery += " ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
@@ -126,18 +135,31 @@ router.get("/", async (req, res) => {
 router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, res) => {
   const { question, endDate, outcomes, contractAddress, walletAddress, categoryId } = req.body;
 
+  const sanitizedQuestion =
+    typeof question === "string"
+      ? sanitizeHtml(question, { allowedTags: [], allowedAttributes: {} }).trim()
+      : "";
+
   // Basic required field validation (middleware handles detailed validation)
-  if (!question || !endDate || !outcomes?.length || !walletAddress || !categoryId) {
+  if (
+    !sanitizedQuestion ||
+    !endDate ||
+    !outcomes?.length ||
+    !walletAddress ||
+    categoryId === undefined ||
+    categoryId === null
+  ) {
+
     return res.status(400).json({
       error: {
         code: "MISSING_REQUIRED_FIELDS",
         message: "question, endDate, outcomes, walletAddress, and categoryId are required",
         details: {
-          question: !!question,
+          question: !!sanitizedQuestion,
           endDate: !!endDate,
           outcomes: !!outcomes?.length,
           walletAddress: !!walletAddress,
-          categoryId: !!categoryId,
+          categoryId: categoryId !== undefined && categoryId !== null,
         },
       },
     });
@@ -149,13 +171,16 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
     // Market has passed all validation checks - create immediately without admin approval
     const result = await db.query(
       "INSERT INTO markets (question, end_date, outcomes, contract_address, category_id, fee_rate_bps, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *",
-      [question, endDate, outcomes, contractAddress || null, categoryId, feeRateBps]
+      [sanitizedQuestion, endDate, outcomes, contractAddress || null, categoryId, feeRateBps]
     );
+
+    const { updateCreatorStats } = require("../utils/creators");
+    await updateCreatorStats(db, walletAddress, { markets_created: 1 });
 
     logger.info(
       {
         market_id: result.rows[0].id,
-        question,
+        question: sanitizedQuestion,
         wallet_address: walletAddress,
         contract_address: contractAddress,
         outcomes_count: outcomes.length,
@@ -170,26 +195,18 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
       message: "Market created successfully and published immediately",
     });
 
-    // Invalidate the market list cache so the new market appears immediately
+    // Invalidate caches
     await invalidateAll();
 
-    // Emit market.created so registered bot strategies can seed initial liquidity
+    // Emit events
     eventBus.emit("market.created", {
       marketId: result.rows[0].id,
-      question,
-      outcomes: outcomes ?? [],
-      totalPool: 0,
-    });
-
-    // Emit market.created so registered bot strategies can seed initial liquidity
-    eventBus.emit("market.created", {
-      marketId: result.rows[0].id,
-      question,
+      question: sanitizedQuestion,
       outcomes: outcomes ?? [],
       totalPool: 0,
     });
   } catch (err) {
-    logger.error({ err, question, wallet_address: walletAddress }, "Failed to create market");
+    logger.error({ err, question: sanitizedQuestion, wallet_address: walletAddress }, "Failed to create market");
     res.status(500).json({
       error: {
         code: "DATABASE_ERROR",
@@ -201,30 +218,45 @@ router.post("/", validateMarketCreation, rateLimitMarketCreation, async (req, re
 });
 
 const { calculateConfidenceScore } = require("../utils/analytics");
+const { calculateReputation } = require("../utils/creators");
 // GET /api/markets/:id
 router.get("/:id", async (req, res) => {
   try {
     const key = detailKey(req.params.id);
     const data = await getOrSet(key, TTL.DETAIL, async () => {
-      const market = await db.query("SELECT * FROM markets WHERE id = $1 AND deleted_at IS NULL", [
+      const marketResult = await db.query(
+        `SELECT m.*, mc.reputation_score as creator_reputation_score
+         FROM markets m 
+         LEFT JOIN market_creators mc ON m.creator_wallet = mc.wallet_address
+         WHERE m.id = $1 AND m.deleted_at IS NULL`, [
         req.params.id,
       ]);
-      if (!market.rows.length) return null; // signal not-found
+      if (!marketResult.rows.length) return null;
 
+      const market = marketResult.rows[0];
       const betsResult = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
       const bets = betsResult.rows;
       const confidenceScore = calculateConfidenceScore(bets);
+      const creatorReputationScore = market.creator_reputation_score ?? 0;
 
       logger.debug(
         {
           market_id: req.params.id,
           bets_count: bets.length,
           confidence_score: confidenceScore,
+          creator_reputation: creatorReputationScore,
         },
-        "Market details fetched with confidence score"
+        "Market details fetched with confidence & creator reputation"
       );
 
-      return { market: { ...market.rows[0], confidence_score: confidenceScore }, bets };
+      return { 
+        market: { 
+          ...market, 
+          confidence_score: confidenceScore,
+          creator_reputation_score: creatorReputationScore
+        }, 
+        bets 
+      };
     });
 
     if (!data) {
@@ -325,24 +357,34 @@ router.post("/:id/propose", async (req, res) => {
 router.post("/:id/confirm", async (req, res) => {
   const { actorWallet } = req.body;
   try {
+    const marketId = req.params.id;
     const result = await db.query(
-      "UPDATE markets SET status = 'CONFIRMED', resolved = TRUE WHERE id = $1 AND status = 'PROPOSED' RETURNING *",
-      [req.params.id]
+      "UPDATE markets SET status = 'CONFIRMED', resolved = TRUE WHERE id = $1 AND status = 'PROPOSED' RETURNING creator_wallet",
+      [marketId]
     );
     if (!result.rows.length) {
       return res.status(404).json({ error: "Market not found or not in PROPOSED state" });
     }
 
+    const { creator_wallet } = result.rows[0];
+    const { updateCreatorStats } = require("../utils/creators");
+    await updateCreatorStats(db, creator_wallet, { markets_resolved_correctly: 1 });
+
     await recordResolutionHistory(
-      req.params.id,
+      marketId,
       "CONFIRMED",
       actorWallet,
-      result.rows[0].winning_outcome
+      null  // outcome from market, but not needed here
     );
 
-    logger.info({ market_id: req.params.id }, "Market resolution confirmed");
-    triggerNotification(req.params.id, "CONFIRMED");
-    res.json({ market: result.rows[0] });
+    await invalidateAll();  // invalidate market detail/list caches
+
+    logger.info({ market_id: marketId, creator_wallet }, "Market resolution confirmed + creator stats updated");
+    triggerNotification(marketId, "CONFIRMED");
+
+    // Re-fetch full market for response
+    const fullMarket = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    res.json({ market: fullMarket.rows[0] });
   } catch (err) {
     logger.error({ err, market_id: req.params.id }, "Failed to confirm market resolution");
     res.status(500).json({ error: err.message });
@@ -391,11 +433,43 @@ router.post("/:id/dispute", async (req, res) => {
       notes
     );
 
-    logger.info({ market_id: req.params.id }, "Market resolution disputed");
-    triggerNotification(req.params.id, "DISPUTED");
-    res.json({ market: result.rows[0] });
+    logger.info({ market_id: marketId, creator_wallet }, "Market resolution disputed + creator stats updated");
+    triggerNotification(marketId, "DISPUTED");
+
+    const fullMarket = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    res.json({ market: fullMarket.rows[0] });
   } catch (err) {
-    logger.error({ err, market_id: req.params.id }, "Failed to dispute market resolution");
+    logger.error({ err, market_id: marketId }, "Failed to dispute market resolution");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/markets/:id/void — void a market (admin only)
+router.post("/:id/void", jwtAuth, async (req, res) => {
+  const marketId = req.params.id;
+  try {
+    const result = await db.query(
+      "UPDATE markets SET status = 'VOIDED' WHERE id = $1 AND deleted_at IS NULL RETURNING creator_wallet",
+      [marketId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    const { creator_wallet } = result.rows[0];
+    if (creator_wallet) {
+      const { updateCreatorStats } = require("../utils/creators");
+      await updateCreatorStats(db, creator_wallet, { markets_voided: 1 });
+    }
+
+    await invalidateAll();
+
+    logger.info({ market_id: marketId, creator_wallet, admin: req.admin?.sub }, "Market voided + creator stats updated");
+
+    const fullMarket = await db.query("SELECT * FROM markets WHERE id = $1", [marketId]);
+    res.json({ market: fullMarket.rows[0], message: "Market voided successfully" });
+  } catch (err) {
+    logger.error({ err, market_id: marketId }, "Failed to void market");
     res.status(500).json({ error: err.message });
   }
 });
@@ -516,9 +590,63 @@ router.get("/:id/dispute-status", async (req, res) => {
   }
 });
 
-// DELETE /api/markets/:id — soft delete (admin JWT required)
-router.delete("/:id", jwtAuth, async (req, res) => {
+// PATCH /api/markets/:id — update market fields (admin JWT required)
+router.patch("/:id", jwtAuth, async (req, res) => {
+  const marketId = req.params.id;
+  const { endDate } = req.body;
+
+  if (!endDate) {
+    return res.status(400).json({ error: "endDate is required" });
+  }
+
+  const newEndDate = new Date(endDate);
+  if (isNaN(newEndDate.getTime())) {
+    return res.status(400).json({ error: "endDate is not a valid date" });
+  }
+
+  const minAllowed = new Date(Date.now() + 60 * 60 * 1000);
+  if (newEndDate < minAllowed) {
+    return res.status(400).json({ error: "endDate must be at least 1 hour in the future" });
+  }
+
   try {
+    const { rows } = await db.query(
+      "SELECT * FROM markets WHERE id = $1 AND deleted_at IS NULL",
+      [marketId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Market not found" });
+
+    const result = await db.query(
+      "UPDATE markets SET end_date = $1 WHERE id = $2 RETURNING *",
+      [newEndDate.toISOString(), marketId]
+    );
+
+    // Audit log
+    await db.query(
+      `INSERT INTO admin_audit_log (admin_wallet, action_type, target_id, target_type, payload, ip_address, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [
+        req.admin?.sub || "unknown",
+        "UPDATE_END_DATE",
+        marketId,
+        "MARKET",
+        JSON.stringify({ old_end_date: rows[0].end_date, new_end_date: newEndDate.toISOString() }),
+        req.ip,
+      ]
+    );
+
+    logger.info({ marketId, new_end_date: newEndDate, admin: req.admin?.sub }, "Market end date updated");
+    await invalidateAll(marketId);
+
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    logger.error({ err, market_id: marketId }, "Failed to update market end date");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/markets/:id — soft delete (admin JWT required)
+router.delete("/:id", jwtAuth, async (req, res) => {  try {
     const result = await db.query(
       "UPDATE markets SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *",
       [req.params.id]

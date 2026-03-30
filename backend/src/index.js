@@ -52,8 +52,14 @@ app.use(
 
 app.use(express.json());
 
+// Mitigate impact of any HTML echoed by clients: enforce baseline CSP on every response.
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", "default-src 'self'");
+  next();
+});
+
 // Request tracking and logging middleware
-app.use((req, res, _next) => {
+app.use((req, res, next) => {
   req.requestId = req.headers["x-request-id"] || crypto.randomUUID();
   res.setHeader("X-Request-ID", req.requestId);
 
@@ -62,6 +68,7 @@ app.use((req, res, _next) => {
     const duration = Date.now() - start;
     logger.info(
       {
+        request_id: req.requestId,
         method: req.method,
         path: req.path,
         status: res.statusCode,
@@ -72,7 +79,7 @@ app.use((req, res, _next) => {
       "HTTP Request"
     );
   });
-  _next();
+  next();
 });
 
 // Health and readiness probes — NOT behind App Check so orchestrators can probe freely
@@ -112,6 +119,7 @@ app.use("/api/governance", require("./routes/governance"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
 app.use("/api/archive", require("./routes/archive"));
+app.use("/api/creators", require("./routes/creators"));
 app.use("/api/portfolio", require("./routes/portfolio"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
 
@@ -168,6 +176,9 @@ require("./workers/resolver").start();
 
 // Start hourly stale-market expiry job
 require("./jobs/expireMarkets").start();
+
+// Start automated market liquidity update job (every 5 minutes)
+require("./jobs/updateMarketLiquidity").start();
 
 // Start automated payouts job (every 15 minutes)
 require("./jobs/automatedPayouts").start();

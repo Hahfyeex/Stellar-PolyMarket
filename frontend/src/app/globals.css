@@ -26,7 +26,7 @@
 
 /* ── Primitive palette ───────────────────────────────────────────────────── */
 :root {
-  --color-gray-50:  #f9fafb;
+  --color-gray-50: #f9fafb;
   --color-gray-100: #f3f4f6;
   --color-gray-200: #e5e7eb;
   --color-gray-300: #d1d5db;
@@ -39,24 +39,24 @@
   --color-gray-900: #111827;
   --color-gray-950: #030712;
 
-  --color-blue-400:   #60a5fa;
-  --color-blue-500:   #3b82f6;
-  --color-blue-600:   #2563eb;
-  --color-blue-700:   #1d4ed8;
-  --color-blue-800:   #1e40af;
-  --color-blue-900:   #1e3a8a;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+  --color-blue-800: #1e40af;
+  --color-blue-900: #1e3a8a;
 
-  --color-green-400:  #4ade80;
-  --color-green-500:  #22c55e;
-  --color-green-600:  #16a34a;
-  --color-green-800:  #166534;
-  --color-green-900:  #14532d;
+  --color-green-400: #4ade80;
+  --color-green-500: #22c55e;
+  --color-green-600: #16a34a;
+  --color-green-800: #166534;
+  --color-green-900: #14532d;
 
-  --color-red-400:    #f87171;
-  --color-red-500:    #ef4444;
-  --color-red-600:    #dc2626;
-  --color-red-800:    #991b1b;
-  --color-red-900:    #7f1d1d;
+  --color-red-400: #f87171;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+  --color-red-800: #991b1b;
+  --color-red-900: #7f1d1d;
 
   --color-yellow-300: #fde047;
   --color-yellow-400: #facc15;
@@ -80,8 +80,8 @@
   --color-indigo-700: #4338ca;
   --color-indigo-900: #312e81;
 
-  --color-cyan-400:   #22d3ee;
-  --color-cyan-900:   #164e63;
+  --color-cyan-400: #22d3ee;
+  --color-cyan-900: #164e63;
 
   --color-white: #ffffff;
   --color-black: #000000;
@@ -91,42 +91,42 @@
 :root,
 [data-theme="dark"] {
   /* Backgrounds */
-  --bg-page:        var(--color-gray-950);
-  --bg-surface:     var(--color-gray-900);
-  --bg-elevated:    var(--color-gray-800);
-  --bg-input:       var(--color-gray-800);
-  --bg-hover:       var(--color-gray-700);
-  --bg-overlay:     rgba(0, 0, 0, 0.8);
+  --bg-page: var(--color-gray-950);
+  --bg-surface: var(--color-gray-900);
+  --bg-elevated: var(--color-gray-800);
+  --bg-input: var(--color-gray-800);
+  --bg-hover: var(--color-gray-700);
+  --bg-overlay: rgba(0, 0, 0, 0.8);
 
   /* Text */
-  --text-primary:   var(--color-white);
+  --text-primary: var(--color-white);
   --text-secondary: var(--color-gray-400);
-  --text-muted:     var(--color-gray-500);
-  --text-disabled:  var(--color-gray-600);
+  --text-muted: var(--color-gray-500);
+  --text-disabled: var(--color-gray-600);
 
   /* Borders */
   --border-default: var(--color-gray-800);
-  --border-subtle:  var(--color-gray-700);
-  --border-strong:  var(--color-gray-600);
+  --border-subtle: var(--color-gray-700);
+  --border-strong: var(--color-gray-600);
 
   /* Accent — brand blue */
-  --accent-primary:       var(--color-blue-600);
+  --accent-primary: var(--color-blue-600);
   --accent-primary-hover: var(--color-blue-700);
-  --accent-primary-text:  var(--color-blue-400);
+  --accent-primary-text: var(--color-blue-400);
 
   /* Semantic status */
-  --status-success:     var(--color-green-400);
-  --status-success-bg:  var(--color-green-900);
-  --status-error:       var(--color-red-400);
-  --status-error-bg:    var(--color-red-900);
-  --status-warning:     var(--color-yellow-400);
-  --status-warning-bg:  var(--color-yellow-900);
-  --status-info:        var(--color-blue-400);
-  --status-info-bg:     var(--color-blue-900);
+  --status-success: var(--color-green-400);
+  --status-success-bg: var(--color-green-900);
+  --status-error: var(--color-red-400);
+  --status-error-bg: var(--color-red-900);
+  --status-warning: var(--color-yellow-400);
+  --status-warning-bg: var(--color-yellow-900);
+  --status-info: var(--color-blue-400);
+  --status-info-bg: var(--color-blue-900);
 
   /* Skeleton shimmer */
-  --skeleton-base:    var(--color-gray-800);
-  --skeleton-shine:   rgba(255, 255, 255, 0.08);
+  --skeleton-base: var(--color-gray-800);
+  --skeleton-shine: rgba(255, 255, 255, 0.08);
 
   /* Shadow */
   --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.4);
@@ -135,42 +135,42 @@
 /* ── Light theme ─────────────────────────────────────────────────────────── */
 [data-theme="light"] {
   /* Backgrounds */
-  --bg-page:        var(--color-gray-50);
-  --bg-surface:     var(--color-white);
-  --bg-elevated:    var(--color-gray-100);
-  --bg-input:       var(--color-gray-100);
-  --bg-hover:       var(--color-gray-200);
-  --bg-overlay:     rgba(0, 0, 0, 0.5);
+  --bg-page: var(--color-gray-50);
+  --bg-surface: var(--color-white);
+  --bg-elevated: var(--color-gray-100);
+  --bg-input: var(--color-gray-100);
+  --bg-hover: var(--color-gray-200);
+  --bg-overlay: rgba(0, 0, 0, 0.5);
 
   /* Text */
-  --text-primary:   var(--color-gray-900);
+  --text-primary: var(--color-gray-900);
   --text-secondary: var(--color-gray-600);
-  --text-muted:     var(--color-gray-500);
-  --text-disabled:  var(--color-gray-400);
+  --text-muted: var(--color-gray-500);
+  --text-disabled: var(--color-gray-400);
 
   /* Borders */
   --border-default: var(--color-gray-200);
-  --border-subtle:  var(--color-gray-300);
-  --border-strong:  var(--color-gray-400);
+  --border-subtle: var(--color-gray-300);
+  --border-strong: var(--color-gray-400);
 
   /* Accent — brand blue (same in both themes) */
-  --accent-primary:       var(--color-blue-600);
+  --accent-primary: var(--color-blue-600);
   --accent-primary-hover: var(--color-blue-700);
-  --accent-primary-text:  var(--color-blue-600);
+  --accent-primary-text: var(--color-blue-600);
 
   /* Semantic status */
-  --status-success:     var(--color-green-600);
-  --status-success-bg:  #dcfce7;
-  --status-error:       var(--color-red-600);
-  --status-error-bg:    #fee2e2;
-  --status-warning:     #92400e;
-  --status-warning-bg:  #fef3c7;
-  --status-info:        var(--color-blue-600);
-  --status-info-bg:     #dbeafe;
+  --status-success: var(--color-green-600);
+  --status-success-bg: #dcfce7;
+  --status-error: var(--color-red-600);
+  --status-error-bg: #fee2e2;
+  --status-warning: #92400e;
+  --status-warning-bg: #fef3c7;
+  --status-info: var(--color-blue-600);
+  --status-info-bg: #dbeafe;
 
   /* Skeleton shimmer */
-  --skeleton-base:    var(--color-gray-200);
-  --skeleton-shine:   rgba(255, 255, 255, 0.6);
+  --skeleton-base: var(--color-gray-200);
+  --skeleton-shine: rgba(255, 255, 255, 0.6);
 
   /* Shadow */
   --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.08);
@@ -180,7 +180,9 @@
 body {
   background-color: var(--bg-page);
   color: var(--text-primary);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 /* ── Utility classes ─────────────────────────────────────────────────────── */
@@ -223,6 +225,13 @@ body {
   padding-right: env(safe-area-inset-right);
 }
 
+/* Mobile content padding — prevents bottom nav overlap on pages without MobileShell */
+@media (max-width: 767px) {
+  .mobile-pb {
+    padding-bottom: 5.5rem; /* nav 4.5rem + safe-area buffer */
+  }
+}
+
 /* ── Animations ──────────────────────────────────────────────────────────── */
 
 @keyframes activityFadeIn {
@@ -235,7 +244,9 @@ body {
     transform: translateY(0);
   }
 }
-.activity-fade-in { animation: activityFadeIn 0.5s ease-out forwards; }
+.activity-fade-in {
+  animation: activityFadeIn 0.5s ease-out forwards;
+}
 
 /**
  * flash-update — yellow highlight that fades out when live odds change.
@@ -248,31 +259,55 @@ body {
  * so the layout is never disturbed — zero layout shift.
  */
 @keyframes flashUpdate {
-  0%   { background-color: rgba(250, 204, 21, 0.35); } /* yellow-400 at 35% */
-  60%  { background-color: rgba(250, 204, 21, 0.15); }
-  100% { background-color: transparent; }
+  0% {
+    background-color: rgba(250, 204, 21, 0.35);
+  } /* yellow-400 at 35% */
+  60% {
+    background-color: rgba(250, 204, 21, 0.15);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 .flash-update {
   animation: flashUpdate 0.5s ease-out forwards;
 }
 
 @keyframes drawerSlideUp {
-  from { transform: translateY(100%); }
-  to   { transform: translateY(0); }
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
-.drawer-enter { animation: drawerSlideUp 0.3s ease-out forwards; }
+.drawer-enter {
+  animation: drawerSlideUp 0.3s ease-out forwards;
+}
 
 @layer utilities {
-  .animate-float { animation: float 6s ease-in-out infinite; }
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
 }
 
 @keyframes float {
-  0%   { transform: translateY(0px); }
-  50%  { transform: translateY(-20px); }
-  100% { transform: translateY(0px); }
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 /**
  * Skeleton shimmer — uses CSS variable tokens so it adapts to both themes.
@@ -280,8 +315,12 @@ body {
  * --skeleton-shine: the highlight color that sweeps across
  */
 @keyframes shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position: calc(200% + 100px) 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: calc(200% + 100px) 0;
+  }
 }
 
 .skeleton {
@@ -299,10 +338,18 @@ body {
 }
 
 @keyframes badgeFadeIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to   { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
-.badge-fade-in { animation: badgeFadeIn 0.4s ease-out; }
+.badge-fade-in {
+  animation: badgeFadeIn 0.4s ease-out;
+}
 
 /**
  * Market Discovery Card — hover lift effect.
@@ -311,10 +358,11 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .hover-lift:hover {
     transform: translateY(-4px);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.2);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(59, 130, 246, 0.2);
   }
 }
-
 
 /* 
  * CSS Variable Naming Convention:
@@ -408,7 +456,7 @@ body {
   --color-transparent: transparent;
 }
 
-[data-theme='light'] {
+[data-theme="light"] {
   --color-gray-50: #030712;
   --color-gray-100: #111827;
   --color-gray-200: #171e2e;
@@ -654,7 +702,9 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .hover-lift:hover {
     transform: translateY(-4px);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.2);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(59, 130, 246, 0.2);
   }
 }
 
@@ -666,7 +716,9 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .hover-lift:hover {
     transform: translateY(-4px);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.2);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(59, 130, 246, 0.2);
   }
 }
 
@@ -738,7 +790,8 @@ body {
  */
 
 @keyframes pulseGreen {
-  0%, 100% {
+  0%,
+  100% {
     border-color: var(--border-default);
     box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
   }
@@ -749,7 +802,8 @@ body {
 }
 
 @keyframes pulseRed {
-  0%, 100% {
+  0%,
+  100% {
     border-color: var(--border-default);
     box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
   }
@@ -767,7 +821,6 @@ body {
   animation: pulseRed 0.5s ease-in-out 3;
 }
 
-
 /* ── Accessibility: visible focus rings (WCAG 2.1 AA — 2.4.7) ───────────── */
 /*
  * Ensures all interactive elements have a visible focus indicator.
@@ -784,4 +837,22 @@ body {
 /* Remove the browser default outline only when our custom one is applied */
 :focus:not(:focus-visible) {
   outline: none;
+}
+
+/* ── Floating Bet Button Animation ───────────────────────────────────────── */
+@keyframes floatingIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.6) translateY(40px);
+  }
+  70% {
+    transform: scale(1.05) translateY(-4px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.animate-floating-in {
+  animation: floatingIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }

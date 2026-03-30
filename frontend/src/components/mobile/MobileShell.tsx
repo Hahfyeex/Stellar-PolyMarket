@@ -10,9 +10,10 @@ import type { Market } from "../../types/market";
 
 interface Props {
   children: React.ReactNode;
-  activeMarket: Market | null;
-  walletAddress: string | null;
+  activeMarket?: Market | null;
+  walletAddress?: string | null;
   onBetPlaced?: () => void;
+  unreadCount?: number;
 }
 
 export default function MobileShell({
@@ -51,8 +52,8 @@ export default function MobileShell({
         overscrollBehavior: "contain",
       }}
     >
-      {/* Page content — add bottom padding so content isn't hidden behind nav bar */}
-      <div className="pb-20">
+      {/* Page content — standard mobile padding */}
+      <div className="pb-[88px]"> {/* 64px nav + safe-area */}
         {children}
       </div>
 
@@ -64,7 +65,11 @@ export default function MobileShell({
       />
 
       {/* Bottom Nav Bar */}
-      <BottomNavBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <BottomNavBar 
+        activeTab={activeTab} 
+        onTabChange={() => {}} 
+        unreadCount={currentUnreadCount}
+      />
 
       {/* Trade Drawer */}
       <TradeDrawer
@@ -77,3 +82,4 @@ export default function MobileShell({
     </div>
   );
 }
+

@@ -10,8 +10,9 @@
  */
 // Named imports — webpack tree-shakes unused recharts components via the
 // package's sideEffects:false declaration, keeping the bundle lean.
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+} from "recharts";
 import { usePoolOwnership } from "../hooks/usePoolOwnership";
+import { useChartTheme } from "./ChartThemeProvider";
 import { OwnershipSlice } from "../utils/poolOwnership";
 
 interface Props {
@@ -19,33 +20,21 @@ interface Props {
 }
 
 /** Stella Polymarket design token palette for pie slices */
-const SLICE_COLORS = [
-  "#3b82f6", // blue-500
-  "#22c55e", // green-500
-  "#a855f7", // purple-500
-  "#f59e0b", // amber-500
-  "#ef4444", // red-500
-  "#06b6d4", // cyan-500
-  "#ec4899", // pink-500
-  "#84cc16", // lime-500
-  "#6366f1", // indigo-500
-  "#f97316", // orange-500
-];
-const OTHERS_COLOR = "#4b5563"; // gray-600
-
-function sliceColor(index: number, label: string): string {
-  if (label === "Others") return OTHERS_COLOR;
-  return SLICE_COLORS[index % SLICE_COLORS.length];
+function sliceColor(index: number, label: string, colors: any): string {
+  if (label === "Others") return colors.others;
+  return colors.slices[index % colors.slices.length];
 }
 
 /** Custom tooltip shown on hover (desktop) and tap (mobile) */
 function CustomTooltip({ active, payload }: any) {
+  const colors = useChartTheme();
   if (!active || !payload?.length) return null;
   const slice: OwnershipSlice = payload[0].payload;
   return (
     <div
       data-testid="chart-tooltip"
-      className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs shadow-lg"
+      style={{ backgroundColor: colors.tooltipBg, borderColor: colors.tooltipBorder }}
+      className="rounded-lg px-3 py-2 text-xs shadow-lg"
     >
       <p className="text-white font-semibold">{slice.label}</p>
       {slice.wallet && (
@@ -107,13 +96,16 @@ export default function PoolOwnershipChart({ marketId }: Props) {
               paddingAngle={2}
               strokeWidth={0}
             >
-              {slices.map((slice, i) => (
-                <Cell
-                  key={slice.label}
-                  fill={sliceColor(i, slice.label)}
-                  aria-label={`${slice.label}: ${slice.percentage.toFixed(1)}%`}
-                />
-              ))}
+              {slices.map((slice, i) => {
+                const colors = useChartTheme();
+                return (
+                  <Cell
+                    key={slice.label}
+                    fill={sliceColor(i, slice.label, colors)}
+                    aria-label={`${slice.label}: ${slice.percentage.toFixed(1)}%`}
+                  />
+                );
+              })}
             </Pie>
             <Tooltip content={<CustomTooltip />} />
             <Legend

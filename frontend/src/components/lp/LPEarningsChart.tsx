@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useChartTheme } from "../../ChartThemeProvider";
 
 interface LPPool {
   id: string;
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function LPEarningsChart({ pools }: Props) {
+  const colors = useChartTheme();
   const [timeframe, setTimeframe] = useState<"7d" | "30d" | "90d" | "1y">("30d");
 
   // Mock earnings data - replace with actual API data
@@ -156,11 +158,11 @@ export function LPEarningsChart({ pools }: Props) {
             </div>
 
             {/* Line chart */}
-            <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
+              <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
               <defs>
                 <linearGradient id="earningsGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="rgb(34, 197, 94)" stopOpacity="0.3" />
-                  <stop offset="100%" stopColor="rgb(34, 197, 94)" stopOpacity="0" />
+                  <stop offset="0%" stopColor={colors.earnings} stopOpacity="0.3" />
+                  <stop offset="100%" stopColor={colors.earnings} stopOpacity="0" />
                 </linearGradient>
               </defs>
 
@@ -188,7 +190,7 @@ export function LPEarningsChart({ pools }: Props) {
                   )
                   .join(" ")}
                 fill="none"
-                stroke="rgb(34, 197, 94)"
+                stroke={colors.earnings}
                 strokeWidth="2"
               />
             </svg>
@@ -207,7 +209,7 @@ export function LPEarningsChart({ pools }: Props) {
         {/* Legend */}
         <div className="mt-6 flex items-center justify-center gap-6 text-sm">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-green-400 rounded-full" />
+            <div className="w-3 h-3" style={{ backgroundColor: colors.earnings }} />
             <span className="text-gray-400">Cumulative Earnings</span>
           </div>
           <div className="flex items-center gap-2">
