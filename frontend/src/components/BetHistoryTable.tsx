@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from "react";
 import Papa from "papaparse";
 import EmptyState from "./EmptyState";
 import { NoBetsIllustration } from "../assets/emptyStates";
+import BetHistoryFilters, { applyFilters, useBetHistoryFilters } from "./BetHistoryFilters";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface BetRow {
@@ -100,6 +101,7 @@ export default function BetHistoryTable({ walletAddress, apiUrl = "" }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(0);
+  const { filters, onChange: onFiltersChange, onClear: onFiltersClear } = useBetHistoryFilters();
 
   useEffect(() => {
     if (!walletAddress) return;
@@ -124,10 +126,11 @@ export default function BetHistoryTable({ walletAddress, apiUrl = "" }: Props) {
     [sortKey]
   );
 
-  const sorted = sortBets(allRows, sortKey, sortDir);
+  const filtered = applyFilters(allRows, filters);
+  const sorted = sortBets(filtered, sortKey, sortDir);
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const pageRows = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const summary = computeSummary(allRows);
+  const summary = computeSummary(filtered);
 
   const handleDownloadCSV = useCallback(() => {
     const csv = Papa.unparse(buildCSVRows(sorted));
@@ -169,6 +172,9 @@ export default function BetHistoryTable({ walletAddress, apiUrl = "" }: Props) {
           ↓ Download CSV
         </button>
       </div>
+
+      {/* Filter bar */}
+      <BetHistoryFilters filters={filters} onChange={onFiltersChange} onClear={onFiltersClear} />
 
       {allRows.length === 0 ? (
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 text-center">
