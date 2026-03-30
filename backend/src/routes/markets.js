@@ -11,6 +11,14 @@ const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
 const eventBus = require("../bots/eventBus");
 const { getOrSet, invalidateAll, detailKey, TTL } = require("../utils/cache");
+const jwtAuth = require("../middleware/jwtAuth");
+
+async function recordResolutionHistory(marketId, action, actorWallet, outcomeIndex, notes) {
+  await db.query(
+    "INSERT INTO market_resolution_history (market_id, action, actor_wallet, outcome_index, notes) VALUES ($1, $2, $3, $4, $5)",
+    [marketId, action, actorWallet ?? null, outcomeIndex ?? null, notes ?? null]
+  );
+}
 
 // GET /api/markets — list all markets with pagination
 router.get("/", async (req, res) => {
@@ -443,6 +451,68 @@ router.post("/:id/resolve", async (req, res) => {
       { err, market_id: req.params.id, winning_outcome: winningOutcome },
       "Failed to resolve market"
     );
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/markets/:id/dispute — dispute a proposed resolution
+router.post("/:id/dispute", async (req, res) => {
+  const { actorWallet, notes, reason } = req.body;
+  try {
+    const result = await db.query(
+      "UPDATE markets SET status = 'DISPUTED' WHERE id = $1 AND status = 'PROPOSED' RETURNING *",
+      [req.params.id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Market not found or not in PROPOSED state" });
+    }
+    await recordResolutionHistory(
+      req.params.id,
+      "DISPUTED",
+      actorWallet,
+      result.rows[0].winning_outcome,
+      notes || reason
+    );
+    logger.info({ market_id: req.params.id }, "Market resolution disputed");
+    triggerNotification(req.params.id, "DISPUTED");
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to dispute market resolution");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/markets/:id/dispute-status — get dispute window status
+router.get("/:id/dispute-status", async (req, res) => {
+  try {
+    const market = await db.query(
+      "SELECT dispute_window_ends_at, (dispute_window_ends_at > NOW()) AS is_in_dispute_window FROM markets WHERE id = $1",
+      [req.params.id]
+    );
+    if (!market.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+    res.status(200).json(market.rows[0]);
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to fetch dispute status");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/markets/:id — soft delete (admin JWT required)
+router.delete("/:id", jwtAuth, async (req, res) => {
+  try {
+    const result = await db.query(
+      "UPDATE markets SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *",
+      [req.params.id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+    logger.info({ market_id: req.params.id }, "Market soft-deleted");
+    res.json({ market: result.rows[0] });
+  } catch (err) {
+    logger.error({ err, market_id: req.params.id }, "Failed to delete market");
     res.status(500).json({ error: err.message });
   }
 });

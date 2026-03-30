@@ -339,3 +339,87 @@ describe("Oracle Resolve Retry (#490)", () => {
     errorSpy.mockRestore();
   });
 });
+
+// ── Circuit Breaker (#587) ────────────────────────────────────────────────────
+
+describe("Oracle Circuit Breaker (#587)", () => {
+  function mockHealthOk() {
+    axios.get.mockImplementation((url) => {
+      if (url.includes("/api/health/oracle")) return Promise.resolve({ data: { status: "ok" } });
+      return Promise.resolve({ data: { markets: [] } });
+    });
+  }
+
+  function mockBackendDown() {
+    axios.get.mockRejectedValue(new Error("ECONNREFUSED"));
+  }
+
+  test("consecutiveFailures increments on each failed cycle", async () => {
+    mockBackendDown();
+    await oracle.runOracle();
+    expect(oracle._getConsecutiveFailures()).toBe(1);
+    await oracle.runOracle();
+    expect(oracle._getConsecutiveFailures()).toBe(2);
+  });
+
+  test("admin alert sent after 3 consecutive failures", async () => {
+    mockBackendDown();
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation();
+    const errorSpy = jest.spyOn(console, "error").mockImplementation();
+
+    await oracle.runOracle(); // 1
+    await oracle.runOracle(); // 2
+    await oracle.runOracle(); // 3 — alert
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("consecutive failures — sending admin alert")
+    );
+
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  test("circuit breaker opens after 10 consecutive failures", async () => {
+    mockBackendDown();
+    const errorSpy = jest.spyOn(console, "error").mockImplementation();
+
+    for (let i = 0; i < 10; i++) {
+      await oracle.runOracle();
+    }
+
+    expect(oracle._getCircuitOpen()).toBe(true);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Circuit breaker tripped")
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  test("circuit open skips execution", async () => {
+    mockBackendDown();
+    const errorSpy = jest.spyOn(console, "error").mockImplementation();
+
+    for (let i = 0; i < 10; i++) await oracle.runOracle();
+
+    axios.get.mockClear();
+    await oracle.runOracle(); // should be skipped
+
+    expect(axios.get).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
+
+  test("consecutiveFailures resets to 0 on successful cycle", async () => {
+    mockBackendDown();
+    const errorSpy = jest.spyOn(console, "error").mockImplementation();
+    await oracle.runOracle();
+    await oracle.runOracle();
+    expect(oracle._getConsecutiveFailures()).toBe(2);
+
+    mockHealthOk();
+    await oracle.runOracle();
+    expect(oracle._getConsecutiveFailures()).toBe(0);
+
+    errorSpy.mockRestore();
+  });
+});

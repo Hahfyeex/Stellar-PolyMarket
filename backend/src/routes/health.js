@@ -91,9 +91,7 @@ async function checkMigrations() {
     // Query the schema_migrations table (standard for most migration tools).
     // If the table doesn't exist, treat as ok (no migration runner configured).
     const result = await withTimeout(
-      db.query(
-        "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
-      ),
+      db.query("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"),
       CHECK_TIMEOUT_MS
     );
 
@@ -102,10 +100,7 @@ async function checkMigrations() {
 
     const latest = result.rows[0]?.version;
     if (latest !== expected) {
-      logger.warn(
-        { latest, expected },
-        "[Health] Migration version mismatch"
-      );
+      logger.warn({ latest, expected }, "[Health] Migration version mismatch");
       return "error";
     }
     return "ok";
@@ -127,8 +122,8 @@ router.get("/health", async (_req, res) => {
 
   const body = {
     status: healthy ? "healthy" : "unhealthy",
-    db:     dbStatus,
-    redis:  redisStatus,
+    db: dbStatus,
+    redis: redisStatus,
     uptime: Math.floor(process.uptime()),
     // Generic error string — never expose internal details
     ...(healthy ? {} : { error: "dependency unavailable" }),
@@ -147,16 +142,15 @@ router.get("/ready", async (_req, res) => {
     checkMigrations(),
   ]);
 
-  const ready =
-    dbStatus === "ok" && redisStatus === "ok" && migrationsStatus === "ok";
+  const ready = dbStatus === "ok" && redisStatus === "ok" && migrationsStatus === "ok";
   const statusCode = ready ? 200 : 503;
 
   const body = {
-    status:     ready ? "ready" : "not ready",
-    db:         dbStatus,
-    redis:      redisStatus,
+    status: ready ? "ready" : "not ready",
+    db: dbStatus,
+    redis: redisStatus,
     migrations: migrationsStatus,
-    uptime:     Math.floor(process.uptime()),
+    uptime: Math.floor(process.uptime()),
     ...(ready ? {} : { error: "dependency unavailable" }),
   };
 
@@ -164,9 +158,24 @@ router.get("/ready", async (_req, res) => {
   return res.status(statusCode).json(body);
 });
 
+// ── GET /health/db — pool stats ───────────────────────────────────────────────
+
+router.get("/health/db", (_req, res) => {
+  const { _stats } = require("../db");
+  res.json({
+    status: "ok",
+    pool: { total: _stats.total, idle: _stats.idle, waiting: _stats.waiting },
+  });
+});
+
+// ── GET /api/health/oracle — oracle connectivity ping (#587) ──────────────────
+router.get("/api/health/oracle", (_req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 module.exports = router;
 // Export helpers for unit testing
-module.exports._checkDb         = checkDb;
-module.exports._checkRedis      = checkRedis;
+module.exports._checkDb = checkDb;
+module.exports._checkRedis = checkRedis;
 module.exports._checkMigrations = checkMigrations;
-module.exports._withTimeout     = withTimeout;
+module.exports._withTimeout = withTimeout;
