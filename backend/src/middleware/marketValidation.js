@@ -45,6 +45,11 @@ const ValidationErrors = {
     message: "Wallet address is required for market creation",
     statusCode: 400,
   },
+  INVALID_OUTCOMES: {
+    code: "INVALID_OUTCOMES",
+    message: "Validation failed for one or more outcomes",
+    statusCode: 400,
+  },
 };
 
 /**
@@ -72,7 +77,7 @@ async function validateMarket(metadata) {
     return {
       ...ValidationErrors.DESCRIPTION_TOO_SHORT,
       details: {
-        currentLength: question?.length || 0,
+        currentLength: (question || "").trim().length,
         requiredLength: 50,
       },
     };
@@ -114,7 +119,7 @@ async function validateMarket(metadata) {
     logger.warn(
       {
         end_date: endDate,
-        parsed_date: endDateTime.toISOString(),
+        parsed_date: isNaN(endDateTime.getTime()) ? "Invalid Date" : endDateTime.toISOString(),
         validation: "INVALID_END_DATE",
       },
       "Market validation failed: invalid end date"
@@ -130,7 +135,45 @@ async function validateMarket(metadata) {
     };
   }
 
-  // Validation 4: Check for duplicate markets
+  // Validation 4: Check individual outcome labels
+  // Labels must be non-empty, unique (case-insensitive), and max 100 characters
+  const outcomeErrors = {};
+  const seenLabels = new Set();
+
+    outcomes.forEach((label, index) => {
+      const trimmedLabel = typeof label === "string" ? label.trim() : "";
+
+      if (!trimmedLabel) {
+        outcomeErrors[`outcomes[${index}]`] = "cannot be empty";
+      } else if (!/[a-z0-9]/i.test(trimmedLabel)) {
+        outcomeErrors[`outcomes[${index}]`] = "must contain at least one alphanumeric character";
+      } else if (trimmedLabel.length > 100) {
+        outcomeErrors[`outcomes[${index}]`] = "cannot exceed 100 characters";
+      }
+
+      const lowerLabel = trimmedLabel.toLowerCase();
+      if (trimmedLabel && seenLabels.has(lowerLabel)) {
+        outcomeErrors[`outcomes[${index}]`] = "must be unique";
+      }
+      if (trimmedLabel) seenLabels.add(lowerLabel);
+    });
+
+  if (Object.keys(outcomeErrors).length > 0) {
+    logger.warn(
+      {
+        outcome_errors: outcomeErrors,
+        validation: "INVALID_OUTCOMES",
+      },
+      "Market validation failed: invalid outcomes"
+    );
+
+    return {
+      ...ValidationErrors.INVALID_OUTCOMES,
+      details: outcomeErrors,
+    };
+  }
+
+  // Validation 5: Check for duplicate markets
   // Prevent creation of markets with identical questions (case-insensitive)
   try {
     const duplicateCheck = await db.query(
@@ -267,6 +310,11 @@ async function rateLimitMarketCreation(req, res, next) {
  * Validates market metadata and enforces rate limiting
  */
 async function validateMarketCreation(req, res, next) {
+  // Trim outcome labels before validation and storage
+  if (Array.isArray(req.body.outcomes)) {
+    req.body.outcomes = req.body.outcomes.map((o) => (typeof o === "string" ? o.trim() : o));
+  }
+
   const { question, endDate, outcomes } = req.body;
 
   try {

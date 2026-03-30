@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import { BettingSlipProvider } from "../context/BettingSlipContext";
 import { WalletProvider } from "../context/WalletContext";
@@ -10,6 +11,7 @@ import ThemeScript from "../components/ThemeScript";
 import OfflineBanner from "../components/OfflineBanner";
 import KeyboardShortcutsProvider from "../components/KeyboardShortcutsProvider";
 import I18nProvider from "../components/I18nProvider";
+import ReferralTracker from "../components/ReferralTracker";
 import { appViewport } from "./viewportConfig";
 
 export const metadata: Metadata = {
@@ -39,6 +41,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <SkipLink />
         <OfflineBanner />
+        <Suspense fallback={null}>
+          <ReferralTracker />
+        </Suspense>
         {/* I18nProvider initialises i18next with dynamic JSON loading and browser locale detection */}
         <I18nProvider>
           <ReduxProvider>
