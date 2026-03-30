@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS markets (
   resolved BOOLEAN DEFAULT FALSE,
   winning_outcome INT,
   total_pool NUMERIC DEFAULT 0,
+  is_liquid BOOLEAN DEFAULT FALSE,
   status TEXT DEFAULT 'ACTIVE',
   contract_address TEXT,
   payout_distributed BOOLEAN DEFAULT FALSE,

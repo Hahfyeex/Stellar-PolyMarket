@@ -73,25 +73,33 @@ router.get("/", async (req, res) => {
 
     // Category filter: slug
     const categorySlug = req.query.category;
+    const includeIlliquid = req.query.include_illiquid === "true";
 
     // Cache-aside: check Redis first, fall back to DB on miss or Redis failure
-    // Include categorySlug in cache key if present
+    // Include categorySlug and include_illiquid in cache key if present
     const key = categorySlug
-      ? `markets:cat:${categorySlug}:${limit}:${offset}`
-      : listKey(limit, offset);
+      ? `markets:cat:${categorySlug}:${includeIlliquid ? "all" : "liquid"}:${limit}:${offset}`
+      : `markets:${includeIlliquid ? "all" : "liquid"}:${limit}:${offset}`;
     const data = await getOrSet(key, TTL.LIST, async () => {
       // Cache miss — query the database
+      const liquidityCondition = includeIlliquid ? "" : " AND m.is_liquid = TRUE";
+
       let countQuery =
-        "SELECT COUNT(*) as total FROM markets m WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'";
+        "SELECT COUNT(*) as total FROM markets m WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'" +
+        liquidityCondition;
       let dataQuery =
-        "SELECT m.*, c.slug as category_slug FROM markets m LEFT JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'";
+        "SELECT m.*, c.slug as category_slug FROM markets m LEFT JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED'" +
+        liquidityCondition;
       const params = [limit, offset];
 
       if (categorySlug) {
         countQuery =
-          "SELECT COUNT(*) as total FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $1";
+          "SELECT COUNT(*) as total FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $1" +
+          liquidityCondition;
         dataQuery =
-          "SELECT m.*, c.slug as category_slug FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $3 ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
+          "SELECT m.*, c.slug as category_slug FROM markets m JOIN categories c ON m.category_id = c.id WHERE m.deleted_at IS NULL AND m.status != 'EXPIRED' AND c.slug = $3" +
+          liquidityCondition +
+          " ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
         params.push(categorySlug);
       } else {
         dataQuery += " ORDER BY m.created_at DESC LIMIT $1 OFFSET $2";
