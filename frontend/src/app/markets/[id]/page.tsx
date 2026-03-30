@@ -376,8 +376,8 @@ export default async function MarketsDetailPage({ params }: { params: { id: stri
               />
             )}
 
-            {/* 6. Firebase-powered comments */}
-            {market && <MarketComments marketId={market.id} walletAddress={publicKey} />}
+            {/* 6. Discussion Thread */}
+            {market && <MarketComments marketId={market.id} />}
 
             {/* 7. Market rules + truth sources */}
             {market && (
