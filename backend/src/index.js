@@ -3,7 +3,6 @@ const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
 const logger = require("./utils/logger");
-const { sanitizeError } = require("./utils/errors");
 
 // ── Firebase Admin SDK initialisation ──────────────────────────────────────
 // Must happen before any firebase-admin/* imports (including appCheck middleware).
@@ -153,10 +152,7 @@ apolloServer.start().then(() => {
         let user = null;
         if (auth.startsWith("Bearer ")) {
           try {
-            user = jwt.verify(
-              auth.slice(7),
-              process.env.JWT_SECRET || "change-me-in-production"
-            );
+            user = jwt.verify(auth.slice(7), process.env.JWT_SECRET || "change-me-in-production");
           } catch {
             // Invalid token — user stays null; resolvers can enforce auth as needed
           }
@@ -195,11 +191,25 @@ require("./indexer/gap-detector").initializeSelfHealing();
 // Initialise bot registry — subscribes all strategies to the event bus
 require("./bots/registry");
 
-// Global error handler
+// Global error handler — always returns sanitized response
 app.use((err, req, res, _next) => {
-  const safeMessage = sanitizeError(err, req.requestId);
-  res.status(500).json({ error: safeMessage });
+  const requestId = req.requestId;
+  logger.error(
+    { err: { message: err.message, stack: err.stack, code: err.code }, requestId },
+    "Unhandled error"
+  );
+  res.status(err.status || 500).json({ error: "Internal server error", requestId });
 });
+
+// Development-only error handler — includes stack trace only when NODE_ENV is explicitly 'development'
+if (process.env.NODE_ENV === "development") {
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, _next) => {
+    res
+      .status(err.status || 500)
+      .json({ error: err.message, stack: err.stack, requestId: req.requestId });
+  });
+}
 
 const PORT = process.env.PORT || 4000;
 const http = require("http");
