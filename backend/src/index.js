@@ -111,9 +111,13 @@ app.use("/api/status", require("./routes/status"));
 app.use("/api/images", require("./routes/images"));
 app.use("/api/v1/oracles", require("./routes/oracles"));
 app.use("/api/tvl", require("./routes/tvl"));
+app.use("/api/webhooks", require("./routes/webhooks"));
+app.use("/api/markets", require("./routes/comments"));
 
 // Start TVL background poller (updates Prometheus gauges every 30 s)
 require("./services/tvlService").startPoller();
+// Start Webhook Delivery Worker
+require("./workers/webhook-worker").runWebhookWorker();
 app.use("/api/governance", require("./routes/governance"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/indexer", require("./routes/indexer"));
