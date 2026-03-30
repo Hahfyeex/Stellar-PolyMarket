@@ -9,6 +9,7 @@ const { sanitizeError } = require("../utils/errors");
 const axios = require("axios");
 const { broadcastBetPlaced } = require("../websocket/marketUpdates");
 const { getMarketStatus } = require("../utils/sorobanClient");
+const { findPaymentPaths } = require("../utils/stellar-pathfinding");
 
 const POOL_LOW_THRESHOLD = Number(process.env.DEPTH_BOT_THRESHOLD) || 50;
 const GRACE_PERIOD_SECONDS = parseInt(process.env.BET_GRACE_PERIOD_SECONDS, 10) || 300; // 5 min default
@@ -17,6 +18,36 @@ const IDEMPOTENCY_TTL = 24 * 60 * 60; // 24 hours in seconds
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TRUSTLINE_CACHE_TTL = 5 * 60; // 5 minutes in seconds
 const HORIZON_URL = process.env.HORIZON_URL || "https://horizon.stellar.org";
+
+/**
+ * GET /api/bets/payment-paths
+ * Query available payment paths from Stellar Horizon.
+ */
+router.get("/payment-paths", async (req, res) => {
+  const { source_asset, source_issuer, dest_asset, dest_issuer, amount } = req.query;
+
+  if (!source_asset || !dest_asset || !amount) {
+    return res.status(400).json({ error: "source_asset, dest_asset, and amount are required" });
+  }
+
+  try {
+    const paths = await findPaymentPaths(
+      source_asset,
+      source_issuer,
+      amount,
+      dest_asset,
+      dest_issuer
+    );
+
+    res.json({
+      status: "success",
+      data: paths
+    });
+  } catch (err) {
+    logger.error({ err: err.message }, "Error fetching payment paths");
+    res.status(500).json({ error: "Failed to fetch payment paths" });
+  }
+});
 
 /**
  * Verify that a wallet has a trustline for a given asset
@@ -146,6 +177,17 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Transaction memo does not match expected market/outcome format" });
     }
 
+    const { sourceAssetCode, sourceAssetIssuer } = req.body;
+    let paymentPath = null;
+
+    if (sourceAssetCode && sourceAssetCode !== "XLM") {
+      const paths = await findPaymentPaths(sourceAssetCode, sourceAssetIssuer, amount, "XLM", null);
+      if (paths.length === 0) {
+        return res.status(400).json({ error: "No valid payment path found for specified source asset" });
+      }
+      paymentPath = paths[0];
+    }
+
     const memoToStore =
       memo || (transactionMemo === expectedMemo ? transactionMemo : null);
 
@@ -251,7 +293,10 @@ router.post("/", async (req, res) => {
     // Invalidate portfolio cache for this wallet
     await redis.del(`portfolio:${walletAddress}`);
 
-    const responseBody = { bet: bet.rows[0] };
+    const responseBody = { 
+      bet: bet.rows[0],
+      paymentPath: paymentPath || undefined
+    };
     if (idempotencyKey) {
       await redis.set(
         `idem:${idempotencyKey}`,

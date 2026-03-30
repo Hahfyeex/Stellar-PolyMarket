@@ -33,18 +33,49 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useMarketTabs } from "../hooks/useMarketTabs";
 import { useWatchlist } from "../hooks/useWatchlist";
 import MarketTabs from "../components/MarketTabs";
-import MarketListSkeleton from "../components/skeletons/MarketListSkeleton";
-import { useTranslation } from "react-i18next";
+import { useMarketSearch, SearchFilters, SortKey } from "../hooks/useMarketSearch";
+import OnboardingWizard from "../components/onboarding/OnboardingWizard";
+import ThemeToggle from "../components/ThemeToggle";
+import { useRef } from "react";
 
 export default function Home() {
   const { publicKey, isLoading, walletError, connect, disconnect } = useWalletContext();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { data: markets = DEMO_MARKETS, isLoading: loading } = useMarkets();
-  const { t } = useTranslation("common");
+  
+  const {
+    data,
+    isLoading: loading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteMarkets();
+
+  const markets = data?.pages.flatMap((page) => page.markets) ?? DEMO_MARKETS;
+  
   const [activeMarket, setActiveMarket] = useState<Market | null>(null);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
   const { watchlist, toggleWatchlist } = useWatchlist();
+
+  // Sentinel for Infinite Scroll
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (sentinelRef.current) {
+      observer.observe(sentinelRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Restore filter state from URL params on mount
   const [filters, setFilters] = useState<SearchFilters>(() => ({
@@ -129,8 +160,9 @@ export default function Home() {
 
   // Auto-select first active market for the FAB
   useEffect(() => {
+    if (!markets || markets.length === 0) return;
     const first = markets.find((m) => !m.resolved && new Date(m.end_date) > new Date());
-    setActiveMarket(first ?? null);
+    if (first) setActiveMarket(first);
   }, [markets]);
 
   const pageContent = (

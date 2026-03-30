@@ -26,6 +26,7 @@ const axios = require("axios");
 const db = require("../db");
 const logger = require("../utils/logger");
 const pubsub = require("../graphql/pubsub");
+const { broadcastBetPlaced, broadcastMarketResolved } = require("../websocket/marketUpdates");
 
 const MERCURY_BASE = process.env.MERCURY_URL || "https://api.mercurydata.app";
 const MERCURY_KEY = process.env.MERCURY_API_KEY || "";
@@ -152,6 +153,14 @@ async function handleBetPlaced(payload, meta) {
     amount: String(cost),
   });
 
+  // Broadcast WebSocket update to subscribed clients
+  broadcastBetPlaced(market_id, {
+    market_id,
+    wallet_address: bettor,
+    outcome_index: option_index,
+    amount: String(cost),
+  });
+
   // Recalculate and publish updated odds (basis-points per outcome, zero-float)
   _publishOddsChanged(market_id).catch((err) =>
     logger.warn({ err: err.message, market_id }, "Failed to publish oddsChanged")
@@ -197,6 +206,9 @@ async function handleMarketResolved(payload) {
     winning_outcome,
     total_pool: String(total_pool),
   });
+
+  // Broadcast WebSocket update to subscribed clients
+  broadcastMarketResolved(market_id, winning_outcome);
 }
 
 /**
@@ -413,9 +425,70 @@ async function processEvent(event) {
   }
 }
 
+// ── Event streaming with reconnection ────────────────────────────────────────
+
+const POLL_INTERVAL_MS = parseInt(process.env.MERCURY_POLL_INTERVAL_MS, 10) || 2000;
+const MAX_BACKOFF_MS = 60_000;
+
+let _streamActive = false;
+let _lastLedger = 0;
+
+/**
+ * Poll Mercury for new events since the last processed ledger.
+ * On failure, retries with exponential backoff up to MAX_BACKOFF_MS.
+ */
+async function startEventStream() {
+  if (!CONTRACT_ID || !MERCURY_KEY) {
+    logger.warn("Mercury event stream skipped: CONTRACT_ADDRESS or MERCURY_API_KEY not set");
+    return;
+  }
+  _streamActive = true;
+  let backoff = 1000;
+
+  logger.info({ contract_id: CONTRACT_ID }, "Mercury event stream starting");
+
+  while (_streamActive) {
+    try {
+      const { data } = await axios.get(`${MERCURY_BASE}/event/contract/${CONTRACT_ID}`, {
+        headers: { Authorization: `Bearer ${MERCURY_KEY}` },
+        params: { after_ledger: _lastLedger },
+        timeout: 10_000,
+      });
+
+      const events = data.events ?? [];
+      for (const event of events) {
+        try {
+          await processEvent(event);
+          if (event.ledger_seq > _lastLedger) _lastLedger = event.ledger_seq;
+        } catch (err) {
+          logger.error({ err: err.message, topic: event.topic }, "Event processing failed");
+        }
+      }
+
+      // Reset backoff on success
+      backoff = 1000;
+      await _sleep(POLL_INTERVAL_MS);
+    } catch (err) {
+      logger.error({ err: err.message, backoff }, "Mercury connection error — retrying");
+      await _sleep(backoff);
+      backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+    }
+  }
+}
+
+function stopEventStream() {
+  _streamActive = false;
+}
+
+function _sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 module.exports = {
   subscribe,
   processEvent,
+  startEventStream,
+  stopEventStream,
   // Named exports for unit testing
   handleMarketCreated,
   handleBetPlaced,

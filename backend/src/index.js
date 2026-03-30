@@ -112,6 +112,7 @@ app.use("/api/images", require("./routes/images"));
 app.use("/api/v1/oracles", require("./routes/oracles"));
 app.use("/api/tvl", require("./routes/tvl"));
 app.use("/api/webhooks", require("./routes/webhooks"));
+app.use("/api/markets", require("./routes/comments"));
 
 // Start TVL background poller (updates Prometheus gauges every 30 s)
 require("./services/tvlService").startPoller();
@@ -187,6 +188,9 @@ require("./workers/archive-worker").start();
 
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
+
+// Start real-time Mercury event stream with reconnection logic
+require("./indexer/mercury").startEventStream();
 
 // Initialize self-healing gap detection and recovery
 require("./indexer/gap-detector").initializeSelfHealing();
