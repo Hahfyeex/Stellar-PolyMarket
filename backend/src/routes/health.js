@@ -168,6 +168,11 @@ router.get("/health/db", (_req, res) => {
   });
 });
 
+// ── GET /api/health/oracle — oracle connectivity ping (#587) ──────────────────
+router.get("/api/health/oracle", (_req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 module.exports = router;
 // Export helpers for unit testing
 module.exports._checkDb = checkDb;

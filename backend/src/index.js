@@ -114,6 +114,7 @@ app.use("/api/indexer", require("./routes/indexer"));
 app.use("/api/archive", require("./routes/archive"));
 app.use("/api/portfolio", require("./routes/portfolio"));
 app.use("/api/leaderboard", require("./routes/leaderboard"));
+app.use("/api/channels", require("./routes/channels"));
 
 // ── Apollo Server (GraphQL API) ────────────────────────────────────────────
 const { ApolloServer } = require("@apollo/server");
@@ -145,10 +146,7 @@ apolloServer.start().then(() => {
         let user = null;
         if (auth.startsWith("Bearer ")) {
           try {
-            user = jwt.verify(
-              auth.slice(7),
-              process.env.JWT_SECRET || "change-me-in-production"
-            );
+            user = jwt.verify(auth.slice(7), process.env.JWT_SECRET || "change-me-in-production");
           } catch {
             // Invalid token — user stays null; resolvers can enforce auth as needed
           }

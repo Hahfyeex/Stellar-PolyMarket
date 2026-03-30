@@ -10,7 +10,7 @@ const {
 const redis = require("../utils/redis");
 const { calculateOdds } = require("../utils/math");
 const eventBus = require("../bots/eventBus");
-const { getOrSet, invalidateAll, listKey, detailKey, TTL } = require("../utils/cache");
+const { getOrSet, invalidateAll, listKey, TTL } = require("../utils/cache");
 const { getFeeRateBps } = require("../utils/sorobanClient");
 const jwtAuth = require("../middleware/jwtAuth");
 
@@ -204,34 +204,51 @@ const { calculateConfidenceScore } = require("../utils/analytics");
 // GET /api/markets/:id
 router.get("/:id", async (req, res) => {
   try {
-    const key = detailKey(req.params.id);
-    const data = await getOrSet(key, TTL.DETAIL, async () => {
-      const market = await db.query("SELECT * FROM markets WHERE id = $1 AND deleted_at IS NULL", [
-        req.params.id,
-      ]);
-      if (!market.rows.length) return null; // signal not-found
+    const cacheKey = `market:detail:${req.params.id}`;
+    const cached = await redis.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
 
-      const betsResult = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
-      const bets = betsResult.rows;
-      const confidenceScore = calculateConfidenceScore(bets);
-
-      logger.debug(
-        {
-          market_id: req.params.id,
-          bets_count: bets.length,
-          confidence_score: confidenceScore,
-        },
-        "Market details fetched with confidence score"
-      );
-
-      return { market: { ...market.rows[0], confidence_score: confidenceScore }, bets };
-    });
-
-    if (!data) {
+    const marketResult = await db.query(
+      "SELECT * FROM markets WHERE id = $1 AND deleted_at IS NULL",
+      [req.params.id]
+    );
+    if (!marketResult.rows.length) {
       logger.warn({ market_id: req.params.id }, "Market not found");
       return res.status(404).json({ error: "Market not found" });
     }
 
+    const betsResult = await db.query("SELECT * FROM bets WHERE market_id = $1", [req.params.id]);
+    const bets = betsResult.rows;
+    const confidenceScore = calculateConfidenceScore(bets);
+
+    // Aggregation by outcome (#609)
+    const aggResult = await db.query(
+      `SELECT outcome_index, COUNT(*) AS bet_count, SUM(amount) AS total_pool
+       FROM bets WHERE market_id = $1 GROUP BY outcome_index`,
+      [req.params.id]
+    );
+    const market = marketResult.rows[0];
+    const outcomes = market.outcomes || [];
+    const marketTotalPool = aggResult.rows.reduce((s, r) => s + parseFloat(r.total_pool || 0), 0);
+    const outcomes_summary = outcomes.map((label, idx) => {
+      const row = aggResult.rows.find((r) => parseInt(r.outcome_index) === idx);
+      const total_pool = row ? parseFloat(row.total_pool) : 0;
+      const bet_count = row ? parseInt(row.bet_count) : 0;
+      const implied_probability = marketTotalPool > 0 ? (total_pool / marketTotalPool) * 100 : 0;
+      return { outcome_index: idx, label, total_pool, bet_count, implied_probability };
+    });
+
+    logger.debug(
+      { market_id: req.params.id, bets_count: bets.length, confidence_score: confidenceScore },
+      "Market details fetched"
+    );
+
+    const data = {
+      market: { ...market, confidence_score: confidenceScore },
+      bets,
+      outcomes_summary,
+    };
+    await redis.set(cacheKey, JSON.stringify(data), "EX", 5);
     res.json(data);
   } catch (err) {
     logger.error({ err, market_id: req.params.id }, "Failed to fetch market details");

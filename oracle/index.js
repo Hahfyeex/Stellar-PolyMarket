@@ -35,11 +35,27 @@ const INTERVAL_NORMAL = 60 * 1000;       // 60 seconds
 const INTERVAL_BACKOFF = 5 * 60 * 1000;  // 5 minutes
 const BACKOFF_THRESHOLD = 3;             // consecutive empty runs before backoff
 
+// ── Circuit Breaker (#587) ────────────────────────────────────────────────────
+const ALERT_THRESHOLD = 3;
+const CIRCUIT_BREAKER_THRESHOLD = 10;
+let consecutiveFailures = 0;
+let circuitOpen = false;
+
 let intervalHandle = null;
 let isRunning = false;
 let isShuttingDown = false;
 let currentRunPromise = Promise.resolve();
 let consecutiveEmptyRuns = 0;
+
+async function sendAdminAlert(message) {
+  const webhookUrl = process.env.ADMIN_ALERT_WEBHOOK_URL;
+  if (!webhookUrl) return;
+  try {
+    await axios.post(webhookUrl, { type: "oracle_failure_alert", message, timestamp: new Date().toISOString() });
+  } catch (err) {
+    logger.error("[Oracle] Failed to send admin alert:", err.message);
+  }
+}
 
 /**
  * Fetch all unresolved, expired markets and resolve them
@@ -51,8 +67,21 @@ async function runOracle() {
     return;
   }
 
+  // Circuit breaker: skip if open
+  if (circuitOpen) {
+    logger.error("[Oracle] Circuit breaker is open — oracle paused due to sustained backend failures");
+    return;
+  }
+
   isRunning = true;
   try {
+    // Health ping before each cycle (#587)
+    try {
+      await axios.get(`${API_URL}/api/health/oracle`);
+    } catch (pingErr) {
+      throw new Error(`Backend health ping failed: ${pingErr.message}`);
+    }
+
     logger.info("[Oracle] Checking for markets to resolve...");
     const { data } = await axios.get(`${API_URL}/api/markets`);
     const now = Date.now();
@@ -87,8 +116,24 @@ async function runOracle() {
       }
       await resolveMarket(market);
     }
+    // Reset failure counter on success
+    consecutiveFailures = 0;
+    circuitOpen = false;
   } catch (err) {
+    consecutiveFailures++;
     logger.error("[Oracle] Error:", err.message);
+
+    if (consecutiveFailures === ALERT_THRESHOLD) {
+      logger.warn(`[Oracle] ${consecutiveFailures} consecutive failures — sending admin alert`);
+      await sendAdminAlert(`Oracle has failed ${consecutiveFailures} consecutive cycles: ${err.message}`);
+    }
+
+    if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+      circuitOpen = true;
+      if (intervalHandle !== null) { clearInterval(intervalHandle); intervalHandle = null; }
+      logger.error(`[Oracle] Circuit breaker tripped after ${consecutiveFailures} consecutive failures — oracle interval paused`);
+      await sendAdminAlert(`CRITICAL: Oracle circuit breaker tripped after ${consecutiveFailures} consecutive failures. Manual intervention required.`);
+    }
   } finally {
     isRunning = false;
   }
@@ -300,8 +345,14 @@ module.exports = {
   _getIsShuttingDown: () => isShuttingDown,
   _getIntervalHandle: () => intervalHandle,
   _getConsecutiveEmptyRuns: () => consecutiveEmptyRuns,
+  _getConsecutiveFailures: () => consecutiveFailures,
+  _getCircuitOpen: () => circuitOpen,
+  ALERT_THRESHOLD,
+  CIRCUIT_BREAKER_THRESHOLD,
   _resetState: () => {
     consecutiveEmptyRuns = 0;
+    consecutiveFailures = 0;
+    circuitOpen = false;
     isRunning = false;
     isShuttingDown = false;
     if (intervalHandle !== null) { clearInterval(intervalHandle); intervalHandle = null; }
