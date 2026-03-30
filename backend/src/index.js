@@ -169,6 +169,9 @@ require("./workers/resolver").start();
 // Start hourly stale-market expiry job
 require("./jobs/expireMarkets").start();
 
+// Start automated market liquidity update job (every 5 minutes)
+require("./jobs/updateMarketLiquidity").start();
+
 // Start automated payouts job (every 15 minutes)
 require("./jobs/automatedPayouts").start();
 

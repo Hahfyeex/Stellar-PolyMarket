@@ -69,11 +69,56 @@ describe("GET /api/markets", () => {
       });
 
       // Verify the queries
-      expect(db.query).toHaveBeenNthCalledWith(1, "SELECT COUNT(*) as total FROM markets");
+      expect(db.query).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining("SELECT COUNT(*) as total FROM markets")
+      );
       expect(db.query).toHaveBeenNthCalledWith(
         2,
-        expect.stringContaining("LIMIT $1 OFFSET $2"),
+        expect.stringContaining("m.is_liquid = TRUE"),
         [20, 0]
+      );
+    });
+
+    it("defaults to only liquid markets when include_illiquid is not set", async () => {
+      const totalCount = 1;
+      const markets = [makeMarket(1)];
+
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: String(totalCount) }] })
+        .mockResolvedValueOnce({ rows: markets });
+
+      const res = await request(app).get("/api/markets");
+
+      expect(res.status).toBe(200);
+      expect(db.query).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining("m.is_liquid = TRUE")
+      );
+      expect(db.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining("m.is_liquid = TRUE")
+      );
+    });
+
+    it("returns all markets when include_illiquid=true", async () => {
+      const totalCount = 2;
+      const markets = [makeMarket(1), makeMarket(2)];
+
+      db.query
+        .mockResolvedValueOnce({ rows: [{ total: String(totalCount) }] })
+        .mockResolvedValueOnce({ rows: markets });
+
+      const res = await request(app).get("/api/markets?include_illiquid=true");
+
+      expect(res.status).toBe(200);
+      expect(db.query).toHaveBeenNthCalledWith(
+        1,
+        expect.not.stringContaining("m.is_liquid = TRUE")
+      );
+      expect(db.query).toHaveBeenNthCalledWith(
+        2,
+        expect.not.stringContaining("m.is_liquid = TRUE")
       );
     });
   });
