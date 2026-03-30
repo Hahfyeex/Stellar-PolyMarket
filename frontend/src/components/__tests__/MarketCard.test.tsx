@@ -99,6 +99,14 @@ jest.mock("../../components/OptimisticBetIndicator", () =>
   }
 );
 
+jest.mock("../../hooks/useOddsStream", () => ({
+  useOddsStream: jest.fn(() => ({
+    odds: [],
+    connected: false,
+    changedIndices: new Set(),
+  })),
+}));
+
 jest.mock("../../components/WhatIfSimulator", () =>
   function MockWhatIfSimulator() {
     return <div data-testid="what-if-simulator" />;

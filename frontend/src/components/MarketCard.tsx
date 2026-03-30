@@ -75,10 +75,10 @@ export default function MarketCard({
   const isExpired = new Date(market.end_date) <= new Date();
 
   const totalPool = parseFloat(market.total_pool);
-  const outcomePool = totalPool / market.outcomes.length;
+  const outcomePool = totalPool > 0 ? totalPool / market.outcomes.length : 0;
   const numericAmount = parseFloat(amount) || 0;
 
-  const defaultOdds = 100 / market.outcomes.length;
+  const defaultOdds = Math.floor(100 / market.outcomes.length);
 
   const { odds: liveOdds, connected: oddsConnected, changedIndices } = useOddsStream(market.id);
 
@@ -266,6 +266,12 @@ export default function MarketCard({
         Pool: <span className="text-white font-medium">{totalPool.toFixed(2)} XLM</span> · Ends:{" "}
         {new Date(market.end_date).toLocaleDateString()}
       </p>
+
+      {totalPool === 0 && (
+        <p className="text-xs text-blue-400 italic bg-blue-900/20 px-2 py-1 rounded w-fit">
+          No bets yet — starting probabilities shown
+        </p>
+      )}
 
       <Link
         href={`/market/${market.id}`}
