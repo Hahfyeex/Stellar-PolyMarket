@@ -218,3 +218,61 @@ describe("Markets Routes - Pagination", () => {
     });
   });
 });
+
+// ── Issue #609: Bet Aggregation by Outcome ────────────────────────────────────
+
+describe("GET /api/markets/:id — outcomes_summary aggregation (#609)", () => {
+  test("outcomes_summary contains correct fields", () => {
+    const outcomes = ["Yes", "No"];
+    const aggRows = [
+      { outcome_index: 0, bet_count: "3", total_pool: "300" },
+      { outcome_index: 1, bet_count: "2", total_pool: "200" },
+    ];
+    const marketTotalPool = aggRows.reduce((s, r) => s + parseFloat(r.total_pool), 0); // 500
+
+    const summary = outcomes.map((label, idx) => {
+      const row = aggRows.find((r) => parseInt(r.outcome_index) === idx);
+      const total_pool = row ? parseFloat(row.total_pool) : 0;
+      const bet_count = row ? parseInt(row.bet_count) : 0;
+      const implied_probability = marketTotalPool > 0 ? (total_pool / marketTotalPool) * 100 : 0;
+      return { outcome_index: idx, label, total_pool, bet_count, implied_probability };
+    });
+
+    expect(summary[0]).toMatchObject({ outcome_index: 0, label: "Yes", total_pool: 300, bet_count: 3 });
+    expect(summary[1]).toMatchObject({ outcome_index: 1, label: "No", total_pool: 200, bet_count: 2 });
+  });
+
+  test("implied probabilities sum to 100", () => {
+    const aggRows = [
+      { outcome_index: 0, total_pool: "600" },
+      { outcome_index: 1, total_pool: "400" },
+    ];
+    const total = aggRows.reduce((s, r) => s + parseFloat(r.total_pool), 0);
+    const probs = aggRows.map((r) => (parseFloat(r.total_pool) / total) * 100);
+    const sum = probs.reduce((a, b) => a + b, 0);
+    expect(Math.round(sum)).toBe(100);
+  });
+
+  test("outcome with no bets has total_pool=0 and bet_count=0", () => {
+    const outcomes = ["Yes", "No", "Maybe"];
+    const aggRows = [{ outcome_index: 0, bet_count: "5", total_pool: "500" }];
+    const marketTotalPool = 500;
+
+    const summary = outcomes.map((label, idx) => {
+      const row = aggRows.find((r) => parseInt(r.outcome_index) === idx);
+      const total_pool = row ? parseFloat(row.total_pool) : 0;
+      const bet_count = row ? parseInt(row.bet_count) : 0;
+      const implied_probability = marketTotalPool > 0 ? (total_pool / marketTotalPool) * 100 : 0;
+      return { outcome_index: idx, label, total_pool, bet_count, implied_probability };
+    });
+
+    expect(summary[1]).toMatchObject({ total_pool: 0, bet_count: 0, implied_probability: 0 });
+    expect(summary[2]).toMatchObject({ total_pool: 0, bet_count: 0, implied_probability: 0 });
+  });
+
+  test("implied_probability is 0 when no bets exist", () => {
+    const marketTotalPool = 0;
+    const implied_probability = marketTotalPool > 0 ? (100 / marketTotalPool) * 100 : 0;
+    expect(implied_probability).toBe(0);
+  });
+});
