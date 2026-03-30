@@ -25,6 +25,7 @@ import {
 } from "../store/optimisticBetsSlice";
 import { RootState, AppDispatch } from "../store";
 import { validateStellarAddress } from "../lib/stellar";
+import { buildBetRequestBody, finalizeReferralAttribution } from "../lib/referral";
 
 /** How long to show the confirmed state before removing the entry (ms) */
 const CONFIRM_DISPLAY_MS = 2_000;
@@ -82,10 +83,17 @@ export function useOptimisticBet(): UseOptimisticBetResult {
 
       try {
         // ── Step 2: Submit to API ─────────────────────────────────────────
+        const requestBody = buildBetRequestBody({
+          marketId,
+          outcomeIndex,
+          amount,
+          walletAddress,
+        });
+
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ marketId, outcomeIndex, amount, walletAddress }),
+          body: JSON.stringify(requestBody),
         });
 
         const data = await res.json();
@@ -93,6 +101,7 @@ export function useOptimisticBet(): UseOptimisticBetResult {
 
         // ── Step 3a: Confirm ──────────────────────────────────────────────
         dispatch(confirmBet({ optimisticId }));
+        finalizeReferralAttribution(walletAddress);
 
         // Clean up the confirmed entry after a short display window
         setTimeout(() => dispatch(clearBet({ optimisticId })), CONFIRM_DISPLAY_MS);

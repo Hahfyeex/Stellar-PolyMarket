@@ -15,6 +15,14 @@ import optimisticBetsReducer, {
   clearBet,
 } from "../../store/optimisticBetsSlice";
 import { useOptimisticBet } from "../../hooks/useOptimisticBet";
+import {
+  REFERRAL_STORAGE_KEY,
+  generateReferralCode,
+} from "../../lib/referral";
+
+jest.mock("../../lib/stellar", () => ({
+  validateStellarAddress: jest.fn(() => true),
+}));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -99,6 +107,7 @@ describe("optimisticBetsSlice", () => {
 
 function HookHarness({ onResult }: { onResult: (r: boolean) => void }) {
   const { submitBet, optimisticBets } = useOptimisticBet();
+  const walletAddress = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
   return (
     <div>
@@ -117,7 +126,7 @@ function HookHarness({ onResult }: { onResult: (r: boolean) => void }) {
               outcomeIndex: 0,
               outcomeName: "Yes",
               amount: 100,
-              walletAddress: "GTEST",
+              walletAddress,
             },
             (reason) => onResult(false)
           ).then(onResult)
@@ -142,7 +151,10 @@ function renderHook(onResult = jest.fn()) {
 }
 
 describe("useOptimisticBet hook", () => {
-  beforeEach(() => jest.resetAllMocks());
+  beforeEach(() => {
+    jest.resetAllMocks();
+    localStorage.clear();
+  });
 
   it("optimistic add: bet appears immediately as pending", async () => {
     global.fetch = jest.fn(() => new Promise(() => {})) as any; // hang
@@ -216,7 +228,14 @@ describe("useOptimisticBet hook", () => {
         <button
           onClick={() =>
             submitBet(
-              { marketId: 2, marketTitle: "Q", outcomeIndex: 0, outcomeName: "Yes", amount: 10, walletAddress: "G" },
+              {
+                marketId: 2,
+                marketTitle: "Q",
+                outcomeIndex: 0,
+                outcomeName: "Yes",
+                amount: 10,
+                walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+              },
               onError
             )
           }
@@ -245,8 +264,22 @@ describe("useOptimisticBet hook", () => {
           <div data-testid="m1">{market1Bets.length}</div>
           <div data-testid="m2">{market2Bets.length}</div>
           <button onClick={() => {
-            submitBet({ marketId: 1, marketTitle: "M1", outcomeIndex: 0, outcomeName: "Yes", amount: 10, walletAddress: "G" });
-            submitBet({ marketId: 2, marketTitle: "M2", outcomeIndex: 0, outcomeName: "No", amount: 20, walletAddress: "G" });
+            submitBet({
+              marketId: 1,
+              marketTitle: "M1",
+              outcomeIndex: 0,
+              outcomeName: "Yes",
+              amount: 10,
+              walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            });
+            submitBet({
+              marketId: 2,
+              marketTitle: "M2",
+              outcomeIndex: 0,
+              outcomeName: "No",
+              amount: 20,
+              walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            });
           }}>go</button>
         </div>
       );
@@ -260,5 +293,75 @@ describe("useOptimisticBet hook", () => {
       expect(screen.getByTestId("m1").textContent).toBe("1");
       expect(screen.getByTestId("m2").textContent).toBe("1");
     });
+  });
+
+  it("includes the stored referral code only on the first successful bet for a wallet", async () => {
+    const walletAddress = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    const ownReferralCode = generateReferralCode(walletAddress);
+    expect(ownReferralCode).toHaveLength(8);
+
+    localStorage.setItem(REFERRAL_STORAGE_KEY, "REF12345");
+
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ bet: { id: 1 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ bet: { id: 2 } }),
+      }) as any;
+
+    function AttributionHarness() {
+      const { submitBet } = useOptimisticBet();
+
+      return (
+        <button
+          onClick={async () => {
+            await submitBet({
+              marketId: 1,
+              marketTitle: "Market A",
+              outcomeIndex: 0,
+              outcomeName: "Yes",
+              amount: 10,
+              walletAddress,
+            });
+            await submitBet({
+              marketId: 2,
+              marketTitle: "Market B",
+              outcomeIndex: 1,
+              outcomeName: "No",
+              amount: 12,
+              walletAddress,
+            });
+          }}
+        >
+          attribute
+        </button>
+      );
+    }
+
+    const store = configureStore({ reducer: { optimisticBets: optimisticBetsReducer } });
+    render(
+      <Provider store={store}>
+        <AttributionHarness />
+      </Provider>
+    );
+
+    act(() => {
+      screen.getByRole("button", { name: "attribute" }).click();
+    });
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+
+    const firstRequest = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    const secondRequest = JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body);
+
+    expect(firstRequest.referralCode).toBe("REF12345");
+    expect(secondRequest.referralCode).toBeUndefined();
+    expect(
+      localStorage.getItem(`stella.referral.attributed:${walletAddress.toUpperCase()}`)
+    ).toBe("true");
   });
 });

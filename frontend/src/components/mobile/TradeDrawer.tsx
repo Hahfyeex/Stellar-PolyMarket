@@ -9,6 +9,7 @@ import StakePresets from "../StakePresets";
 import SlippageSettings from "../SlippageSettings";
 import SlippageWarningModal from "../SlippageWarningModal";
 import { useSlippageCheck } from "../../hooks/useSlippageCheck";
+import { buildBetRequestBody, finalizeReferralAttribution } from "../../lib/referral";
 import { toStroops, calcPayoutStroops, stroopsToXlm } from "../../utils/slippageCalc";
 
 interface Props {
@@ -158,18 +159,20 @@ export default function TradeDrawer({
     setLoading(true);
     setMessage("");
     try {
+      const requestBody = buildBetRequestBody({
+        marketId: market.id,
+        outcomeIndex: selectedOutcome,
+        amount: stroops.toString(),
+        walletAddress,
+      });
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          marketId: market.id,
-          outcomeIndex: selectedOutcome,
-          amount: stroops.toString(),
-          walletAddress,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      finalizeReferralAttribution(walletAddress);
       setMessage("Bet placed successfully!");
       trackEvent("bet_placed", {
         market_id: market.id,
