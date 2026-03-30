@@ -98,6 +98,8 @@ app.use("/api", appCheckMiddleware);
 // Routes (MERGED — keep ALL)
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/markets", require("./routes/markets"));
+app.use("/api/markets/:id/comments", require("./routes/comments"));
+app.use("/api/comments", require("./routes/commentActions"));
 app.use("/api/bets", require("./routes/bets"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/reserves", require("./routes/reserves"));
