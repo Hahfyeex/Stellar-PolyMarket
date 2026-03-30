@@ -44,11 +44,12 @@ describe('Market Validation', () => {
         endDate: new Date(Date.now() + 86400000).toISOString(),
         outcomes: ['Yes', 'No']
       };
-
+ 
       const result = await validateMarket(metadata);
-
+ 
       expect(result).not.toBeNull();
       expect(result.code).toBe('DESCRIPTION_TOO_SHORT');
+      expect(result.details.currentLength).toBe(0);
     });
 
     test('should reject market with empty question', async () => {
@@ -57,11 +58,12 @@ describe('Market Validation', () => {
         endDate: new Date(Date.now() + 86400000).toISOString(),
         outcomes: ['Yes', 'No']
       };
-
+ 
       const result = await validateMarket(metadata);
-
+ 
       expect(result).not.toBeNull();
       expect(result.code).toBe('DESCRIPTION_TOO_SHORT');
+      expect(result.details.currentLength).toBe(0);
     });
 
     test('should reject market with whitespace-only question', async () => {
@@ -70,11 +72,12 @@ describe('Market Validation', () => {
         endDate: new Date(Date.now() + 86400000).toISOString(),
         outcomes: ['Yes', 'No']
       };
-
+ 
       const result = await validateMarket(metadata);
-
+ 
       expect(result).not.toBeNull();
       expect(result.code).toBe('DESCRIPTION_TOO_SHORT');
+      expect(result.details.currentLength).toBe(0);
     });
 
     test('should accept market with exactly 50 characters', async () => {
@@ -320,6 +323,20 @@ describe('Market Validation', () => {
       expect(result.code).toBe('INVALID_OUTCOMES');
       expect(result.statusCode).toBe(400);
       expect(result.details['outcomes[1]']).toBe('cannot be empty');
+    });
+ 
+    test('should reject market with only punctuation/symbols in outcome label', async () => {
+      const metadata = {
+        question: 'Will Bitcoin reach $100,000 by the end of 2026? This is a valid question with length > 50.',
+        endDate: new Date(Date.now() + 86400000).toISOString(),
+        outcomes: ['Yes', '!!!']
+      };
+ 
+      const result = await validateMarket(metadata);
+ 
+      expect(result).not.toBeNull();
+      expect(result.code).toBe('INVALID_OUTCOMES');
+      expect(result.details['outcomes[1]']).toBe('must contain at least one alphanumeric character');
     });
 
     test('should reject market with whitespace-only outcome label', async () => {
@@ -652,9 +669,18 @@ describe('Market Validation', () => {
 
       await validateMarketCreation(req, res, next);
 
+      expect(next).not.toHaveBeenCalled();
+    });
+ 
+    test('should reject if outcomes is missing (branch coverage)', async () => {
+      const { validateMarketCreation } = require('../middleware/marketValidation');
+      req.body.outcomes = null;
+ 
+      await validateMarketCreation(req, res, next);
+ 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-        error: expect.objectContaining({ code: 'DESCRIPTION_TOO_SHORT' })
+        error: expect.objectContaining({ code: 'INVALID_OUTCOME_COUNT' })
       }));
       expect(next).not.toHaveBeenCalled();
     });

@@ -77,7 +77,7 @@ async function validateMarket(metadata) {
     return {
       ...ValidationErrors.DESCRIPTION_TOO_SHORT,
       details: {
-        currentLength: question?.length || 0,
+        currentLength: (question || "").trim().length,
         requiredLength: 50,
       },
     };
@@ -140,13 +140,13 @@ async function validateMarket(metadata) {
   const outcomeErrors = {};
   const seenLabels = new Set();
 
-  if (Array.isArray(outcomes)) {
     outcomes.forEach((label, index) => {
-      // Note: Labels are trimmed in the calling middleware, but we safeguard here
       const trimmedLabel = typeof label === "string" ? label.trim() : "";
 
       if (!trimmedLabel) {
         outcomeErrors[`outcomes[${index}]`] = "cannot be empty";
+      } else if (!/[a-z0-9]/i.test(trimmedLabel)) {
+        outcomeErrors[`outcomes[${index}]`] = "must contain at least one alphanumeric character";
       } else if (trimmedLabel.length > 100) {
         outcomeErrors[`outcomes[${index}]`] = "cannot exceed 100 characters";
       }
@@ -157,7 +157,6 @@ async function validateMarket(metadata) {
       }
       if (trimmedLabel) seenLabels.add(lowerLabel);
     });
-  }
 
   if (Object.keys(outcomeErrors).length > 0) {
     logger.warn(
