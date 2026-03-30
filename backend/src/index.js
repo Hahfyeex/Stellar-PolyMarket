@@ -189,6 +189,9 @@ require("./workers/archive-worker").start();
 // Subscribe prediction market contract to Mercury Indexer
 require("./indexer/mercury").subscribe();
 
+// Start real-time Mercury event stream with reconnection logic
+require("./indexer/mercury").startEventStream();
+
 // Initialize self-healing gap detection and recovery
 require("./indexer/gap-detector").initializeSelfHealing();
 
