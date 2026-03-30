@@ -1,92 +1,102 @@
-/**
- * Tests for FloatingBetButton component
- * Feature: mobile-navigation-shell
- */
-import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
-import * as fc from "fast-check";
 import FloatingBetButton from "../mobile/FloatingBetButton";
+import { useOddsStream } from "../../hooks/useOddsStream";
+import type { Market } from "../../types/market";
 
-const SAMPLE_MARKET = {
+// Mock the hook
+jest.mock("../../hooks/useOddsStream");
+
+const mockMarket: Market = {
   id: 1,
-  question: "Will Bitcoin reach $100k?",
-  end_date: "2026-12-31T00:00:00Z",
+  question: "Will it rain tomorrow?",
   outcomes: ["Yes", "No"],
+  total_pool: "1000",
   resolved: false,
   winning_outcome: null,
-  total_pool: "4200",
+  end_date: new Date(Date.now() + 86400000).toISOString(),
 };
 
-// --- Unit tests ---
-
 describe("FloatingBetButton", () => {
-  it("renders the button", () => {
-    render(<FloatingBetButton activeMarket={SAMPLE_MARKET} drawerOpen={false} onPress={() => {}} />);
-    expect(screen.getByTestId("floating-bet-button")).toBeInTheDocument();
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (useOddsStream as jest.Mock).mockReturnValue({
+      odds: [65, 35],
+      connected: true,
+      changedIndices: new Set(),
+    });
   });
 
-  it("calls onPress when clicked with an active market", () => {
-    const handler = jest.fn();
-    render(<FloatingBetButton activeMarket={SAMPLE_MARKET} drawerOpen={false} onPress={handler} />);
-    fireEvent.click(screen.getByTestId("floating-bet-button"));
-    expect(handler).toHaveBeenCalledTimes(1);
-  });
-
-  it("is disabled when activeMarket is null", () => {
-    render(<FloatingBetButton activeMarket={null} drawerOpen={false} onPress={() => {}} />);
-    expect(screen.getByTestId("floating-bet-button")).toBeDisabled();
-  });
-
-  it("has opacity-0 class when drawerOpen is true", () => {
-    render(<FloatingBetButton activeMarket={SAMPLE_MARKET} drawerOpen={true} onPress={() => {}} />);
-    const btn = screen.getByTestId("floating-bet-button");
-    expect(btn.className).toContain("opacity-0");
-  });
-});
-
-// --- Property-based tests ---
-
-describe("FloatingBetButton — Property 2: FAB disabled when no active market", () => {
-  /**
-   * Feature: mobile-navigation-shell, Property 2: FAB disabled when no active market
-   * Validates: Requirements 2.3
-   *
-   * For any render where activeMarket is null, the button must be disabled.
-   */
-  it("is always disabled when activeMarket is null regardless of drawerOpen", () => {
-    fc.assert(
-      fc.property(fc.boolean(), (drawerOpen) => {
-        const { unmount } = render(
-          <FloatingBetButton activeMarket={null} drawerOpen={drawerOpen} onPress={() => {}} />
-        );
-        expect(screen.getByTestId("floating-bet-button")).toBeDisabled();
-        unmount();
-      }),
-      { numRuns: 100 }
+  it("should not render when activeMarket is null", () => {
+    const { container } = render(
+      <FloatingBetButton activeMarket={null} drawerOpen={false} onPress={jest.fn()} />
     );
+    expect(container.firstChild).toBeNull();
   });
-});
 
-describe("FloatingBetButton — Property 3: FAB hidden when drawer is open", () => {
-  /**
-   * Feature: mobile-navigation-shell, Property 3: FAB hidden when drawer is open
-   * Validates: Requirements 2.5
-   *
-   * For any render where drawerOpen is true, the button must have opacity-0 styling.
-   */
-  it("always has opacity-0 when drawerOpen is true, regardless of activeMarket", () => {
-    const marketArb = fc.option(fc.constant(SAMPLE_MARKET), { nil: null });
-    fc.assert(
-      fc.property(marketArb, (market) => {
-        const { unmount } = render(
-          <FloatingBetButton activeMarket={market} drawerOpen={true} onPress={() => {}} />
-        );
-        const btn = screen.getByTestId("floating-bet-button");
-        expect(btn.className).toContain("opacity-0");
-        unmount();
-      }),
-      { numRuns: 100 }
+  it("should render YES odds from stream", () => {
+    render(<FloatingBetButton activeMarket={mockMarket} drawerOpen={false} onPress={jest.fn()} />);
+    expect(screen.getByText("Yes")).toBeInTheDocument();
+    expect(screen.getByText("65%")).toBeInTheDocument();
+  });
+
+  it("should fall back to default odds if stream is empty", () => {
+    (useOddsStream as jest.Mock).mockReturnValue({
+      odds: [],
+      connected: true,
+      changedIndices: new Set(),
+    });
+
+    render(<FloatingBetButton activeMarket={mockMarket} drawerOpen={false} onPress={jest.fn()} />);
+    expect(screen.getByText("50%")).toBeInTheDocument();
+  });
+
+  it("should call onPress when clicked", () => {
+    const onPress = jest.fn();
+    render(<FloatingBetButton activeMarket={mockMarket} drawerOpen={false} onPress={onPress} />);
+
+    const button = screen.getByTestId("floating-bet-button");
+    fireEvent.click(button);
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("should be hidden when drawer is open", () => {
+    render(<FloatingBetButton activeMarket={mockMarket} drawerOpen={true} onPress={jest.fn()} />);
+
+    const button = screen.getByTestId("floating-bet-button");
+    expect(button.className).toContain("opacity-0");
+    expect(button.className).toContain("translate-y-24");
+    expect(button.className).toContain("pointer-events-none");
+  });
+
+  it("should be disabled if market is resolved", () => {
+    const resolvedMarket = { ...mockMarket, resolved: true };
+    render(
+      <FloatingBetButton activeMarket={resolvedMarket} drawerOpen={false} onPress={jest.fn()} />
     );
+
+    const button = screen.getByTestId("floating-bet-button");
+    expect(button).toBeDisabled();
+    expect(button.className).toContain("opacity-0");
+  });
+
+  it("should be disabled if market is expired", () => {
+    const expiredMarket = {
+      ...mockMarket,
+      end_date: new Date(Date.now() - 1000).toISOString(),
+    };
+    render(
+      <FloatingBetButton activeMarket={expiredMarket} drawerOpen={false} onPress={jest.fn()} />
+    );
+
+    const button = screen.getByTestId("floating-bet-button");
+    expect(button).toBeDisabled();
+  });
+
+  it("should have mobile-only classes", () => {
+    render(<FloatingBetButton activeMarket={mockMarket} drawerOpen={false} onPress={jest.fn()} />);
+
+    const button = screen.getByTestId("floating-bet-button");
+    expect(button.className).toContain("md:hidden");
   });
 });
