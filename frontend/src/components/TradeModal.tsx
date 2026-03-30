@@ -10,6 +10,7 @@ import { useState } from "react";
 import { useBettingSlip } from "../context/BettingSlipContext";
 import { useFormPersistence } from "../hooks/useFormPersistence";
 import { useTrustline } from "../hooks/useTrustline";
+import { buildBetRequestBody, finalizeReferralAttribution } from "../lib/referral";
 import TrustlineModal from "./TrustlineModal";
 import WhatIfSimulator from "./WhatIfSimulator";
 import Toast from "./Toast";
@@ -84,18 +85,20 @@ export default function TradeModal({ market, walletAddress, onBetPlaced, onConne
     setLoading(true);
     setMessage("");
     try {
+      const requestBody = buildBetRequestBody({
+        marketId: market.id,
+        outcomeIndex: selectedOutcome,
+        amount: stroops.toString(),
+        walletAddress,
+      });
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          marketId: market.id,
-          outcomeIndex: selectedOutcome,
-          amount: stroops.toString(),
-          walletAddress,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      finalizeReferralAttribution(walletAddress);
       setMessage("Bet placed successfully!");
       clearForm();
       onBetPlaced?.();

@@ -1,21 +1,16 @@
 "use client";
-/**
- * Profile Page
- *
- * Displays the connected user's reputation badge, prediction stats,
- * and participation history. Badge tier is computed client-side from
- * stats fetched via GET /api/users/:wallet/stats.
- */
+import Link from "next/link";
 import { useWalletContext } from "../../context/WalletContext";
 import { useUserBadge } from "../../hooks/useUserBadge";
-import { ReputationBadgeWithLabel, ReputationBadge } from "../../components/ReputationBadge";
-import { BADGE_TIERS } from "../../utils/badgeTier";
+import { usePortfolio } from "../../hooks/usePortfolio";
+import { useReferralStats } from "../../hooks/useReferralStats";
+import { ReputationBadge, ReputationBadgeWithLabel } from "../../components/ReputationBadge";
+import ReferralSection from "../../components/ReferralSection";
 import WalletActivityTimeline from "../../components/timeline/WalletActivityTimeline";
 import NotificationPreferencesPanel from "../../components/NotificationPreferencesPanel";
 import BetHistoryTable from "../../components/BetHistoryTable";
-import { usePortfolio } from "../../hooks/usePortfolio";
 import PortfolioSkeleton from "../../components/skeletons/PortfolioSkeleton";
-
+import { BADGE_TIERS } from "../../utils/badgeTier";
 
 function abbreviateWallet(address: string): string {
   if (address.length <= 12) return address;
@@ -36,101 +31,87 @@ function PortfolioSummary({ summary }: PortfolioSummaryProps) {
   const winRate = parseFloat(summary.win_rate) * 100;
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Total Invested</p>
-        <p className="text-white text-xl font-bold mt-1">{parseFloat(summary.total_invested).toFixed(2)} XLM</p>
-      </div>
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Total Payout</p>
-        <p className="text-white text-xl font-bold mt-1">{parseFloat(summary.total_payout).toFixed(2)} XLM</p>
-      </div>
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Net P&L</p>
-        <p className={`text-xl font-bold mt-1 ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-          {pnl >= 0 ? "+" : ""}{pnl.toFixed(2)} XLM
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+          Total Invested
+        </p>
+        <p className="mt-2 text-xl font-bold text-white">
+          {parseFloat(summary.total_invested).toFixed(2)} XLM
         </p>
       </div>
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-        <p className="text-gray-500 text-xs uppercase tracking-wider font-semibold">Win Rate</p>
-        <p className="text-white text-xl font-bold mt-1">{winRate.toFixed(1)}%</p>
+      <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+          Total Payout
+        </p>
+        <p className="mt-2 text-xl font-bold text-white">
+          {parseFloat(summary.total_payout).toFixed(2)} XLM
+        </p>
+      </div>
+      <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Net P&amp;L</p>
+        <p className={`mt-2 text-xl font-bold ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+          {pnl >= 0 ? "+" : ""}
+          {pnl.toFixed(2)} XLM
+        </p>
+      </div>
+      <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Win Rate</p>
+        <p className="mt-2 text-xl font-bold text-white">{winRate.toFixed(1)}%</p>
       </div>
     </div>
   );
 }
 
-
 export default function ProfilePage() {
-  const { publicKey, isLoading, walletError, connect } = useWalletContext();
+  const { publicKey, walletError, connect } = useWalletContext();
   const { tier, stats, isLoading: badgeLoading, error: badgeError } = useUserBadge();
   const { data: portfolio, isLoading: portfolioLoading } = usePortfolio(publicKey);
+  const {
+    stats: referralStats,
+    isLoading: referralLoading,
+    error: referralError,
+  } = useReferralStats(publicKey);
 
-  const loadingStats = badgeLoading || portfolioLoading;
+  const loadingStats = badgeLoading || portfolioLoading || referralLoading;
+  const loadError = walletError || badgeError || referralError;
 
-
-  // ── Wallet not connected ──────────────────────────────────────────────────
   if (!publicKey) {
-  const unreadCount = useSelector((state: RootState) => 
-    state.notifications.items.filter((n) => !n.read).length
-  );
+    return (
+      <main className="min-h-screen bg-gray-950 px-4 py-8 text-white sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-3xl flex-col gap-6">
+          <header className="flex items-center justify-between rounded-3xl border border-gray-800 bg-gray-900/80 px-6 py-4 backdrop-blur-sm">
+            <div>
+              <h1 className="text-xl font-semibold text-white">Profile</h1>
+              <p className="mt-1 text-sm text-gray-400">Connect your wallet to view your dashboard.</p>
+            </div>
+            <Link href="/" className="text-sm font-medium text-indigo-300 transition hover:text-indigo-200">
+              Back to Markets
+            </Link>
+          </header>
 
-  const pageContent = (
-    <main className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10 safe-top">
-        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-white font-bold text-base leading-none">Profile</h1>
-            <p className="text-gray-500 text-xs font-mono mt-0.5">{abbreviateWallet(publicKey)}</p>
-          </div>
-          <a href="/" className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
-            ← Markets
-          </a>
+          <section className="rounded-3xl border border-gray-800 bg-gradient-to-br from-gray-900 via-gray-900 to-indigo-950/30 p-8 text-center shadow-xl">
+            <h2 className="text-2xl font-semibold text-white">Connect to unlock your referral hub</h2>
+            <p className="mx-auto mt-3 max-w-lg text-sm text-gray-400">
+              We&apos;ll generate your wallet-based referral code, track referred bettors, and show your referral bonus here.
+            </p>
+            <button
+              type="button"
+              onClick={connect}
+              className="mt-6 inline-flex items-center justify-center rounded-2xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
+            >
+              Connect Wallet
+            </button>
+          </section>
         </div>
-      </header>
-
-      {/* Rest of profile content... */}
-      <div className="max-w-3xl mx-auto px-4 py-8 mobile-pb">
-        {/* Profile card with badge */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col sm:flex-row items-center sm:items-start gap-6">
-          {/* ... existing profile content ... */}
-        </div>
-        {/* Portfolio, tiers, activity, history, etc. */}
-      </div>
-    </main>
-  );
-
-  return (
-    <>
-      {/* Desktop */}
-      <div className="hidden md:block">
-        {pageContent}
-      </div>
-      {/* Mobile */}
-      <div className="block md:hidden">
-        <MobileShell walletAddress={publicKey} unreadCount={unreadCount}>
-          {pageContent}
-        </MobileShell>
-      </div>
-    </>
-  );
+      </main>
+    );
   }
 
-  // ── Loading stats ─────────────────────────────────────────────────────────
   if (loadingStats) {
     return (
-      <main className="min-h-screen bg-gray-950 text-white">
-        <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
-          <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div>
-              <h1 className="text-white font-bold text-base leading-none">Profile</h1>
-            </div>
-            <a href="/" className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
-              ← Markets
-            </a>
-          </div>
-        </header>
-        <div className="max-w-3xl mx-auto px-4 py-8">
+      <main className="min-h-screen bg-gray-950 px-4 py-8 text-white sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
           <PortfolioSkeleton />
         </div>
       </main>
@@ -138,130 +119,113 @@ export default function ProfilePage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+    <main className="min-h-screen bg-gray-950 px-4 py-8 text-white sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-5xl flex-col gap-6">
+        <header className="flex items-center justify-between rounded-3xl border border-gray-800 bg-gray-900/80 px-6 py-4 backdrop-blur-sm">
           <div>
-            <h1 className="text-white font-bold text-base leading-none">Profile</h1>
-            <p className="text-gray-500 text-xs font-mono mt-0.5">{abbreviateWallet(publicKey)}</p>
+            <h1 className="text-xl font-semibold text-white">Profile</h1>
+            <p className="mt-1 font-mono text-xs text-gray-500">{abbreviateWallet(publicKey)}</p>
           </div>
-          <a href="/" className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors">
-            ← Markets
-          </a>
-        </div>
-      </header>
+          <Link href="/" className="text-sm font-medium text-indigo-300 transition hover:text-indigo-200">
+            Back to Markets
+          </Link>
+        </header>
 
-      <div className="max-w-3xl mx-auto px-4 py-8 flex flex-col gap-8">
-        {/* Profile card with badge */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 flex flex-col sm:flex-row items-center sm:items-start gap-6">
-          {/* Badge (96px) */}
-          <div className="flex-shrink-0">
-            {tier ? (
-              <ReputationBadgeWithLabel tier={tier} size={96} />
-            ) : (
-              <div className="flex flex-col items-center gap-2">
-                <div className="w-24 h-24 rounded-full border-2 border-dashed border-gray-700 flex items-center justify-center">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1"
-                    className="w-10 h-10 text-gray-600"
-                  >
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                  </svg>
+        <section className="rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-xl">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+            <div className="flex justify-center sm:block">
+              {tier ? (
+                <ReputationBadgeWithLabel tier={tier} size={96} />
+              ) : (
+                <div className="flex h-24 w-24 items-center justify-center rounded-full border border-dashed border-gray-700 bg-gray-950">
+                  <span className="text-xs uppercase tracking-[0.2em] text-gray-500">New</span>
                 </div>
-                <span className="text-xs text-gray-600 uppercase tracking-widest">
-                  No badge yet
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Stats */}
-          <div className="flex-1 flex flex-col gap-4">
-            <div>
-              <h2 className="text-white font-bold text-lg">Reputation</h2>
-              <p className="text-gray-500 text-sm mt-0.5">
-                {tier
-                  ? `You've earned the ${tier.charAt(0).toUpperCase() + tier.slice(1)} tier.`
-                  : "Participate in 10+ markets to earn your first badge."}
-              </p>
+              )}
             </div>
 
-            {walletError && (
-              <p className="text-red-400 text-xs bg-red-900/20 border border-red-900/40 rounded-lg px-3 py-2">
-                Could not load stats: {walletError}
-              </p>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-gray-800 rounded-xl p-3 text-center">
-                <p className="text-2xl font-bold text-white tabular-nums">
-                  {stats?.marketsCount ?? 0}
+            <div className="flex-1 space-y-4">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Reputation</h2>
+                <p className="mt-1 text-sm text-gray-400">
+                  {tier
+                    ? `You've earned the ${tier.charAt(0).toUpperCase() + tier.slice(1)} tier.`
+                    : "Participate in 10+ markets to earn your first badge."}
                 </p>
-                <p className="text-xs text-gray-500 mt-0.5">Markets Joined</p>
               </div>
-              <div className="bg-gray-800 rounded-xl p-3 text-center">
-                <p className="text-2xl font-bold text-green-400 tabular-nums">
-                  {stats ? `${stats.accuracyPct.toFixed(1)}%` : "—"}
+
+              {loadError ? (
+                <p className="rounded-2xl border border-red-900/40 bg-red-950/20 px-4 py-3 text-sm text-red-300">
+                  Some profile data could not be loaded: {loadError}
                 </p>
-                <p className="text-xs text-gray-500 mt-0.5">Prediction Accuracy</p>
+              ) : null}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4 text-center">
+                  <p className="text-2xl font-bold text-white tabular-nums">{stats?.marketsCount ?? 0}</p>
+                  <p className="mt-1 text-xs text-gray-500">Markets Joined</p>
+                </div>
+                <div className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4 text-center">
+                  <p className="text-2xl font-bold text-green-400 tabular-nums">
+                    {stats ? `${stats.accuracyPct.toFixed(1)}%` : "0.0%"}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">Prediction Accuracy</p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Portfolio Summary */}
-        {portfolio && <PortfolioSummary summary={portfolio.summary} />}
+        {portfolio ? <PortfolioSummary summary={portfolio.summary} /> : null}
 
+        <ReferralSection
+          walletAddress={publicKey}
+          referredUsers={referralStats.referredUsers}
+          totalBonusEarned={referralStats.totalBonusEarned}
+        />
 
-        {/* Tier progression */}
         <section>
-          <h2 className="text-gray-300 text-sm font-semibold uppercase tracking-wider mb-4">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-[0.18em] text-gray-300">
             Badge Tiers
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[...BADGE_TIERS].reverse().map(({ tier: t, minMarkets, minAccuracy }) => {
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {[...BADGE_TIERS].reverse().map(({ tier: badgeTier, minMarkets, minAccuracy }) => {
               const isUnlocked =
-                tier === t ||
+                tier === badgeTier ||
                 (stats
                   ? stats.marketsCount >= minMarkets && stats.accuracyPct >= minAccuracy
                   : false);
 
               return (
                 <div
-                  key={t}
-                  className={`bg-gray-900 border rounded-xl p-3 text-center transition-colors ${
-                    tier === t
-                      ? "border-indigo-600 bg-indigo-950/20"
+                  key={badgeTier}
+                  className={`rounded-2xl border p-4 text-center ${
+                    tier === badgeTier
+                      ? "border-indigo-500/40 bg-indigo-950/20"
                       : isUnlocked
-                        ? "border-gray-700"
-                        : "border-gray-800 opacity-50"
+                        ? "border-gray-700 bg-gray-900"
+                        : "border-gray-800 bg-gray-900/60 opacity-60"
                   }`}
                 >
                   <div className="flex justify-center">
-                    <ReputationBadge tier={t} size={48} />
+                    <ReputationBadge tier={badgeTier} size={48} />
                   </div>
-                  <p className="text-white text-xs font-semibold mt-2 capitalize">{t}</p>
-                  <p className="text-gray-500 text-xs mt-0.5">{minMarkets}+ markets</p>
-                  {minAccuracy > 0 && (
-                    <p className="text-gray-600 text-xs">{minAccuracy}%+ accuracy</p>
-                  )}
+                  <p className="mt-3 text-sm font-semibold capitalize text-white">{badgeTier}</p>
+                  <p className="mt-1 text-xs text-gray-500">{minMarkets}+ markets</p>
+                  {minAccuracy > 0 ? (
+                    <p className="text-xs text-gray-600">{minAccuracy}%+ accuracy</p>
+                  ) : null}
                 </div>
               );
             })}
           </div>
         </section>
 
-        {/* Recent predictions (Real Data) */}
         <section>
-          <h2 className="text-gray-300 text-sm font-semibold uppercase tracking-wider mb-4">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-[0.18em] text-gray-300">
             Recent Activity
           </h2>
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
-            {(!portfolio?.recent_activity || portfolio.recent_activity.length === 0) ? (
+          <div className="overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 shadow-xl">
+            {!portfolio?.recent_activity || portfolio.recent_activity.length === 0 ? (
               <div className="p-8 text-center text-gray-500">No recent activity</div>
             ) : (
               portfolio.recent_activity.map((bet, index) => {
@@ -272,34 +236,39 @@ export default function ProfilePage() {
                 return (
                   <div
                     key={bet.bet_id}
-                    className={`flex items-center justify-between px-4 py-4 gap-4 hover:bg-gray-800/50 transition-colors ${
+                    className={`flex items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-gray-800/50 ${
                       index < portfolio.recent_activity.length - 1 ? "border-b border-gray-800" : ""
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex min-w-0 items-center gap-3">
                       <div
-                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs ${
-                           isCorrect ? "bg-green-900 text-green-300" :
-                           isIncorrect ? "bg-red-900 text-red-300" :
-                           "bg-blue-900 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.2)]"
+                        className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold ${
+                          isCorrect
+                            ? "bg-green-900 text-green-300"
+                            : isIncorrect
+                              ? "bg-red-900 text-red-300"
+                              : "bg-blue-900 text-blue-300"
                         }`}
                       >
                         {bet.outcome_name?.[0] || "?"}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-gray-100 text-sm font-medium truncate">{bet.market_question}</p>
-                        <p className="text-gray-500 text-xs mt-0.5">
+                        <p className="truncate text-sm font-medium text-gray-100">{bet.market_question}</p>
+                        <p className="mt-0.5 text-xs text-gray-500">
                           {bet.outcome_name} · {new Date(bet.created_at).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                      <span className="text-white text-sm font-semibold">{parseFloat(bet.amount).toFixed(2)} XLM</span>
-                      {bet.is_resolved && (
+
+                    <div className="flex flex-shrink-0 flex-col items-end gap-1">
+                      <span className="text-sm font-semibold text-white">
+                        {parseFloat(bet.amount).toFixed(2)} XLM
+                      </span>
+                      {bet.is_resolved ? (
                         <span className={`text-xs font-bold ${isCorrect ? "text-green-400" : "text-red-400"}`}>
                           {payout > 0 ? `+${payout.toFixed(2)} XLM` : "0.00 XLM"}
                         </span>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -308,19 +277,12 @@ export default function ProfilePage() {
           </div>
         </section>
 
-
-        {/* Bet History */}
         <section>
-          <BetHistoryTable
-            walletAddress={publicKey}
-            apiUrl={process.env.NEXT_PUBLIC_API_URL ?? ""}
-          />
+          <BetHistoryTable walletAddress={publicKey} apiUrl={process.env.NEXT_PUBLIC_API_URL ?? ""} />
         </section>
 
-        {/* Activity Timeline */}
         <WalletActivityTimeline walletAddress={publicKey} />
 
-        {/* Notification Preferences */}
         <NotificationPreferencesPanel walletAddress={publicKey} />
       </div>
     </main>
