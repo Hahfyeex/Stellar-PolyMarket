@@ -13,8 +13,8 @@ import { useMarket } from "../../../hooks/useMarket";
 import { usePlaceBet } from "../../../hooks/usePlaceBet";
 import EmptyState from "../../../components/EmptyState";
 import { NoActivityIllustration, NoPositionsIllustration } from "../../../assets/emptyStates";
-import StakePresets from "../../../components/StakePresets";
 import { useToast } from "../../../components/ToastProvider";
+import AdvancedLiquidityView from "../../../components/market/AdvancedLiquidityView";
 
 // =============================================================================
 // Types
@@ -170,6 +170,44 @@ function Tab({ active, onClick, label }: TabProps) {
     >
       {label}
     </button>
+  );
+}
+
+function ViewModeToggle({
+  advanced,
+  onToggle,
+}: {
+  advanced: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-2 shrink-0"
+      role="group"
+      aria-label="Market view mode"
+    >
+      <span className={`text-xs sm:text-sm ${!advanced ? "text-white font-medium" : "text-gray-500"}`}>
+        Simple
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={advanced}
+        onClick={onToggle}
+        className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border border-gray-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          advanced ? "bg-blue-600" : "bg-gray-700"
+        }`}
+      >
+        <span
+          className={`pointer-events-none inline-block h-5 w-5 translate-y-0.5 rounded-full bg-white shadow transition-transform ${
+            advanced ? "translate-x-6" : "translate-x-1"
+          }`}
+        />
+      </button>
+      <span className={`text-xs sm:text-sm ${advanced ? "text-white font-medium" : "text-gray-500"}`}>
+        Advanced
+      </span>
+    </div>
   );
 }
 
@@ -597,6 +635,7 @@ interface MarketDetailPageProps {
 
 export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
   const [activeTab, setActiveTab] = useState<TabType>("about");
+  const [advancedView, setAdvancedView] = useState(false);
   const { publicKey, disconnect } = useWalletContext();
 
   // Fetch market detail via shared hook
@@ -706,9 +745,12 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
                   Ends {new Date(market.end_date).toLocaleDateString()}
                 </span>
               </div>
-              <h1 className="text-2xl md:text-3xl font-bold text-white leading-tight">
-                {market.question}
-              </h1>
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <h1 className="text-2xl md:text-3xl font-bold text-white leading-tight flex-1">
+                  {market.question}
+                </h1>
+                <ViewModeToggle advanced={advancedView} onToggle={() => setAdvancedView((v) => !v)} />
+              </div>
             </div>
 
             {/* Pool Size Banner */}
@@ -735,6 +777,12 @@ export default function MarketDetailPage({ marketId }: MarketDetailPageProps) {
                 </div>
               </div>
             </div>
+
+            {advancedView && (
+              <div className="mb-6">
+                <AdvancedLiquidityView bets={bets} outcomes={outcomes} />
+              </div>
+            )}
 
             {/* Tabs */}
             <div className="border-b border-gray-800 mb-6 -mx-4 px-4">
