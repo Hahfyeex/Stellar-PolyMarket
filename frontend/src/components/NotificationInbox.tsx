@@ -19,6 +19,7 @@ import {
   Notification,
   NotificationType,
 } from "../store/notificationSlice";
+import EmptyState from "./EmptyState";
 
 // Icons per notification type
 const TYPE_ICON: Record<NotificationType, string> = {
@@ -154,9 +155,16 @@ export default function NotificationInbox({ walletAddress, apiUrl }: Props) {
           </div>
 
           {/* Items */}
-          <ul className="max-h-80 overflow-y-auto divide-y divide-gray-800">
+          <ul className="max-h-96 overflow-y-auto divide-y divide-gray-800">
             {items.length === 0 ? (
-              <li className="px-4 py-6 text-center text-sm text-gray-500">No notifications yet</li>
+              <li className="p-4">
+                <EmptyState
+                  variant="no-notifications"
+                  title="No Notifications"
+                  message="You're all caught up! Updates on your positions will appear here."
+                  className="bg-transparent border-0 p-2"
+                />
+              </li>
             ) : (
               items.map((item) => (
                 <li
