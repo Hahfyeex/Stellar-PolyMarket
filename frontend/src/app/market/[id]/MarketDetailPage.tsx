@@ -39,6 +39,8 @@ interface Bet {
   outcome_index: number;
   amount: string;
   created_at: string;
+  optimisticId?: string;
+  status?: "pending" | "confirmed";
 }
 
 interface Position {
@@ -342,7 +344,13 @@ function ActivityTab({ bets, outcomes }: ActivityTabProps) {
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
       <div className="divide-y divide-gray-800">
         {bets.map((bet) => (
-          <div key={bet.id} className="p-4 flex items-center justify-between">
+          <div
+            key={bet.optimisticId ?? bet.id}
+            data-testid={bet.status === "pending" ? "bet-pending" : "bet-confirmed"}
+            className={`p-4 flex items-center justify-between ${
+              bet.status === "pending" ? "opacity-60" : ""
+            }`}
+          >
             <div className="flex items-center gap-3">
               <div
                 className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
